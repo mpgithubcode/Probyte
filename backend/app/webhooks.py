@@ -1,8 +1,10 @@
 """Webhooks: record.created / record.updated / record.deleted events POSTed to user-chosen URLs.
 
-Events are queued by the store when records change (from the app, the API, MCP, public links, imports or a
-CalDAV sync) and delivered by a background thread. Several changes to one record within a moment become one
-event. Each delivery is signed: X-Probyte-Signature: sha256=<hex HMAC of the body with the webhook's secret>.
+Events are queued as jobs in the same transaction as the record change (from the app, the API, MCP, public
+links, imports or a CalDAV sync), so a change that's rolled back sends nothing. The worker turns each event into
+one delivery job per matching webhook; failed deliveries are retried with backoff. Several changes to one record
+within a second become one event. Each delivery is signed:
+X-Probyte-Signature: sha256=<hex HMAC of the body with the webhook's secret>.
 """
 import hashlib
 import hmac
@@ -10,10 +12,8 @@ import ipaddress
 import json
 import logging
 import os
-import queue
 import secrets
 import socket
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +23,9 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
+from psycopg.types.json import Jsonb
+
+from . import jobs
 from .db import connection
 
 log = logging.getLogger("probyte.webhooks")
@@ -32,22 +35,24 @@ EVENTS = ("record.created", "record.updated", "record.deleted")
 # (e.g. n8n or Home Assistant on your own network).
 ALLOW_PRIVATE = os.environ.get("WEBHOOK_ALLOW_PRIVATE", os.environ.get("REMOTE_ALLOW_PRIVATE", "false")).lower() in ("1", "true", "yes")
 TIMEOUT = 10
-RETRIES = (2, 10, 60)  # seconds to wait before each retry
-COALESCE = 1.0         # seconds to collect changes before sending
 
-_q: "queue.Queue[tuple[str, str, str, float]]" = queue.Queue(maxsize=100000)
+COALESCE_SECONDS = 1.0
 
 
 def new_secret() -> str:
     return "whsec_" + secrets.token_urlsafe(24)
 
 
-def emit(table_id, event: str, record_id) -> None:
-    """Queue an event (cheap; safe to call inside a transaction)."""
-    try:
-        _q.put_nowait((str(table_id), event, str(record_id), time.time()))
-    except queue.Full:
-        log.warning("webhook queue full; dropping %s %s", event, record_id)
+def emit(conn, table_id, event: str, record_id) -> None:
+    """Queue a record event in the caller's transaction (merged with other changes to the record in the next second)."""
+    conn.execute(
+        "INSERT INTO jobs (kind, payload, dedupe_key, run_at, max_attempts) "
+        "VALUES ('webhook_event', %s, %s, now() + make_interval(secs => %s), 3) "
+        "ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND locked_until IS NULL AND NOT failed DO UPDATE SET payload = "
+        "jsonb_set(jobs.payload, '{event}', to_jsonb(CASE WHEN jobs.payload->>'event' = 'record.created' "
+        "AND EXCLUDED.payload->>'event' = 'record.updated' THEN 'record.created' ELSE EXCLUDED.payload->>'event' END))",
+        (Jsonb({"table_id": str(table_id), "record_id": str(record_id), "event": event, "at": time.time()}),
+         f"wh:{table_id}:{record_id}", COALESCE_SECONDS))
 
 
 # ---------------------------------------------------------------- URL safety
@@ -93,17 +98,12 @@ def _post(hook, body: bytes, event: str, delivery: str) -> tuple[int | None, str
         return None, str(e)[:300]
 
 
-def deliver(hook, event: str, payload: dict, retry: bool = True) -> tuple[int | None, str | None]:
-    """Send one event (with retries) and record the outcome on the webhook."""
-    delivery = str(uuid.uuid4())
+def deliver(hook, event: str, payload: dict, delivery: str | None = None) -> tuple[int | None, str | None]:
+    """Send one event once and record the outcome on the webhook."""
+    delivery = delivery or str(uuid.uuid4())
     body = json.dumps({"id": delivery, "event": event, "created_at": datetime.now(timezone.utc).isoformat(), **payload},
                       default=str, ensure_ascii=False).encode()
     status, err = _post(hook, body, event, delivery)
-    for wait in RETRIES if retry else ():
-        if status is not None and status < 500 and status != 429:
-            break
-        time.sleep(wait)
-        status, err = _post(hook, body, event, delivery)
     ok = status is not None and 200 <= status < 300
     try:
         with connection() as conn:
@@ -133,50 +133,33 @@ def _payload(conn, table, event, record_id) -> dict:
     return out
 
 
-def _process(batch: list[tuple[str, str, str, float]]):
-    # created + updated = created; anything + deleted = deleted
-    merged: dict[tuple[str, str], str] = {}
-    first_at: dict[tuple[str, str], float] = {}
-    for tid, event, rid, at in batch:
-        first_at.setdefault((tid, rid), at)
-        prev = merged.get((tid, rid))
-        if prev == "record.created" and event == "record.updated":
-            continue
-        merged[(tid, rid)] = event
+@jobs.handler("webhook_event")
+def _job_event(p):
+    """A record event: one delivery job per webhook that wants it."""
     with connection() as conn:
-        tables = {}
-        for (tid, rid), event in merged.items():
-            if tid not in tables:
-                tables[tid] = conn.execute("SELECT id, name, base_id, user_id FROM tables WHERE id = %s", (tid,)).fetchone()
-            table = tables[tid]
-            if not table:
-                continue
-            hooks = [h for h in conn.execute("SELECT * FROM webhooks WHERE user_id = %s AND enabled", (table["user_id"],)).fetchall()
-                     if event in (h["events"] or EVENTS) and (h["table_ids"] is None or tid in h["table_ids"])
-                     and h["created_at"].timestamp() <= first_at[(tid, rid)]]  # only hooks that existed at the time
-            if not hooks:
-                continue
-            payload = _payload(conn, table, event, rid)
-            if not payload:
-                continue  # the record vanished before we got to it
-            for h in hooks:
-                threading.Thread(target=deliver, args=(dict(h), event, payload), daemon=True).start()
+        table = conn.execute("SELECT id, name, base_id, user_id FROM tables WHERE id = %s", (p["table_id"],)).fetchone()
+        if not table:
+            return
+        hooks = [h for h in conn.execute("SELECT * FROM webhooks WHERE user_id = %s AND enabled", (table["user_id"],)).fetchall()
+                 if p["event"] in (h["events"] or EVENTS) and (h["table_ids"] is None or p["table_id"] in h["table_ids"])
+                 and h["created_at"].timestamp() <= p.get("at", time.time())]  # only hooks that existed at the time
+        if not hooks:
+            return
+        payload = _payload(conn, table, p["event"], p["record_id"])
+        if not payload:
+            return  # the record vanished before we got to it
+        payload = json.loads(json.dumps(payload, default=str))  # dates/UUIDs as the JSON they'd be sent as
+        for h in hooks:
+            jobs.enqueue(conn, "webhook_deliver", {"hook_id": str(h["id"]), "event": p["event"], "payload": payload,
+                                                   "delivery": str(uuid.uuid4())}, max_attempts=4)
 
 
-def worker(stop: threading.Event):
-    while not stop.is_set():
-        try:
-            first = _q.get(timeout=1)
-        except queue.Empty:
-            continue
-        time.sleep(COALESCE)
-        batch = [first]
-        while True:
-            try:
-                batch.append(_q.get_nowait())
-            except queue.Empty:
-                break
-        try:
-            _process(batch)
-        except Exception:
-            log.exception("webhook processing failed")
+@jobs.handler("webhook_deliver")
+def _job_deliver(p):
+    with connection() as conn:
+        hook = conn.execute("SELECT * FROM webhooks WHERE id = %s AND enabled", (p["hook_id"],)).fetchone()
+    if not hook:
+        return
+    status, err = deliver(dict(hook), p["event"], p["payload"], p.get("delivery"))
+    if status is None or status >= 500 or status == 429:
+        raise RuntimeError(err or f"HTTP {status}")  # retried with backoff by the job queue

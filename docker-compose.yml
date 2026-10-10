@@ -17,7 +17,7 @@ services:
   app:
     build: .
     restart: unless-stopped
-    environment:
+    environment: &probyte-env
       DATABASE_URL: postgresql://probyte:${POSTGRES_PASSWORD:-probyte}@db:5432/probyte
       DEFAULT_TZ: ${DEFAULT_TZ:-UTC}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-300}
@@ -43,6 +43,19 @@ services:
       - attachments:/data/attachments
     ports:
       - "${PROBYTE_PORT:-8080}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Background jobs: calendar/contacts sync, webhook deliveries (with retries), cleanup. Same image as app.
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *probyte-env
+    volumes:
+      - radicale-users:/radicale-users
+      - attachments:/data/attachments
     depends_on:
       db:
         condition: service_healthy

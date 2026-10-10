@@ -80,20 +80,11 @@ def collect_garbage(conn, grace_hours: int = 1) -> int:
     return len(rows)
 
 
-def garbage_loop(stop, interval: int = int(os.environ.get("ATTACHMENT_GC_INTERVAL", "3600"))):
-    """Run collect_garbage() shortly after startup, then every `interval` seconds (0 disables)."""
+def collect_garbage_job(_payload=None):
+    """Worker job: remove uploaded files no record uses any more."""
     import logging
     from .db import connection
-    log = logging.getLogger("probyte.attachments")
-    if interval <= 0:
-        return
-    delay = 60
-    while not stop.wait(delay):
-        try:
-            with connection() as conn:
-                n = collect_garbage(conn)
-            if n:
-                log.info("removed %d unused attachment(s)", n)
-        except Exception:
-            log.exception("attachment cleanup failed")
-        delay = interval
+    with connection() as conn:
+        n = collect_garbage(conn)
+    if n:
+        logging.getLogger("probyte.attachments").info("removed %d unused attachment(s)", n)

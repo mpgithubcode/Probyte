@@ -305,7 +305,7 @@ async def test_webhook(hook_id: str, user=User):
     if not h:
         raise HTTPException(404, "Webhook not found")
     status, err = await run_in_threadpool(webhooks.deliver, dict(h), "ping",
-                                          {"message": "Test event from Probyte", "webhook": {"id": str(h["id"]), "name": h["name"]}}, False)
+                                          {"message": "Test event from Probyte", "webhook": {"id": str(h["id"]), "name": h["name"]}})
     return {"ok": status is not None and 200 <= status < 300, "status": status, "error": err}
 
 

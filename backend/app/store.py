@@ -482,7 +482,7 @@ def create_record(conn, table_id, data: dict, user_id=None):
     else:
         r = insert_record(conn, table_id, data, user_id=user_id)
     _sync_links(conn, fields, r["id"], table_id, {}, data)
-    webhooks.emit(table_id, "record.created", r["id"])
+    webhooks.emit(conn, table_id, "record.created", r["id"])
     return r, table
 
 
@@ -516,8 +516,8 @@ def update_record(conn, record_id, patch: dict, user_id=None):
         apply_task_auto(table, fields, old, history, patch)
         h = insert_record(conn, r["table_id"], history, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
         _sync_links(conn, fields, h["id"], r["table_id"], {}, history)
-        webhooks.emit(r["table_id"], "record.created", h["id"])
-    webhooks.emit(r["table_id"], "record.updated", record_id)
+        webhooks.emit(conn, r["table_id"], "record.created", h["id"])
+    webhooks.emit(conn, r["table_id"], "record.updated", record_id)
     return r, table
 
 
@@ -597,7 +597,7 @@ def delete_record(conn, record_id, user_id=None):
         conn.execute("UPDATE records SET deleted = true, updated_at = now() WHERE id = %s", (record_id,))
     else:
         conn.execute("DELETE FROM records WHERE id = %s", (record_id,))
-    webhooks.emit(r["table_id"], "record.deleted", record_id)
+    webhooks.emit(conn, r["table_id"], "record.deleted", record_id)
     return table
 
 

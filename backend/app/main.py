@@ -1,6 +1,7 @@
 import json
 import re
 import logging
+import os
 import threading
 import uuid
 from datetime import date, datetime
@@ -50,9 +51,9 @@ async def lifespan(app: FastAPI):
         store.ensure_system_fields(conn)
     builtin_dav.sync_on_startup()
     stop = threading.Event()
-    threading.Thread(target=sync.background_loop, args=(stop,), daemon=True).start()
-    threading.Thread(target=attachments.garbage_loop, args=(stop,), daemon=True).start()
-    threading.Thread(target=webhooks.worker, args=(stop,), daemon=True).start()
+    if os.environ.get("RUN_WORKER", "").lower() == "embedded":  # single-container setups: run the worker in here too
+        from . import worker
+        worker.start(stop)
     yield
     stop.set()
 
