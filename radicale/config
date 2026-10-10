@@ -1,0 +1,25 @@
+# Radicale config for the server bundled with Probyte.
+# Users are managed by Probyte, which writes /radicale-users/users (bcrypt htpasswd).
+
+[server]
+hosts = 0.0.0.0:5232
+
+[auth]
+type = htpasswd
+htpasswd_filename = /radicale-users/users
+htpasswd_encryption = bcrypt
+# seconds to wait after a failed login (slows down password guessing)
+delay = 2
+
+[rights]
+# each user can only see and edit their own calendars
+type = owner_only
+
+[storage]
+filesystem_folder = /data/collections
+
+[web]
+type = internal
+
+[logging]
+level = info
