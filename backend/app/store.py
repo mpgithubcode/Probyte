@@ -1,5 +1,5 @@
 """Data access helpers shared by the API routes and the CalDAV sync engine."""
-import re
+import os
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -8,11 +8,12 @@ from . import formula as F
 from .auth import api_bases
 from .compute import COMPUTED_TYPES, FIELD_TYPES, FILTER_OPS, Engine
 from .db import Jsonb
-from . import recur, webhooks
+from . import jobs, recur, webhooks
 from .ical import LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, is_date_only, new_uid
 
 SELECT_TYPES = ("single_select", "multi_select")
 DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables synced with a CalDAV calendar / CardDAV address book
+AUTO_PUSH_DELAY = float(os.environ.get("AUTO_PUSH_DELAY", "2"))  # seconds after an edit before it is pushed; <0 disables
 # A record's primary (title) field must hold plain text.
 PRIMARY_TYPES = {"text", "long_text", "number", "url", "email", "single_select", "date", "autonumber", "formula"}
 
@@ -449,6 +450,26 @@ def _remove_link(conn, rid, field_id, target, table_id=None):
                      ([str(field_id)], Jsonb(vals), rid))
 
 
+def is_synced(table) -> bool:
+    return table["kind"] in DAV_KINDS and bool(table["account_id"]) and bool(table["calendar_url"])
+
+
+def schedule_sync(table_id, delay: float | None = None, conn=None):
+    """Sync a table soon (debounced), e.g. to push local edits shortly after they happen. With `conn`, the job
+    is queued in that transaction, so it only exists once the edit is committed."""
+    delay = AUTO_PUSH_DELAY if delay is None else delay
+    if delay < 0:
+        return
+    jobs.enqueue(conn, "sync_table", {"table_id": str(table_id)}, key=f"sync:{table_id}", delay=delay, max_attempts=3)
+
+
+def _changed(conn, table, event, record_id):
+    """Every local record write ends here: tell webhooks, and push the change to the DAV server."""
+    webhooks.emit(conn, table["id"], event, record_id)
+    if is_synced(table):
+        schedule_sync(table["id"], conn=conn)
+
+
 def insert_record(conn, table_id, data, *, user_id=None, caldav_uid=None, caldav_href=None, caldav_raw=None, sync_status="synced"):
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (str(table_id),))  # serialise auto numbers
     return conn.execute(
@@ -482,7 +503,7 @@ def create_record(conn, table_id, data: dict, user_id=None):
     else:
         r = insert_record(conn, table_id, data, user_id=user_id)
     _sync_links(conn, fields, r["id"], table_id, {}, data)
-    webhooks.emit(conn, table_id, "record.created", r["id"])
+    _changed(conn, table, "record.created", r["id"])
     return r, table
 
 
@@ -516,8 +537,8 @@ def update_record(conn, record_id, patch: dict, user_id=None):
         apply_task_auto(table, fields, old, history, patch)
         h = insert_record(conn, r["table_id"], history, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
         _sync_links(conn, fields, h["id"], r["table_id"], {}, history)
-        webhooks.emit(conn, r["table_id"], "record.created", h["id"])
-    webhooks.emit(conn, r["table_id"], "record.updated", record_id)
+        _changed(conn, table, "record.created", h["id"])
+    _changed(conn, table, "record.updated", record_id)
     return r, table
 
 
@@ -597,7 +618,7 @@ def delete_record(conn, record_id, user_id=None):
         conn.execute("UPDATE records SET deleted = true, updated_at = now() WHERE id = %s", (record_id,))
     else:
         conn.execute("DELETE FROM records WHERE id = %s", (record_id,))
-    webhooks.emit(conn, r["table_id"], "record.deleted", record_id)
+    _changed(conn, table, "record.deleted", record_id)
     return table
 
 
@@ -759,144 +780,3 @@ def unified_to_source(conn, combo, table_id: str, data: dict) -> dict:
         if f["id"] in data and table_id in f["mapping"]:
             out[f["mapping"][table_id]] = data[f["id"]]
     return out
-
-
-# ---------------------------------------------------------------- type conversion
-
-TEXT_TYPES = {"text", "long_text", "url", "email"}
-
-
-def snapshot_values(conn, field) -> dict:
-    """Each record's current value of a field, as (raw value, visible items), before a type change."""
-    eng = Engine(conn)
-    out = {}
-    for r in eng.records(field["table_id"]):
-        raw = r["data"].get(str(field["id"]))
-        if isinstance(raw, dict) and "__error" in raw:
-            raw = None
-        shown = eng.shown(field, raw)
-        if field["type"] in ("lookup", "conditional_lookup"):
-            inn = eng.inner(field)
-            shown = eng.shown(inn[2], raw) if inn else raw
-        vt = eng.value_type(field)
-        items = []
-        for x in (shown if isinstance(shown, list) else [shown]):
-            if F.is_blank(x):
-                continue
-            if vt == "date" and isinstance(x, str):
-                try:
-                    dt = F.local(F.parse_dt(x))
-                    x = x if len(x) == 10 else dt.strftime("%Y-%m-%d %H:%M")
-                except F.FormulaError:
-                    pass
-            items.append(F.to_str(x) if not isinstance(x, str) else x)
-        out[str(r["id"])] = (raw, items, vt)
-    return out
-
-
-def _convert(raw, items, vt, old_type, new_type, opts, lookup):
-    import re as _re
-    text = ", ".join(items)
-    if new_type == "recurrence":
-        try:
-            return recur.normalize(raw if isinstance(raw, str) else text)
-        except ValueError:
-            return None
-    if new_type in TEXT_TYPES:
-        if old_type in TEXT_TYPES:
-            return raw
-        if old_type == "checkbox":
-            return "true" if raw else None
-        return text or None
-    if new_type in ("number", "rating"):
-        n = None
-        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-            n = raw
-        elif isinstance(raw, bool):
-            n = 1 if raw else 0
-        elif len(items) == 1:
-            m = _re.search(r"-?\d+(?:\.\d+)?", items[0].replace(",", ""))
-            n = float(m.group()) if m else None
-        if n is None:
-            return None
-        if new_type == "rating":
-            return max(0, min(int(round(n)), int(opts.get("max") or 5))) or None
-        return int(n) if float(n).is_integer() else n
-    if new_type == "checkbox":
-        if isinstance(raw, bool):
-            return raw
-        return bool(items) and items[0].strip().lower() not in ("false", "0", "no", "off", "unchecked")
-    if new_type == "single_select":
-        return items[0] if items else None
-    if new_type == "multi_select":
-        parts = items if len(items) != 1 else [p.strip() for p in items[0].split(",")]
-        return list(dict.fromkeys(p for p in parts if p)) or None
-    if new_type == "date":
-        src = raw if vt == "date" and isinstance(raw, str) else (items[0] if items else None)
-        if not src:
-            return None
-        try:
-            dt = F.parse_dt(src)
-        except F.FormulaError:
-            try:
-                dt = F.datetime_parse(src, "DD/MM/YYYY") if "/" in src else None
-            except F.FormulaError:
-                dt = None
-        if dt is None:
-            return None
-        date_only = (isinstance(src, str) and len(src.strip()) == 10) or not opts.get("includeTime")
-        return F.local(dt).date().isoformat() if date_only else F.to_json(dt)
-    if new_type in ("link", "user"):
-        parts = items if len(items) != 1 else [p.strip() for p in items[0].split(",")]
-        ids = [lookup[p.lower()] for p in parts if p.lower() in lookup]
-        ids = list(dict.fromkeys(ids))
-        if new_type == "link" and opts.get("relationship") == "one":
-            ids = ids[:1]
-        if new_type == "user" and not opts.get("multiple"):
-            ids = ids[:1]
-        return ids or None
-    return None  # attachments can't be made from other values; computed fields have no stored value
-
-
-def import_value(field, cell, lookup):
-    """A spreadsheet cell -> a value for the field (None when it can't be read)."""
-    t = field["type"]
-    if isinstance(cell, bool):
-        text = "true" if cell else "false"
-    elif isinstance(cell, float) and cell.is_integer():
-        text = str(int(cell))
-    else:
-        text = str(cell).strip()
-    if t == "recurrence":
-        try:
-            return recur.normalize(text)
-        except ValueError:
-            return None
-    raw = cell if t in ("number", "rating", "checkbox") and not isinstance(cell, str) else text
-    vt = "date" if t == "date" and re.match(r"^\d{4}-\d{2}-\d{2}", text) else "text"
-    return _convert(raw, [text], vt, "text", t, field["options"], lookup)
-
-
-def convert_field_values(conn, old_field, new_field, snapshot: dict):
-    """Rewrite stored values of a field whose type changed, converting instead of discarding them."""
-    new_type, opts = new_field["type"], new_field["options"]
-    fid, tid = str(new_field["id"]), str(new_field["table_id"])
-    if new_type in COMPUTED_TYPES or new_type == "attachment":
-        conn.execute("UPDATE records SET data = data - %s WHERE table_id = %s", (fid, tid))
-        return
-    lookup = {}
-    if new_type == "link":
-        lookup = {v.lower(): k for k, v in Engine(conn).titles(opts["foreignTableId"]).items()}
-    elif new_type == "user":
-        lookup = {r["username"].lower(): str(r["id"]) for r in conn.execute("SELECT id, username FROM users").fetchall()}
-    fields = get_fields(conn, tid)
-    target = next(f for f in fields if str(f["id"]) == fid)
-    for rid, (raw, items, vt) in snapshot.items():
-        v = _convert(raw, items, vt, old_field["type"], new_type, opts, lookup)
-        if v is None:
-            conn.execute("UPDATE records SET data = data - %s WHERE id = %s", (fid, rid))
-            continue
-        ensure_choices(conn, target, v)
-        conn.execute("UPDATE records SET data = jsonb_set(data, %s, %s) WHERE id = %s", ([fid], Jsonb(v), rid))
-        if new_type == "link":
-            _sync_links(conn, fields, rid, tid, {}, {fid: v})

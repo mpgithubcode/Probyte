@@ -1,7 +1,10 @@
 """Two-way sync with the bundled Radicale: tasks, events, repeats, statuses, contacts."""
 import re
+import time
 
-from conftest import API
+import requests
+
+from conftest import API, BASE
 
 
 def test_push_pull_and_phone_edits(user):
@@ -97,3 +100,20 @@ def test_contacts_round_trip_keeps_unknown_properties(user):
     user.sync(t["id"])
     body = requests.get(RADICALE + path, auth=user.dav_auth()).text
     assert "ORG:Bletchley Park" in body and "PHOTO" in body and "+44 2" in body
+
+
+def test_edits_reach_the_server_without_sync_now(user):
+    """Every write queues a push job in its own transaction; the worker delivers it within seconds."""
+    t = user.table("tasks", "Auto push")
+    F = user.fields(t["id"])
+    user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Pushed from the app"}})
+    key = user.j("POST", "/keys", json={"name": "push", "scope": "write"})["key"]
+    requests.post(f"{BASE}/api/v1/tables/{t['id']}/records", headers={"Authorization": f"Bearer {key}"},
+                  json={"fields": {"Title": "Pushed via API"}}).raise_for_status()
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        bodies = " ".join(b for _, b in user.server_items(t["calendar_url"]))
+        if "Pushed from the app" in bodies and "Pushed via API" in bodies:
+            return
+        time.sleep(1)
+    raise AssertionError("edits were not pushed to the DAV server")

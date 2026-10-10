@@ -17,13 +17,11 @@ from .carddav import CardDAV
 from .dav import Collection, path_of
 from .db import Jsonb, connection
 from .ical import build_ical, component_kind, from_mixed, ical_to_values, to_mixed
-from .store import apply_task_auto, ensure_choices, get_fields, get_table, insert_record
+from .store import DAV_KINDS, apply_task_auto, ensure_choices, get_fields, get_table, insert_record
 
 log = logging.getLogger("probyte.sync")
 
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "300"))      # seconds between background syncs; 0 disables
-AUTO_PUSH_DELAY = float(os.environ.get("AUTO_PUSH_DELAY", "2"))  # seconds after an edit; <0 disables
-DAV_KINDS = ("tasks", "events", "mixed", "contacts")
 
 
 # ---------------------------------------------------------------- accounts: discovery
@@ -249,14 +247,6 @@ def _sync(table_id: str, full: bool) -> dict:
 
 
 # ---------------------------------------------------------------- scheduling (through the job queue)
-
-def schedule_sync(table_id, delay: float | None = None, conn=None):
-    """Sync a table soon (debounced), e.g. to push local edits shortly after they happen."""
-    delay = AUTO_PUSH_DELAY if delay is None else delay
-    if delay < 0:
-        return
-    jobs.enqueue(conn, "sync_table", {"table_id": str(table_id)}, key=f"sync:{table_id}", delay=delay, max_attempts=3)
-
 
 @jobs.handler("sync_table")
 def _job_sync(payload):

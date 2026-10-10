@@ -9,7 +9,7 @@ changes, keyed by a field's system key (or field id in tables without system fie
 """
 import json
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from dateutil.rrule import rrulestr
 

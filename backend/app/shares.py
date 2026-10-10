@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import attachments, auth, store, sync
+from . import attachments, auth, store
 from .compute import COMPUTED_TYPES, Engine
 from .db import Jsonb, app_secret, connection
+from .routes.common import FastJSON
 from .viewfilter import apply_view
 
 router = APIRouter()
@@ -271,11 +272,6 @@ def _visible_record(payload, record_id):
     return rec
 
 
-def _after(table):
-    if table["kind"] in store.DAV_KINDS and table["account_id"] and table["calendar_url"]:
-        sync.schedule_sync(table["id"])
-
-
 # ---------------------------------------------------------------- core (used by the endpoints below and by linked tables)
 
 def core_meta(token: str, cookie: str | None) -> dict:
@@ -323,7 +319,6 @@ def core_create(token: str, view_id: str, data: dict, table_id: str | None, cook
                 raise HTTPException(400, "Choose where to add the record")
             data = store.unified_to_source(conn, combo, tid, data)
         rid, table = recordops.create(conn, tid, data, s["user_id"], anonymous=True)
-    _after(table)
     with connection() as conn:
         payload = _view_payload(conn, s, item, view)
     return next((x for x in payload["records"] if x["id"] == str(rid)), {"id": str(rid), "data": {}, "table_id": str(tid)})
@@ -343,8 +338,7 @@ def core_update(token: str, view_id: str, record_id: str, data: dict, cookie: st
         if item["kind"] == "combo":
             combo = store.get_combo(conn, item["id"], s["user_id"])
             clean = store.unified_to_source(conn, combo, rec["table_id"], clean)
-        table = recordops.update(conn, rec["table_id"], record_id, clean, s["user_id"], anonymous=True)
-    _after(table)
+        recordops.update(conn, rec["table_id"], record_id, clean, s["user_id"], anonymous=True)
     with connection() as conn:
         payload = _view_payload(conn, s, item, view)
     return next((x for x in payload["records"] if x["id"] == str(record_id)), {**rec, "data": {**rec["data"], **data}})
@@ -359,8 +353,7 @@ def core_delete(token: str, view_id: str, record_id: str, cookie: str | None) ->
             raise HTTPException(403, "Deleting isn't allowed on this link")
         item, view = _find_view(conn, s, view_id)
         rec = _visible_record(_view_payload(conn, s, item, view), record_id)
-        table = recordops.delete(conn, rec["table_id"], record_id, s["user_id"])
-    _after(table)
+        recordops.delete(conn, rec["table_id"], record_id, s["user_id"])
 
 
 def core_attachment(token: str, attachment_id: str, cookie: str | None, download: bool):
@@ -391,7 +384,6 @@ def _cookie(request: Request, token: str) -> str | None:
 
 
 def _json(content):
-    from .main import FastJSON  # late import: main imports this module
     return FastJSON(content)
 
 

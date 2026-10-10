@@ -9,7 +9,8 @@ import re
 
 from fastapi import HTTPException
 
-from . import recordops, recur, store, sync
+from . import recordops, store, sync
+from . import values as values_
 from .compute import COMPUTED_TYPES, FILTER_OPS, Engine
 from .viewfilter import apply_view, display_text, view_filter, view_sorts
 
@@ -21,12 +22,6 @@ HIDDEN_TYPES = {"record_id", "button"}  # left out of record output (the id is a
 
 def bad(msg: str, code: int = 400):
     raise HTTPException(code, msg)
-
-
-def after_write(table):
-    """Push CalDAV/CardDAV changes soon after a write."""
-    if table and table["kind"] in store.DAV_KINDS and table["account_id"] and table["calendar_url"]:
-        sync.schedule_sync(table["id"])
 
 
 # ---------------------------------------------------------------- bases & tables
@@ -294,13 +289,7 @@ def _writable_table(conn, user, ref, base=None):
     return row
 
 
-def _titles(conn, table_id, cache):
-    if table_id not in cache:
-        cache[table_id] = {v.lower(): k for k, v in Engine(conn).titles(table_id).items()}
-    return cache[table_id]
-
-
-def coerce(conn, fields, values: dict, cache: dict) -> dict:
+def coerce(fields, values: dict, lookups: values_.Lookups) -> dict:
     """Field name/id -> value (as a person would write it)  =>  field id -> stored value."""
     if not isinstance(values, dict):
         bad('fields must be an object like {"Name": "Ada", "Status": "Done"}')
@@ -312,83 +301,8 @@ def coerce(conn, fields, values: dict, cache: dict) -> dict:
             bad(f"'{f['name']}' is calculated and can't be set")
         if f["type"] == "attachment":
             bad(f"'{f['name']}' holds uploaded files, which can't be set through the API")
-        out[str(f["id"])] = _value(conn, f, val, cache)
+        out[str(f["id"])] = values_.from_api(f, val, lookups)
     return out
-
-
-def _items(val) -> list:
-    if isinstance(val, list):
-        return val
-    if isinstance(val, str):
-        return [x.strip() for x in val.split(",") if x.strip()]
-    return [val]
-
-
-def _value(conn, f, val, cache):
-    t, name = f["type"], f["name"]
-    if val is None or (isinstance(val, str) and not val.strip()) or val == []:
-        return [] if t in ("link", "multi_select", "user") else None
-    if t == "link":
-        tid = f["options"].get("foreignTableId")
-        titles = _titles(conn, tid, cache)
-        ids = set(titles.values())
-        whole = str(val).strip().lower() if isinstance(val, str) else None
-        if whole is not None and whole in titles:  # a title that contains commas
-            return [titles[whole]]
-        out = []
-        for it in _items(val):
-            it = it.get("id") if isinstance(it, dict) else it
-            s = str(it).strip()
-            if s in ids:
-                out.append(s)
-            elif s.lower() in titles:
-                out.append(titles[s.lower()])
-            else:
-                bad(f"'{name}': no record called '{s}' in the linked table")
-        return out
-    if t == "user":
-        if "__users" not in cache:
-            cache["__users"] = {r["username"].lower(): str(r["id"]) for r in conn.execute("SELECT id, username FROM users").fetchall()}
-        users = cache["__users"]
-        out = []
-        for it in _items(val):
-            s = str(it.get("id") if isinstance(it, dict) else it).strip()
-            if s in users.values():
-                out.append(s)
-            elif s.lower() in users:
-                out.append(users[s.lower()])
-            else:
-                bad(f"'{name}': no user '{s}'")
-        return out
-    if t == "multi_select":
-        return [str(x).strip() for x in _items(val) if str(x).strip()]
-    if t == "single_select":
-        return str(val).strip()
-    if t == "checkbox":
-        if isinstance(val, bool):
-            return val
-        return str(val).strip().lower() in ("true", "yes", "1", "on", "checked", "x", "✓")
-    if t in ("number", "rating"):
-        if isinstance(val, (int, float)) and not isinstance(val, bool):
-            return val
-        try:
-            n = float(str(val).replace(",", "").strip())
-        except ValueError:
-            bad(f"'{name}' needs a number, not '{val}'")
-        return int(n) if n.is_integer() else n
-    if t == "date":
-        v = store.import_value(f, val if isinstance(val, str) else str(val), {})
-        if v is None:
-            bad(f"'{name}' needs a date like 2026-10-12 or 2026-10-12T15:30:00Z, not '{val}'")
-        return v
-    if t == "recurrence":
-        try:
-            return recur.normalize(str(val))
-        except ValueError as e:
-            bad(f"'{name}': {e}")
-    if isinstance(val, (dict, list)):
-        return json.dumps(val, ensure_ascii=False)
-    return str(val)
 
 
 def _records_by_id(conn, table_id, ids, cell_format="json", field_key="name"):
@@ -406,11 +320,11 @@ def create_records(conn, user, ref, records: list[dict], base=None, cell_format=
     if len(records) > MAX_BATCH:
         bad(f"At most {MAX_BATCH} records per request")
     fields = Engine(conn).describe(t["id"])
-    cache, ids = {}, []
+    lookups, ids = values_.Lookups(conn), []
     for n, rec in enumerate(records, start=1):
         values = rec.get("fields", rec) if isinstance(rec, dict) else rec
         try:
-            data = coerce(conn, fields, values, cache)
+            data = coerce(fields, values, lookups)
             rid, table = recordops.create(conn, t["id"], data, user["id"])
         except HTTPException as e:
             bad(f"Record {n}: {e.detail}" if len(records) > 1 else e.detail, e.status_code)
@@ -425,13 +339,13 @@ def update_records(conn, user, ref, updates: list[dict], base=None, cell_format=
     if len(updates) > MAX_BATCH:
         bad(f"At most {MAX_BATCH} records per request")
     fields = Engine(conn).describe(t["id"])
-    cache, ids = {}, []
+    lookups, ids = values_.Lookups(conn), []
     for n, u in enumerate(updates, start=1):
         rid = str((u or {}).get("id", ""))
         try:
             if not UUID_RE.match(rid):
                 bad("Each record needs its id")
-            data = coerce(conn, fields, u.get("fields") or {}, cache)
+            data = coerce(fields, u.get("fields") or {}, lookups)
             recordops.update(conn, t["id"], rid, data, user["id"])
         except HTTPException as e:
             bad(f"Record {n} ({rid or 'no id'}): {e.detail}" if len(updates) > 1 else e.detail, e.status_code)
@@ -460,11 +374,11 @@ def upsert_records(conn, user, ref, records: list[dict], match_on: list[str], ba
     index = {}
     for r in eng.records(t["id"]):
         index.setdefault(tuple(_match_key(r["data"].get(k)) for k in keys), str(r["id"]))
-    cache, created, updated = {}, [], []
+    lookups, created, updated = values_.Lookups(conn), [], []
     for n, rec in enumerate(records, start=1):
         values = rec.get("fields", rec) if isinstance(rec, dict) else rec
         try:
-            data = coerce(conn, fields, values, cache)
+            data = coerce(fields, values, lookups)
             if any(k not in data for k in keys):
                 bad(f"needs a value for {', '.join(match_on)}")
             key = tuple(_match_key(data[k]) for k in keys)

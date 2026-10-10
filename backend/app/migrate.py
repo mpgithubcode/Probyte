@@ -13,8 +13,8 @@ MIGRATIONS = Path(__file__).parent / "migrations"
 
 
 def run(conn) -> list[str]:
+    conn.execute("SELECT pg_advisory_xact_lock(7711)")  # first: the app and the worker may start together
     conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
-    conn.execute("SELECT pg_advisory_xact_lock(7711)")
     done = {r["version"] for r in conn.execute("SELECT version FROM schema_migrations").fetchall()}
     applied = []
     for path in sorted(MIGRATIONS.iterdir()):

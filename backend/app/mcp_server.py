@@ -104,10 +104,7 @@ def _call(user: dict, name: str, a: dict):
     def run(fn, *args, **kw):
         with connection() as conn:
             out = fn(conn, user, *args, **kw)
-        if isinstance(out, tuple):
-            out, table = out
-            apiv1.after_write(table)
-        return out
+        return out[0] if isinstance(out, tuple) else out
 
     if name == "list_bases":
         return {"bases": run(apiv1.list_bases)}

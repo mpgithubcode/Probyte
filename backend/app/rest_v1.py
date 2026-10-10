@@ -65,13 +65,10 @@ Key = Query("name", description="Key fields by `name` or by field `id`.")
 
 
 def _run(fn, *args, **kw):
-    """Run a core function with a database connection; schedule a sync for tables that were written."""
+    """Run a core function with a database connection."""
     with connection() as conn:
         out = fn(conn, *args, **kw)
-    if isinstance(out, tuple):
-        out, table = out
-        apiv1.after_write(table)
-    return out
+    return out[0] if isinstance(out, tuple) else out
 
 
 # ---------------------------------------------------------------- models (for the docs)
