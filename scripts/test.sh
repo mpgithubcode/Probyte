@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Run the test suite against a throwaway copy of the stack (own database and Radicale; never your real data).
+#   scripts/test.sh            all tests
+#   scripts/test.sh api        backend tests only
+#   scripts/test.sh -k sync    any pytest arguments
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080} RADICALE_PORT=${TEST_RADICALE_PORT:-15232}
+export POSTGRES_PASSWORD=probyte-test WEBHOOK_ALLOW_PRIVATE=true REMOTE_ALLOW_PRIVATE=true ALLOW_SIGNUP=true PUBLIC_URL= RADICALE_PUBLIC_URL= MCP_BEARER_TOKEN=
+PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-jammy
+
+cleanup() { docker rm -f probyte-test-runner >/dev/null 2>&1 || true; [ "${KEEP_STACK:-}" ] || docker compose down -v >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+docker compose up -d --build --wait >/dev/null 2>&1
+for i in $(seq 60); do docker compose exec -T app python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/auth/config')" >/dev/null 2>&1 && break; sleep 1; done
+
+target=tests
+if [ "${1:-}" = api ] || [ "${1:-}" = ui ]; then target="tests/$1"; shift; fi
+docker rm -f probyte-test-runner >/dev/null 2>&1 || true
+docker create --name probyte-test-runner --network probyte-test_default -w /work \
+  -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 "$PLAYWRIGHT_IMAGE" \
+  bash -c "pip install -q pytest requests playwright==1.48.0 2>/dev/null && python -m pytest -q -p no:cacheprovider --rootdir tests -c /dev/null $target $*" >/dev/null
+docker cp tests probyte-test-runner:/work/tests >/dev/null
+docker start -a probyte-test-runner

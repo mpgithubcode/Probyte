@@ -138,14 +138,6 @@ def _add_record_id_field(conn, tid):
     return create_field(conn, tid, "Record ID", "record_id", {}, system_key="record_id")
 
 
-def ensure_record_id_fields(conn):
-    for t in conn.execute(
-        "SELECT id FROM tables t WHERE kind <> 'remote' AND NOT EXISTS "
-        "(SELECT 1 FROM fields f WHERE f.table_id = t.id AND f.type = 'record_id')"
-    ).fetchall():
-        _add_record_id_field(conn, t["id"])
-
-
 def _place_after(conn, table_id, field, after):
     """Move a field to just after another one in the table's field order."""
     order = [f for f in get_fields(conn, table_id) if f["id"] != field["id"]]
@@ -156,7 +148,7 @@ def _place_after(conn, table_id, field, after):
 
 
 def ensure_system_fields(conn):
-    """Add CalDAV system fields introduced after a table was created (e.g. Started At, Repeat, Completed); also retires removed ones."""
+    """Add synced fields defined in code (ical.SYSTEM_FIELDS) that a table doesn't have yet. Runs at startup."""
     for t in conn.execute("SELECT id, kind FROM tables WHERE kind IN ('tasks', 'events', 'mixed', 'contacts')").fetchall():
         by_key = {f["system_key"]: f for f in get_fields(conn, t["id"]) if f["system_key"]}
         added = False
@@ -164,20 +156,6 @@ def ensure_system_fields(conn):
             if key not in by_key:
                 by_key[key] = _create_system_field(conn, t["id"], key, fname, ftype, opts, primary)
                 added = True
-        st = by_key.get("status")
-        if st and t["kind"] in ("events", "mixed"):  # newer status options (Attended, Missed)
-            want = dict(SYSTEM_FIELDS[t["kind"]][[k for k, *_ in SYSTEM_FIELDS[t["kind"]]].index("status")][3])
-            have = {c["name"] for c in st["options"].get("choices", [])}
-            extra = [c for c in want["choices"] if c["name"] not in have]
-            if extra:
-                conn.execute("UPDATE fields SET options = jsonb_set(options, '{choices}', COALESCE(options->'choices', '[]'::jsonb) || %s) WHERE id = %s",
-                             (Jsonb(extra), st["id"]))
-        # Subtasks (Parent Task / Subtasks) were removed: drop those fields and their values.
-        for key in ("parent", "subtasks"):
-            f = by_key.pop(key, None)
-            if f:
-                conn.execute("UPDATE records SET data = data - %s WHERE table_id = %s", (str(f["id"]), t["id"]))
-                conn.execute("DELETE FROM fields WHERE id = %s", (f["id"],))
         if added:
             if "done" in by_key and by_key.get("summary"):
                 _place_after(conn, t["id"], by_key["done"], by_key["summary"])

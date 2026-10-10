@@ -277,7 +277,7 @@ backend/app/
   recur.py     repeat rules: validation, next occurrence for repeating tasks
   carddav.py   small CardDAV client (address book discovery, multiget, put/delete)
   vcard.py     record <-> vCard conversion that keeps unmanaged properties
-  schema.sql   PostgreSQL schema + migrations (applied at startup)
+  migrate.py   runs migrations/ (numbered .sql / .py files, each once; recorded in schema_migrations)
 radicale/      bundled Radicale image: htpasswd auth, owner-only rights
 frontend/src/
   App.tsx                    shell + hash routing

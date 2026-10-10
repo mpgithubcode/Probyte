@@ -1,6 +1,5 @@
 import os
 import secrets
-from pathlib import Path
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -13,9 +12,9 @@ pool = ConnectionPool(DATABASE_URL, kwargs={"row_factory": dict_row}, open=False
 
 def init_db() -> None:
     pool.open(wait=True, timeout=60)
-    schema = (Path(__file__).parent / "schema.sql").read_text()
+    from . import migrate
     with pool.connection() as conn:
-        conn.execute(schema)
+        migrate.run(conn)
         conn.execute("INSERT INTO app_settings (key, value) VALUES ('secret', %s) ON CONFLICT DO NOTHING",
                      (secrets.token_hex(32),))
 

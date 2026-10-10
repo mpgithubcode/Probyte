@@ -48,7 +48,6 @@ async def lifespan(app: FastAPI):
     init_db()
     with connection() as conn:
         store.ensure_system_fields(conn)
-        store.ensure_record_id_fields(conn)
     builtin_dav.sync_on_startup()
     stop = threading.Event()
     threading.Thread(target=sync.background_loop, args=(stop,), daemon=True).start()
