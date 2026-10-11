@@ -38,9 +38,16 @@ services:
       MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:-}
       MCP_BEARER_USER: ${MCP_BEARER_USER:-}
       MCP_BEARER_SCOPE: ${MCP_BEARER_SCOPE:-write}
+      # Backups (database, calendars, files) by the worker: hours between them (0 = off) and how many to keep
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-24}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      # Key that encrypts stored account passwords; empty = a key file created on the "keys" volume
+      PROBYTE_SECRET_KEY: ${PROBYTE_SECRET_KEY:-}
     volumes:
       - radicale-users:/radicale-users
       - attachments:/data/attachments
+      - backups:/backups:ro                 # listed and downloadable in Settings → Backups
+      - keys:/keys                          # the key that encrypts stored passwords (not in backups: keep a copy)
     ports:
       - "${PROBYTE_PORT:-8080}:8000"
     depends_on:
@@ -56,6 +63,9 @@ services:
     volumes:
       - radicale-users:/radicale-users
       - attachments:/data/attachments
+      - radicale-data:/radicale-data        # backed up (and put back by a restore)
+      - backups:/backups                    # one folder per backup; use a bind mount to keep them on another disk
+      - keys:/keys
     depends_on:
       db:
         condition: service_healthy
@@ -73,6 +83,8 @@ services:
 
 volumes:
   attachments:
+  backups:
+  keys:
   pgdata:
   radicale-data:
   radicale-users:

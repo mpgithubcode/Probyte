@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from . import apiv1, auth, webhooks
 from .db import Jsonb, connection
+from .secretbox import seal, unseal
 
 DESCRIPTION = """
 Read and write your Probyte bases, tables and records from scripts and automation tools
@@ -236,7 +237,7 @@ def _hook_out(h, secret=False):
     out["id"] = str(out["id"])
     out["tables"] = h["table_ids"]
     if secret:
-        out["secret"] = h["secret"]
+        out["secret"] = unseal(h["secret"])
     return out
 
 
@@ -267,7 +268,7 @@ def create_webhook(body: WebhookIn, user=User):
     with connection() as conn:
         h = conn.execute(
             "INSERT INTO webhooks (user_id, name, url, secret, events, table_ids, enabled) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (user["id"], body.name.strip() or "Webhook", url, webhooks.new_secret(), Jsonb(body.events or list(webhooks.EVENTS)),
+            (user["id"], body.name.strip() or "Webhook", url, seal(webhooks.new_secret()), Jsonb(body.events or list(webhooks.EVENTS)),
              Jsonb(_table_ids(conn, user, body.tables)) if body.tables is not None else None, body.enabled)).fetchone()
     return _hook_out(h, secret=True)
 

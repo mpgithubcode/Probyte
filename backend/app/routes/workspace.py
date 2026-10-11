@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from .. import dav, store, sync
 from ..db import connection
 from ..ical import PALETTE
+from ..secretbox import seal, unseal
 from .common import AccountIn, AccountTest, BaseIn, BasePatch, User, _account_public, _own_account, _table_out
 
 router = APIRouter()
@@ -105,7 +106,7 @@ def create_account(body: AccountIn, user=User):
     with connection() as conn:
         a = conn.execute(
             "INSERT INTO caldav_accounts (user_id, name, url, carddav_url, username, password) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *",
-            (user["id"], body.name, body.url, (body.carddav_url or "").strip() or None, body.username, body.password),
+            (user["id"], body.name, body.url, (body.carddav_url or "").strip() or None, body.username, seal(body.password)),
         ).fetchone()
     return _account_public(a)
 
@@ -120,7 +121,7 @@ def update_account(account_id: str, body: AccountIn, user=User):
             body = _checked(body)
             conn.execute(
                 "UPDATE caldav_accounts SET name=%s, url=%s, carddav_url=%s, username=%s, password=COALESCE(%s, password) WHERE id=%s",
-                (body.name, body.url, (body.carddav_url or "").strip() or None, body.username, body.password or None, account_id),
+                (body.name, body.url, (body.carddav_url or "").strip() or None, body.username, seal(body.password) or None, account_id),
             )
         return _account_public(_own_account(conn, account_id, user))
 
@@ -139,7 +140,7 @@ def test_account(body: AccountTest, user=User):
     account = _checked(body).model_dump()
     if body.id and not body.password:
         with connection() as conn:
-            account["password"] = _own_account(conn, body.id, user)["password"]
+            account["password"] = unseal(_own_account(conn, body.id, user)["password"])
     errors = []
 
     def attempt(what, fn):

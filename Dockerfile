@@ -7,6 +7,8 @@ RUN npm run build
 
 FROM python:3.12-slim
 WORKDIR /app
+# pg_dump / pg_restore for backups (a newer client works with the Postgres 16 server)
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app

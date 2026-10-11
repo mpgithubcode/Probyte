@@ -9,7 +9,7 @@ import os
 import signal
 import threading
 
-from . import attachments, jobs, sync, webhooks  # noqa: F401  (importing registers the job handlers)
+from . import attachments, backup, jobs, sync, webhooks  # noqa: F401  (importing registers the job handlers)
 from .db import connection, init_db
 
 log = logging.getLogger("probyte.worker")
@@ -33,6 +33,7 @@ def start(stop: threading.Event):
         (sync.SYNC_INTERVAL, sync.schedule_all, 10),
         (GC_INTERVAL, lambda: jobs.enqueue(None, "attachments_gc", key="attachments_gc"), 60),
         (3600, prune, 120),
+        (3600, backup.backup_if_due, 300),  # daily backups (BACKUP_INTERVAL); checked hourly, so restarts don't skip one
     ]
     for seconds, fn, first in periodic:
         threading.Thread(target=jobs.every, args=(stop, seconds, fn, first), daemon=True).start()

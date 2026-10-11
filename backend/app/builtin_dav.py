@@ -17,6 +17,7 @@ from urllib.parse import urljoin
 import bcrypt
 
 from .db import connection
+from .secretbox import seal, unseal
 
 log = logging.getLogger("probyte.dav")
 
@@ -59,11 +60,11 @@ def provision(conn, user_id) -> str:
     existing = conn.execute("SELECT id FROM caldav_accounts WHERE user_id = %s AND is_builtin", (user_id,)).fetchone()
     if existing:
         conn.execute("UPDATE caldav_accounts SET url = %s, username = %s, password = %s WHERE id = %s",
-                     (RADICALE_URL, user["username"], password, existing["id"]))
+                     (RADICALE_URL, user["username"], seal(password), existing["id"]))
     else:
         conn.execute(
             "INSERT INTO caldav_accounts (user_id, name, url, username, password, is_builtin) VALUES (%s,%s,%s,%s,%s,true)",
-            (user_id, ACCOUNT_NAME, RADICALE_URL, user["username"], password),
+            (user_id, ACCOUNT_NAME, RADICALE_URL, user["username"], seal(password)),
         )
     write_htpasswd(conn)
     return password
@@ -76,7 +77,7 @@ def info(conn, user_id) -> dict:
         "provisioned": bool(acc),
         "public_url": RADICALE_PUBLIC_URL or None,
         "username": acc["username"] if acc else None,
-        "password": acc["password"] if acc else None,
+        "password": unseal(acc["password"]) if acc else None,
     }
 
 

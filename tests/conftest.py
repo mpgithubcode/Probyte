@@ -12,13 +12,16 @@ RADICALE = os.environ.get("RADICALE_URL", "http://radicale:5232").rstrip("/")
 
 
 class Client(requests.Session):
-    """A logged-in test user with small helpers."""
+    """A logged-in test user with small helpers. With a password: signs in to an existing account instead."""
 
-    def __init__(self, username=None):
+    def __init__(self, username=None, password=None):
         super().__init__()
         self.username = username or "t" + uuid.uuid4().hex[:10]
-        self.password = "test-pass-123"
-        r = self.post(API + "/auth/register", json={"username": self.username, "password": self.password})
+        self.password = password or "test-pass-123"
+        if password:
+            r = self.post(API + "/auth/login", json={"username": self.username, "password": self.password})
+        else:
+            r = self.post(API + "/auth/register", json={"username": self.username, "password": self.password})
         r.raise_for_status()
 
     def j(self, method, path, **kw):
@@ -84,6 +87,13 @@ class Client(requests.Session):
 @pytest.fixture
 def user():
     return Client()
+
+
+@pytest.fixture
+def admin():
+    """The server's admin account (created by scripts/test.sh)."""
+    name, pw = os.environ.get("PROBYTE_ADMIN", "testadmin:test-admin-pass-1").split(":", 1)
+    return Client(name, pw)
 
 
 @pytest.fixture

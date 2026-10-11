@@ -17,6 +17,7 @@ from .carddav import CardDAV
 from .dav import TIMEOUT as DAV_TIMEOUT, Collection, check_url, path_of
 from .db import Jsonb, connection
 from .ical import build_ical, component_kind, from_mixed, ical_to_values, to_mixed
+from .secretbox import unseal
 from .store import DAV_KINDS, apply_task_auto, ensure_choices, get_fields, get_table, insert_record
 
 log = logging.getLogger("probyte.sync")
@@ -28,11 +29,11 @@ SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "300"))      # seconds betwe
 
 def dav_client(account) -> caldav.DAVClient:
     return caldav.DAVClient(url=check_url(account["url"]), username=account["username"] or None,
-                            password=account["password"] or None, timeout=DAV_TIMEOUT)
+                            password=unseal(account["password"]) or None, timeout=DAV_TIMEOUT)
 
 
 def card_client(account) -> CardDAV:
-    return CardDAV(check_url(account.get("carddav_url") or account["url"]), account["username"] or None, account["password"] or None)
+    return CardDAV(check_url(account.get("carddav_url") or account["url"]), account["username"] or None, unseal(account["password"]) or None)
 
 
 def list_addressbooks(account) -> list[dict]:
@@ -131,7 +132,7 @@ def _sync(table_id: str, full: bool) -> dict:
     by_key = {f["system_key"]: f for f in fields if f["system_key"]}
     sync_state = dict(table.get("sync_state") or {})
     url = table["calendar_url"] if table["calendar_url"].endswith("/") else table["calendar_url"] + "/"
-    coll = Collection(url, account["username"] or None, account["password"] or None,
+    coll = Collection(url, account["username"] or None, unseal(account["password"]) or None,
                       "addressbook" if kind == "contacts" else "calendar")
 
     def to_data(vals: dict, base: dict) -> dict:

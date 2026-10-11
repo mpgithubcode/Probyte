@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from .. import remote, store, sync, values
 from ..compute import Engine
 from ..db import Jsonb, connection
+from ..secretbox import unseal
 from .common import COMPONENTS, FastJSON, FieldIn, FieldPatch, FormulaCheck, RelinkIn, TableIn, TablePatch, User, _own_account, _own_field, _table_out
 
 router = APIRouter()
@@ -183,7 +184,7 @@ def _delete_on_server(conn, t) -> str:
     a = conn.execute("SELECT * FROM caldav_accounts WHERE id = %s", (t["account_id"],)).fetchone()
     session = requests.Session()
     if a["username"]:
-        session.auth = (a["username"], a["password"] or "")
+        session.auth = (a["username"], unseal(a["password"]) or "")
     try:
         if info["builtin"]:
             r = session.delete(t["calendar_url"], timeout=30)

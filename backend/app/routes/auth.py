@@ -6,8 +6,9 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from .. import auth, builtin_dav, store
+from .. import auth, builtin_dav, ratelimit, store
 from ..db import Jsonb, connection
+from ..secretbox import unseal
 from .common import Credentials, PasswordChange, User
 
 router = APIRouter()
@@ -50,10 +51,14 @@ def register(body: Credentials, request: Request, response: Response):
 
 @router.post("/api/auth/login")
 def login(body: Credentials, request: Request, response: Response):
+    name = body.username.strip().lower()
+    ratelimit.check(f"user:{name}", request)
     with connection() as conn:
-        user = conn.execute("SELECT * FROM users WHERE username = %s", (body.username.strip().lower(),)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE username = %s", (name,)).fetchone()
         if not user or not auth.verify_password(body.password, user["password_hash"]):
+            ratelimit.failed(f"user:{name}", request)
             raise HTTPException(401, "Wrong username or password")
+        ratelimit.succeeded(f"user:{name}")
         auth.start_session(conn, user["id"], request, response)
     return auth.public_user(user)
 
@@ -90,9 +95,11 @@ def update_prefs(body: PrefsIn, user=User):
 @router.post("/api/auth/password")
 def change_password(body: PasswordChange, request: Request, response: Response, user=User):
     auth.validate_credentials(user["username"], body.new_password)
+    ratelimit.check(f"user:{user['username']}", request)
     with connection() as conn:
         row = conn.execute("SELECT password_hash FROM users WHERE id = %s", (user["id"],)).fetchone()
         if not auth.verify_password(body.current_password, row["password_hash"]):
+            ratelimit.failed(f"user:{user['username']}", request)
             raise HTTPException(400, "Current password is wrong")
         conn.execute("UPDATE users SET password_hash = %s WHERE id = %s", (auth.hash_password(body.new_password), user["id"]))
         conn.execute("DELETE FROM sessions WHERE user_id = %s", (user["id"],))  # log out other devices
@@ -115,7 +122,7 @@ def dav_check(user=User):
         acc = conn.execute("SELECT username, password FROM caldav_accounts WHERE user_id = %s AND is_builtin", (user["id"],)).fetchone()
     if not acc:
         raise HTTPException(400, "Enable your CalDAV login first")
-    return builtin_dav.check_public(acc["username"], acc["password"])
+    return builtin_dav.check_public(acc["username"], unseal(acc["password"]))
 
 
 @router.post("/api/dav/reset")

@@ -1023,3 +1023,9 @@ button.cal-day { font: inherit; color: inherit; text-align: left; background: va
 .grid td.frozen { position: sticky; z-index: 1; background: var(--bg); }
 .grid th.frozen { position: sticky; z-index: 3; background: var(--bg-soft); }
 .grid .frozen-last { box-shadow: inset -1px 0 0 var(--border-strong), 4px 0 6px -4px rgba(0, 0, 0, 0.18); }
+
+/* Settings → Backups */
+.backup-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.backup-row { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.backup-row:last-child { border-bottom: 0; }
+.backup-name { flex: 1; min-width: 160px; font-variant-numeric: tabular-nums; }

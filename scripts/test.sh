@@ -19,6 +19,9 @@ trap cleanup EXIT
 docker compose up -d --build --wait >/dev/null 2>&1
 for i in $(seq 60); do docker compose exec -T app python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/auth/config')" >/dev/null 2>&1 && break; sleep 1; done
 
+# an admin account for the tests that need one (Settings → Backups); the first sign-up is a test's own user otherwise
+docker compose exec -T app python -m app.admin create-user testadmin --admin --password=test-admin-pass-1 >/dev/null 2>&1 || true
+
 target=tests
 cmd="python -m pytest -q -p no:cacheprovider --rootdir tests -c /dev/null"
 if [ "${1:-}" = bench ]; then shift; cmd="pip install -q 'psycopg[binary]' 2>/dev/null; python tests/bench/bench.py"; target=""; fi
@@ -28,7 +31,7 @@ case "${1:-}" in tests/*) target="" ;; esac  # a file or test id given: run just
 args=""; [ $# -gt 0 ] && args=$(printf "%q " "$@")  # keep quoted pytest arguments (-k "a or b") intact
 docker rm -f probyte-test-runner >/dev/null 2>&1 || true
 docker create --name probyte-test-runner --network probyte-test_default -w /work \
-  -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 "$PLAYWRIGHT_IMAGE" \
-  bash -c "pip install -q pytest requests playwright==1.48.0 2>/dev/null && $cmd $target $args" >/dev/null
+  -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 -e PROBYTE_ADMIN=testadmin:test-admin-pass-1 "$PLAYWRIGHT_IMAGE" \
+  bash -c "pip install -q pytest requests playwright==1.48.0 'psycopg[binary]' 2>/dev/null && $cmd $target $args" >/dev/null
 docker cp tests probyte-test-runner:/work/tests >/dev/null
 docker start -a probyte-test-runner

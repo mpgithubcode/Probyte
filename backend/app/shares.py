@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import attachments, auth, store
+from . import attachments, auth, ratelimit, store
 from .compute import COMPUTED_TYPES, Engine
 from .db import Jsonb, app_secret, connection
 from .routes.common import FastJSON
@@ -284,12 +284,15 @@ def core_meta(token: str, cookie: str | None) -> dict:
                        "views": [{"id": str(v["id"]), "name": v["name"], "type": v["type"]} for v in i["views"]]} for i in items]}
 
 
-def core_unlock(token: str, password: str) -> tuple[str, str]:
+def core_unlock(token: str, password: str, request: Request | None = None) -> tuple[str, str]:
     """Returns (cookie name, cookie value) proving the password was entered."""
     with connection() as conn:
         s = _load(conn, token)
+    ratelimit.check(f"share:{s['id']}", request)
     if not s["password_hash"] or not auth.verify_password(password, s["password_hash"]):
+        ratelimit.failed(f"share:{s['id']}", request)
         raise HTTPException(401, "Wrong password")
+    ratelimit.succeeded(f"share:{s['id']}")
     return _cookie_name(s), _cookie_value(s)
 
 
@@ -403,7 +406,7 @@ def share_meta(token: str, request: Request):
 
 @router.post("/api/public/{token}/unlock")
 def share_unlock(token: str, body: Unlock, request: Request, response: Response):
-    name, value = core_unlock(token, body.password)
+    name, value = core_unlock(token, body.password, request)
     response.set_cookie(name, value, max_age=30 * 86400, httponly=True, samesite="lax",
                         secure=request.url.scheme == "https", path=f"/api/public/{token}")
     return {"ok": True}

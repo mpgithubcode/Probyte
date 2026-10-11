@@ -14,11 +14,11 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urlencode, urlparse
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from . import auth
+from . import auth, ratelimit
 from .db import Jsonb, app_secret, connection
 
 router = APIRouter()
@@ -227,9 +227,16 @@ async def authorize_submit(request: Request):
             with connection() as c:
                 return c.execute("SELECT id, username, password_hash FROM users WHERE username = %s",
                                  ((p.get("username") or "").strip().lower(),)).fetchone()
+        account = f"user:{(p.get('username') or '').strip().lower()}"
+        try:
+            ratelimit.check(account, request)
+        except HTTPException as e:
+            return _page(_form(p, client, None, [], "", e.detail), 429)
         row = await run_in_threadpool(login)
         if not row or not auth.verify_password(p.get("password") or "", row["password_hash"]):
+            ratelimit.failed(account, request)
             return _page(_form(p, client, None, [], "", "Wrong username or password."), 401)
+        ratelimit.succeeded(account)
         user = {"id": row["id"], "username": row["username"]}
     access = "write" if p.get("access") == "write" else "read"
     owned = {str(b["id"]) for b in await run_in_threadpool(_bases, user["id"])}

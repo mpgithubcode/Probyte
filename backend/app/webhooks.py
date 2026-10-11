@@ -27,6 +27,7 @@ from psycopg.types.json import Jsonb
 
 from . import jobs
 from .db import connection
+from .secretbox import unseal
 
 log = logging.getLogger("probyte.webhooks")
 
@@ -87,7 +88,7 @@ def _post(hook, body: bytes, event: str, delivery: str) -> tuple[int | None, str
         check_url(hook["url"])
     except HTTPException as e:
         return None, e.detail
-    sig = hmac.new(hook["secret"].encode(), body, hashlib.sha256).hexdigest()
+    sig = hmac.new(unseal(hook["secret"]).encode(), body, hashlib.sha256).hexdigest()
     req = urllib.request.Request(hook["url"], data=body, method="POST", headers={
         "Content-Type": "application/json", "User-Agent": "Probyte-Webhooks/1",
         "X-Probyte-Event": event, "X-Probyte-Delivery": delivery, "X-Probyte-Signature": f"sha256={sig}",

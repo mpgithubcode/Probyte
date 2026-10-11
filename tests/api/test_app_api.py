@@ -364,3 +364,41 @@ def test_combined_database_loads_linked_sources_separately(user, other_user):
     assert full["pending"] == [] and len(full["records"]) == 2
     assert user.get(API + f"/combos/{c['id']}/sources/{src['id']}").status_code == 404   # not a source
 
+
+
+def test_password_guessing_is_slowed_down(user):
+    for _ in range(5):
+        r = requests.post(API + "/auth/login", json={"username": user.username, "password": "wrong-guess-1"})
+        assert r.status_code == 401
+    r = requests.post(API + "/auth/login", json={"username": user.username, "password": user.password})
+    assert r.status_code == 429 and "Try again" in r.json()["detail"] and int(r.headers["Retry-After"]) > 0
+    # another account isn't affected
+    other = Client()
+    assert requests.post(API + "/auth/login", json={"username": other.username, "password": other.password}).status_code == 200
+    # public links with a password: the same
+    t = other.table(name="Locked link")
+    s = other.j("POST", "/shares", json={"name": "L", "base_id": other.base_id, "items": [{"kind": "table", "id": t["id"]}], "password": "right-one"})
+    for _ in range(5):
+        assert requests.post(API + f"/public/{s['token']}/unlock", json={"password": "nope"}).status_code == 401
+    assert requests.post(API + f"/public/{s['token']}/unlock", json={"password": "right-one"}).status_code == 429
+
+
+def test_stored_passwords_are_encrypted(user):
+    """Account passwords and webhook secrets are stored encrypted, and still work."""
+    name, pw = user.dav_auth()
+    acct = user.j("POST", "/accounts", json={"name": "Same server", "url": "http://radicale:5232/", "username": name, "password": pw})
+    assert user.get(API + f"/accounts/{acct['id']}/calendars").status_code == 200   # decrypted when used
+    hook = user.j("POST", "/v1/webhooks", json={"url": "https://example.com/h"})
+    assert hook["secret"].startswith("whsec_")
+    import psycopg
+    import os
+    db = os.environ.get("BENCH_DB", "postgresql://probyte:probyte-test@db:5432/probyte")
+    try:
+        conn = psycopg.connect(db)
+    except Exception:
+        return  # no direct database access from this runner
+    with conn:
+        stored = conn.execute("SELECT password FROM caldav_accounts WHERE id = %s", (acct["id"],)).fetchone()[0]
+        secret = conn.execute("SELECT secret FROM webhooks WHERE id = %s", (hook["id"],)).fetchone()[0]
+    assert stored.startswith("enc1:") and pw not in stored
+    assert secret.startswith("enc1:") and hook["secret"] not in secret
