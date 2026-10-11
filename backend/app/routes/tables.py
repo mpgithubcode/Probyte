@@ -1,4 +1,5 @@
 """Tables (local, synced and linked) and their fields."""
+import logging
 
 import requests
 from fastapi import APIRouter, HTTPException
@@ -11,6 +12,7 @@ from ..secretbox import unseal
 from .common import COMPONENTS, FastJSON, FieldIn, FieldPatch, FormulaCheck, RelinkIn, TableIn, TablePatch, User, _own_account, _own_field, _table_out
 
 router = APIRouter()
+log = logging.getLogger("probyte.trash")
 
 
 # ======================================================================== tables
@@ -203,18 +205,107 @@ def _delete_on_server(conn, t) -> str:
 
 
 @router.delete("/api/tables/{table_id}")
-def delete_table(table_id: str, delete_on_server: bool | None = None, user=User):
-    """Delete a table. For a synced table, its data on the DAV server goes too: by default when it's on Probyte's own
-    server (the whole calendar / address book), and for other accounts only with ?delete_on_server=true (each item)."""
+def delete_table(table_id: str, delete_on_server: bool | None = None, forever: bool = False, user=User):
+    """Move a table to the trash (restorable for 30 days), or with ?forever=true delete it now.
+    For a synced table, its data on the DAV server goes too when it's really deleted: by default when it's on
+    Probyte's own server (the whole calendar / address book), for other accounts only with ?delete_on_server=true."""
     with connection() as conn:
         t = store.get_table(conn, table_id, user["id"])
         info = _dav_info(conn, t)
-        server = "none"
-        if info and (delete_on_server if delete_on_server is not None else info["builtin"]):
-            server = _delete_on_server(conn, t)
-        conn.execute("DELETE FROM tables WHERE id = %s", (table_id,))
-        remote.invalidate(table_id)
+        on_server = bool(info and (delete_on_server if delete_on_server is not None else info["builtin"]))
+        if not forever:
+            conn.execute("UPDATE tables SET trashed_at = now(), trash_delete_on_server = %s WHERE id = %s", (on_server, table_id))
+            return {"ok": True, "trashed": True, "server": "deleted with the table, in 30 days" if on_server else "none"}
+        server = purge_table(conn, t, on_server)
     return {"ok": True, "server": server}
+
+
+def purge_table(conn, t, on_server: bool) -> str:
+    """Delete a table for good (and its data on the DAV server when asked)."""
+    server = _delete_on_server(conn, t) if on_server and _dav_info(conn, t) else "none"
+    conn.execute("DELETE FROM tables WHERE id = %s", (t["id"],))
+    remote.invalidate(t["id"])
+    return server
+
+
+# ======================================================================== trash
+
+@router.get("/api/trash")
+def trash(user=User):
+    """Tables and records deleted in the last 30 days."""
+    with connection() as conn:
+        tables = conn.execute(
+            "SELECT t.id, t.name, t.kind, t.base_id, t.trashed_at, t.trash_delete_on_server, b.name AS base_name, "
+            "(SELECT count(*) FROM records r WHERE r.table_id = t.id AND NOT r.deleted) AS records "
+            "FROM tables t JOIN bases b ON b.id = t.base_id WHERE t.user_id = %s AND t.trashed_at IS NOT NULL ORDER BY t.trashed_at DESC",
+            (user["id"],)).fetchall()
+        records = conn.execute(
+            "SELECT r.id, r.table_id, t.name AS table_name, r.deleted_at, r.data -> (SELECT f.id::text FROM fields f "
+            "  WHERE f.table_id = t.id AND f.is_primary LIMIT 1) AS title "
+            "FROM record_trash r JOIN tables t ON t.id = r.table_id WHERE t.user_id = %s AND t.trashed_at IS NULL "
+            "ORDER BY r.deleted_at DESC LIMIT 500", (user["id"],)).fetchall()
+    return {"tables": tables, "records": records}
+
+
+class Ids(BaseModel):
+    ids: list[str]
+
+
+@router.post("/api/trash/records/restore")
+def restore_records(body: Ids, user=User):
+    """Put records back (e.g. Undo after deleting); each back in its table, synced ones on the server again."""
+    restored = []
+    with connection() as conn:
+        for rid in body.ids[:5000]:
+            try:
+                with conn.transaction():
+                    store.restore_record(conn, rid, user["id"])
+                restored.append(rid)
+            except HTTPException:
+                pass
+    return {"restored": restored}
+
+
+@router.post("/api/trash/records/delete")
+def purge_records(body: Ids, user=User):
+    """Empty records from the trash for good."""
+    with connection() as conn:
+        n = conn.execute("DELETE FROM record_trash r USING tables t WHERE r.table_id = t.id AND t.user_id = %s AND r.id = ANY(%s::uuid[])",
+                         (user["id"], body.ids)).rowcount
+    return {"deleted": n}
+
+
+@router.post("/api/trash/tables/{table_id}/restore")
+def restore_table(table_id: str, user=User):
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"], trashed=True)
+        conn.execute("UPDATE tables SET trashed_at = NULL, trash_delete_on_server = false WHERE id = %s", (table_id,))
+        if store.is_synced(store.get_table(conn, table_id)):
+            store.schedule_sync(table_id, 0, conn=conn)  # catch up with what changed on the server meanwhile
+    return {"ok": True}
+
+
+@router.delete("/api/trash/tables/{table_id}")
+def purge_trashed_table(table_id: str, user=User):
+    """Delete a table in the trash for good now."""
+    with connection() as conn:
+        t = store.get_table(conn, table_id, user["id"], trashed=True)
+        if not t["trashed_at"]:
+            raise HTTPException(400, "Only tables in the trash can be deleted for good here")
+        server = purge_table(conn, t, t["trash_delete_on_server"])
+    return {"ok": True, "server": server}
+
+
+def purge_expired(days: int = 30):
+    """Run by the worker: what's been in the trash longer than `days` is deleted for good."""
+    with connection() as conn:
+        for t in conn.execute("SELECT * FROM tables WHERE trashed_at < now() - make_interval(days => %s)", (days,)).fetchall():
+            try:
+                with conn.transaction():
+                    purge_table(conn, t, t["trash_delete_on_server"])
+            except Exception as e:  # e.g. the calendar server is down: try again next time
+                log.warning("couldn't purge table %s: %s", t["id"], e)
+        conn.execute("DELETE FROM record_trash WHERE deleted_at < now() - make_interval(days => %s)", (days,))
 
 
 @router.post("/api/tables/{table_id}/sync")

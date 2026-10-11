@@ -51,10 +51,11 @@ def ensure_base(conn, user_id):
     return b or conn.execute("INSERT INTO bases (user_id, name) VALUES (%s, 'My Base') RETURNING *", (user_id,)).fetchone()
 
 
-def get_table(conn, table_id, user_id=None):
-    """Load a table; with user_id, only if that user owns it (and an API key may use its base)."""
-    t = conn.execute("SELECT * FROM tables WHERE id = %s AND (%s::uuid IS NULL OR user_id = %s)",
-                     (table_id, user_id, user_id)).fetchone()
+def get_table(conn, table_id, user_id=None, trashed=False):
+    """Load a table; with user_id, only if that user owns it (and an API key may use its base).
+    Tables in the trash count as gone, except with trashed=True (restoring them)."""
+    t = conn.execute("SELECT * FROM tables WHERE id = %s AND (%s::uuid IS NULL OR user_id = %s) AND (trashed_at IS NULL OR %s)",
+                     (table_id, user_id, user_id, trashed)).fetchone()
     if not t or (user_id and not base_allowed(t["base_id"])):
         not_found("Table not found")
     return t
@@ -229,7 +230,7 @@ def ensure_choices(conn, field, values):
 # ---------------------------------------------------------------- field validation
 
 def _own_table_id(conn, table_id, user_id):
-    if not table_id or not conn.execute("SELECT 1 FROM tables WHERE id = %s AND user_id = %s", (table_id, user_id)).fetchone():
+    if not table_id or not conn.execute("SELECT 1 FROM tables WHERE id = %s AND user_id = %s AND trashed_at IS NULL", (table_id, user_id)).fetchone():
         bad("Choose one of your tables")
     return str(table_id)
 
@@ -657,8 +658,13 @@ def advance_recurring(table, keys, old, data, patch):
 
 
 def delete_record(conn, record_id, user_id=None):
-    r = conn.execute("SELECT * FROM records WHERE id = %s", (record_id,)).fetchone() or not_found("Record not found")
+    r = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted", (record_id,)).fetchone() or not_found("Record not found")
     table = get_table(conn, r["table_id"], user_id)
+    # a copy goes to the trash (30 days), so the record can be restored
+    conn.execute(
+        "INSERT INTO record_trash (id, table_id, data, seq, caldav_uid, caldav_raw, created_at, created_by, deleted_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, deleted_at = now()",
+        (record_id, r["table_id"], Jsonb(r["data"]), r["seq"], r["caldav_uid"], r["caldav_raw"], r["created_at"], r["created_by"], user_id))
     # Remove this record from link fields pointing at it.
     for f in conn.execute("SELECT id FROM fields WHERE type = 'link' AND options->>'foreignTableId' = %s",
                           (str(r["table_id"]),)).fetchall():
@@ -670,6 +676,37 @@ def delete_record(conn, record_id, user_id=None):
     else:
         conn.execute("DELETE FROM records WHERE id = %s", (record_id,))
     _changed(conn, table, "record.deleted", record_id)
+    return table
+
+
+def restore_record(conn, record_id, user_id=None):
+    """Bring a record back from the trash (with its links). A synced one goes back to the calendar / address book."""
+    t = conn.execute("SELECT * FROM record_trash WHERE id = %s", (record_id,)).fetchone() or not_found("Not in the trash")
+    table = get_table(conn, t["table_id"], user_id)
+    fields = get_fields(conn, t["table_id"])
+    live = conn.execute("SELECT * FROM records WHERE id = %s", (record_id,)).fetchone()
+    if live:  # deleted here but not yet on the server: just un-delete it
+        conn.execute("UPDATE records SET deleted = false, sync_status = 'dirty', updated_at = now() WHERE id = %s", (record_id,))
+    else:
+        known = {str(f["id"]) for f in fields}
+        data = {k: v for k, v in t["data"].items() if k in known}
+        # links only to records that still exist
+        for f in fields:
+            fid = str(f["id"])
+            if f["type"] == "link" and isinstance(data.get(fid), list):
+                ok = {str(x["id"]) for x in conn.execute("SELECT id FROM records WHERE id = ANY(%s::uuid[]) AND NOT deleted",
+                                                         ([str(x) for x in data[fid]],)).fetchall()}
+                data[fid] = [x for x in data[fid] if str(x) in ok]
+        synced = table["kind"] in DAV_KINDS
+        conn.execute(
+            "INSERT INTO records (id, table_id, data, seq, caldav_uid, sync_status, created_at, created_by, updated_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (record_id, t["table_id"], Jsonb(data), t["seq"], t["caldav_uid"] if synced else None, "dirty" if synced else "synced",
+             t["created_at"], t["created_by"], user_id))
+        _sync_links(conn, fields, record_id, t["table_id"], {}, data)
+    conn.execute("DELETE FROM record_trash WHERE id = %s", (record_id,))
+    conn.execute("DELETE FROM record_tombstones WHERE record_id = %s", (record_id,))  # it's back: no longer "deleted"
+    _changed(conn, table, "record.created", record_id)
     return table
 
 
@@ -746,7 +783,7 @@ def resolve_combo(conn, combo, engine=None):
     eng = engine or Engine(conn)
     sources, field_index = [], {}
     for s in combo["sources"]:
-        t = conn.execute("SELECT id, name, kind FROM tables WHERE id = %s AND user_id IS NOT DISTINCT FROM %s",
+        t = conn.execute("SELECT id, name, kind FROM tables WHERE id = %s AND user_id IS NOT DISTINCT FROM %s AND trashed_at IS NULL",
                          (s["table_id"], combo["user_id"])).fetchone()
         if not t:
             continue

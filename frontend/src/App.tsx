@@ -6,10 +6,12 @@ import { LoginPage } from "./components/LoginPage";
 import type { Tab as SettingsTab } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import type { User, Workspace } from "./types";
+import { onToast, type Toast } from "./toast";
 import { setWeekStart } from "./util";
 
 const ComboModal = lazy(() => import("./components/ComboModal").then((m) => ({ default: m.ComboModal })));
 const NewTableModal = lazy(() => import("./components/NewTableModal").then((m) => ({ default: m.NewTableModal })));
+const TrashModal = lazy(() => import("./components/TrashModal").then((m) => ({ default: m.TrashModal })));
 const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
 
 interface Route { kind: "table" | "combo"; id: string; viewId?: string }
@@ -44,13 +46,15 @@ export default function App() {
 function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogout: () => void; onUserChanged: (u: User) => void }) {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [route, setRoute] = useState<Route | null>(parseHash);
-  const [modal, setModal] = useState<"table" | "combo" | "settings" | null>(null);
+  const [modal, setModal] = useState<"table" | "combo" | "settings" | "trash" | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
   const openSettings = (tab: SettingsTab = "account") => { setSettingsTab(tab); setModal("settings"); setDrawer(false); };
   const [modalBase, setModalBase] = useState<string | undefined>(undefined);
   const [drawer, setDrawer] = useState(false);
   const openModal = (m: "table" | "combo", baseId?: string) => { setModalBase(baseId ?? ws?.bases[0]?.id); setModal(m); setDrawer(false); };
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToastState] = useState<Toast | null>(null);
+  const setToast = useCallback((m: string | null) => setToastState(m ? { id: Date.now(), message: m } : null), []);
+  useEffect(() => onToast(setToastState), []);
 
   const loadWs = useCallback(() => api.get<Workspace>("/workspace").then(setWs).catch((e) => setToast(e.message)), []);
 
@@ -65,7 +69,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 6000);
+    const t = setTimeout(() => setToastState(null), toast.action ? 8000 : 6000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -90,7 +94,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
         onOpen={(kind, id) => { go({ kind, id }); setDrawer(false); }}
         onNewTable={(b) => openModal("table", b)} onNewCombo={(b) => openModal("combo", b)}
         onSettings={() => openSettings()}
-        onLogout={logout} onChanged={loadWs} onError={onError} />
+        onLogout={logout} onChanged={loadWs} onError={onError} onTrash={() => { setModal("trash"); setDrawer(false); }} />
 
       {route ? (
         <DatasetPage key={`${route.kind}:${route.id}`} kind={route.kind} id={route.id} viewId={route.viewId} tables={ws.tables} me={user}
@@ -121,9 +125,19 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
           onSaved={(id) => { loadWs(); go({ kind: "combo", id }); }} />
       )}
       {modal === "settings" && <SettingsModal user={user} ws={ws} initialTab={settingsTab} onClose={() => setModal(null)} onAccountsChanged={loadWs} onUserChanged={onUserChanged} />}
+        {modal === "trash" && <TrashModal onClose={() => setModal(null)} onChanged={loadWs} />}
       </Suspense>
 
-      {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" onClick={() => setToastState(null)}>
+          <span>{toast.message}</span>
+          {toast.action && (
+            <button className="toast-action" onClick={(e) => { e.stopPropagation(); setToastState(null); Promise.resolve(toast.action!.run()).catch((err) => setToast(err.message)); }}>
+              {toast.action.label}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

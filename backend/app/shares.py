@@ -170,7 +170,8 @@ def _items(conn, s):
     out = []
     for it in s["items"]:
         table = conn.execute(f"SELECT id, name{', kind' if it['kind'] == 'table' else ''} FROM {'tables' if it['kind'] == 'table' else 'combos'} "
-                             "WHERE id = %s AND user_id = %s AND base_id = %s", (it["id"], s["user_id"], s["base_id"])).fetchone()
+                             f"WHERE id = %s AND user_id = %s AND base_id = %s{' AND trashed_at IS NULL' if it['kind'] == 'table' else ''}",
+                             (it["id"], s["user_id"], s["base_id"])).fetchone()
         if not table:
             continue
         col = "table_id" if it["kind"] == "table" else "combo_id"

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
-import { applyView, choiceColor, debounce, hiddenIds, orderFields, timeAgo } from "../util";
+import { applyView, choiceColor, debounce, hiddenIds, orderFields, recordTitle, timeAgo } from "../util";
 import { RefsContext, invalidateTitles } from "./Cells";
 import { Icon, tableIcon } from "./Icon";
 import { Popover, usePopover } from "./Overlay";
@@ -10,6 +10,7 @@ import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
 import { VIEW_TYPES, ViewOptions, ViewTabs } from "./Toolbar";
 import { CAN_ALL, type Ops } from "./viewTypes";
 import { buttonAction } from "../buttonAction";
+import { showToast } from "../toast";
 import { cached, loadComboSource, loadDataset, onTableChange, refreshDataset, remember } from "../data";
 
 // Each view and the larger dialogs load on first use, keeping the initial download small.
@@ -153,6 +154,13 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     try { return await p; } finally { inflight.current--; }
   };
 
+  const restoreRecords = async (ids: string[]) => {
+    const r = await api.post<{ restored: string[] }>("/trash/records/restore", { ids });
+    invalidateTitles();
+    refresh();
+    if (r.restored.length < ids.length) onError(`${ids.length - r.restored.length} couldn't be restored`);
+  };
+
   const doCreate = async (data: Record<string, any>, openAfter: boolean, target?: CreateTarget) => {
     if (!ds) return;
     try {
@@ -196,12 +204,17 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       patchLocal(rec.id, () => null);
       setOpenRec(null);
       track(api.del(`/tables/${rec.table_id}/records/${rec.id}`))
-        .then(() => { invalidateTitles(); refreshSoon(); })
+        .then(() => {
+          invalidateTitles(); refreshSoon();
+          showToast(`Deleted “${ds ? recordTitle(ds.fields, rec) : "record"}”`, { label: "Undo", run: () => restoreRecords([rec.id]) });
+        })
         .catch((e) => { onError(e.message); refresh(); });
     },
     bulk(action, recs, patch = {}) {
       if (!ds || !recs.length) return;
       const ids = new Set(recs.map((r) => r.id));
+      // what Undo puts back: the records (delete), or each record's previous values (edit; up to 500 records)
+      const before = recs.map((r) => ({ id: r.id, table_id: r.table_id, data: Object.fromEntries(Object.keys(patch).map((k) => [k, r.data[k] ?? null])) }));
       if (action === "delete") setDs((d) => d && { ...d, records: d.records.filter((r) => !ids.has(r.id)) });
       else setDs((d) => d && { ...d, records: d.records.map((r) => (ids.has(r.id) ? { ...r, data: { ...r.data, ...patch } } : r)) });
       track(api.post<{ done: number; errors: { id: string; error: string }[] }>("/records/bulk", {
@@ -209,9 +222,15 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
         items: recs.map((r) => ({ id: r.id, table_id: r.table_id })),
       }))
         .then((res) => {
-          if (res.errors.length) onError(`${res.errors.length} of ${recs.length} couldn't be ${action === "delete" ? "deleted" : "changed"}: ${res.errors[0].error}`);
           invalidateTitles();
           refresh();
+          if (res.errors.length) onError(`${res.errors.length} of ${recs.length} couldn't be ${action === "delete" ? "deleted" : "changed"}: ${res.errors[0].error}`);
+          else if (action === "delete") showToast(`Deleted ${res.done} record${res.done === 1 ? "" : "s"}`, { label: "Undo", run: () => restoreRecords([...ids]) });
+          else if (before.length <= 500) showToast(`Changed ${res.done} record${res.done === 1 ? "" : "s"}`, { label: "Undo", run: async () => {
+            await Promise.all(before.map((b) => api.patch(ds.kind === "table" ? `/tables/${b.table_id}/records/${b.id}` : `/combos/${ds.id}/records/${b.id}`,
+              { data: b.data, table_id: b.table_id })));
+            refresh();
+          } });
         })
         .catch((e) => { onError(e.message); refresh(); });
     },
@@ -303,6 +322,14 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     try {
       await api.del(ds.kind === "table" ? `/tables/${ds.id}${ds.dav ? `?delete_on_server=${onServer}` : ""}` : `/combos/${ds.id}`);
       onWorkspaceChanged(true);
+      if (ds.kind === "table") {
+        const id = ds.id;
+        showToast(`Moved “${ds.name}” to the trash`, { label: "Undo", run: async () => {
+          await api.post(`/trash/tables/${id}/restore`);
+          onWorkspaceChanged();
+          location.hash = `/table/${id}`;
+        } });
+      }
     } catch (e) { onError((e as Error).message); }
   };
 
@@ -402,11 +429,11 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
                 ))}
                 {confirmDelete ? (
                   <button className="menu-item danger" onClick={deleteDataset}>
-                    <Icon name="trash" size={14} /> Click again to delete
+                    <Icon name="trash" size={14} /> {ds.kind === "combo" ? "Click again to delete" : "Click again to move to the trash"}
                   </button>
                 ) : (
                   <button className="menu-item danger" onClick={() => setConfirmDelete(true)}>
-                    <Icon name="trash" size={14} /> Delete {ds.kind === "combo" ? "combined database" : "database"}
+                    <Icon name="trash" size={14} /> {ds.kind === "combo" ? "Delete combined database" : "Move to trash"}
                   </button>
                 )}
                 {confirmDelete && ds.dav && (ds.dav.shared ? (
@@ -414,8 +441,8 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
                 ) : (
                   <label className="inline-check pad small">
                     <input type="checkbox" checked={deleteOnServer ?? ds.dav.builtin} onChange={(e) => setDeleteOnServer(e.target.checked)} />
-                    <span>{ds.dav.builtin ? `Also delete the ${ds.dav.collection} on Probyte's server (phones lose it too)`
-                      : `Also delete its ${ds.dav.items} item${ds.dav.items === 1 ? "" : "s"} from ${ds.dav.account ?? "the account"}`}</span>
+                    <span>{ds.dav.builtin ? `When the trash is emptied (after 30 days), also delete the ${ds.dav.collection} on Probyte's server (phones lose it then)`
+                      : `When the trash is emptied (after 30 days), also delete its ${ds.dav.items} item${ds.dav.items === 1 ? "" : "s"} from ${ds.dav.account ?? "the account"}`}</span>
                   </label>
                 ))}
               </div>

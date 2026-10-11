@@ -33,7 +33,7 @@ def _bases(conn, user):
 
 def list_bases(conn, user) -> list[dict]:
     bases = _bases(conn, user)
-    tables = conn.execute("SELECT id, base_id, name, kind FROM tables WHERE user_id = %s ORDER BY created_at", (user["id"],)).fetchall()
+    tables = conn.execute("SELECT id, base_id, name, kind FROM tables WHERE user_id = %s AND trashed_at IS NULL ORDER BY created_at", (user["id"],)).fetchall()
     combos = conn.execute("SELECT id, base_id, name FROM combos WHERE user_id = %s ORDER BY created_at", (user["id"],)).fetchall()
     return [{
         "id": str(b["id"]), "name": b["name"],
@@ -61,7 +61,7 @@ def resolve(conn, user, ref, base=None, allow_combo=True):
     if not ref:
         bad("Say which table: its id or name")
     if UUID_RE.match(ref):
-        t = conn.execute("SELECT * FROM tables WHERE id = %s AND user_id = %s", (ref, user["id"])).fetchone()
+        t = conn.execute("SELECT * FROM tables WHERE id = %s AND user_id = %s AND trashed_at IS NULL", (ref, user["id"])).fetchone()
         if t and store.base_allowed(t["base_id"]):
             return "table", t
         if allow_combo:
@@ -75,7 +75,7 @@ def resolve(conn, user, ref, base=None, allow_combo=True):
     if base:
         b = resolve_base(conn, user, base)
         bases = {str(b["id"]): b}
-    cands = [("table", t) for t in conn.execute("SELECT * FROM tables WHERE user_id = %s", (user["id"],)).fetchall()
+    cands = [("table", t) for t in conn.execute("SELECT * FROM tables WHERE user_id = %s AND trashed_at IS NULL", (user["id"],)).fetchall()
              if str(t["base_id"]) in bases]
     if allow_combo:
         cands += [("combo", c) for c in conn.execute("SELECT * FROM combos WHERE user_id = %s", (user["id"],)).fetchall()

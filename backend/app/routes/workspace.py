@@ -23,7 +23,7 @@ def workspace(user=User):
         allowed = {str(b["id"]) for b in bases}
         tables = [_table_out(t) for t in conn.execute(
             "SELECT id, base_id, name, kind, account_id, calendar_url, last_synced_at, last_sync_error, remote, hidden FROM tables "
-            "WHERE user_id = %s ORDER BY created_at", (user["id"],)
+            "WHERE user_id = %s AND trashed_at IS NULL ORDER BY created_at", (user["id"],)
         ).fetchall() if str(t["base_id"]) in allowed]
         combos = [c for c in conn.execute("SELECT id, base_id, name, sources, hidden FROM combos WHERE user_id = %s ORDER BY created_at",
                                           (user["id"],)).fetchall() if str(c["base_id"]) in allowed]

@@ -222,8 +222,8 @@ def test_rename_and_delete_table(browser, table_user):
     expect(pg.locator(".page-head h1")).to_have_text("Stock")
     expect(pg.locator(".sidebar")).to_contain_text("Stock")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Delete database')")
-    pg.click(".menu-item:has-text('Click again to delete')")
+    pg.click(".menu-item:has-text('Move to trash')")
+    pg.click(".menu-item:has-text('Click again to move to the trash')")
     pg.wait_for_timeout(800)
     assert requests.Session.get(u, API + f"/tables/{t['id']}").status_code == 404
     expect(pg.locator(".sidebar")).not_to_contain_text("Stock")
@@ -777,4 +777,40 @@ def test_freezing_columns(browser):
     pg.click("thead th:has-text('Notes')")
     pg.click(".menu-item:has-text('Unfreeze columns')")
     expect(pg.locator("thead th.frozen")).to_have_count(0)
+    assert not pg.errors, pg.errors
+
+
+def test_undo_and_the_trash(browser, table_user):
+    u, t, F = table_user
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    # delete a record, then Undo
+    rows(pg).filter(has_text="Lamp").locator("td.rownum").click()
+    pg.locator(".modal button:has-text('Delete')").click()
+    pg.locator(".modal-foot button.danger:has-text('Delete')").click()
+    expect(rows(pg)).to_have_count(3)
+    pg.click(".toast-action:has-text('Undo')")
+    expect(rows(pg).filter(has_text="Lamp")).to_have_count(1)
+    # a bulk edit, then Undo
+    for i in (0, 1):
+        rows(pg).nth(i).hover()
+        rows(pg).nth(i).locator(".row-check").click()
+    first_two = [rows(pg).nth(i).locator("td.cell").first.text_content() for i in (0, 1)]
+    statuses = {r["data"][F["Name"]]: r["data"].get(F["Status"]) for r in u.records(t["id"])}
+    pg.click(".bulk-bar button:has-text('Delete')")
+    pg.click(".bulk-bar button:has-text('Delete 2')")
+    expect(rows(pg)).to_have_count(2)
+    pg.click(".toast-action:has-text('Undo')")
+    expect(rows(pg)).to_have_count(4)
+    assert {r["data"][F["Name"]]: r["data"].get(F["Status"]) for r in u.records(t["id"])} == statuses
+    # move the table to the trash, restore it from the Trash window
+    pg.click(".page-head [aria-label=More]")
+    pg.click(".menu-item:has-text('Move to trash')")
+    pg.click(".menu-item:has-text('Click again to move to the trash')")
+    expect(pg.locator(".sidebar")).not_to_contain_text("Inventory")
+    pg.click(".side-user [aria-label=Trash]")
+    pg.locator(".trash-row").filter(has_text="Inventory").locator("button:has-text('Restore')").click()
+    expect(pg.locator(".sidebar")).to_contain_text("Inventory")
+    assert len(u.records(t["id"])) == 4
     assert not pg.errors, pg.errors

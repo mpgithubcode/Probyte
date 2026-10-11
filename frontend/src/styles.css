@@ -1029,3 +1029,13 @@ button.cal-day { font: inherit; color: inherit; text-align: left; background: va
 .backup-row { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .backup-row:last-child { border-bottom: 0; }
 .backup-name { flex: 1; min-width: 160px; font-variant-numeric: tabular-nums; }
+
+/* a toast's action ("Undo") */
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast-action { border: 0; background: none; color: #a5b4fc; font-weight: 600; cursor: pointer; padding: 2px 4px; font-size: inherit; }
+.toast-action:hover { text-decoration: underline; }
+
+/* the trash */
+.trash-list { display: flex; flex-direction: column; }
+.trash-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.trash-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

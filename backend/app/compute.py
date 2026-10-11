@@ -183,11 +183,17 @@ class Engine:
         if f.get("system_key") == "remote":
             return None
         if t == "link":
-            if not self.conn.execute("SELECT 1 FROM tables WHERE id = %s", (o.get("foreignTableId"),)).fetchone():
+            if not self.conn.execute("SELECT 1 FROM tables WHERE id = %s AND trashed_at IS NULL", (o.get("foreignTableId"),)).fetchone():
                 return "The linked table was deleted"
         if t in ("lookup", "rollup", "conditional_lookup", "conditional_rollup"):
             if self.inner(f) is None:
                 return "A field this depends on was deleted or changed"
+            link = self.field(o.get("linkFieldId")) if t in ("lookup", "rollup") else None
+            if link and self.config_error(link):  # e.g. the linked table is in the trash
+                return "The linked table was deleted"
+            if t.startswith("conditional") and not self.conn.execute(
+                    "SELECT 1 FROM tables WHERE id = %s AND trashed_at IS NULL", (o.get("foreignTableId"),)).fetchone():
+                return "The table it looks in was deleted"
             if t.endswith("rollup") and o.get("func") not in F.ROLLUPS:
                 return "Choose a rollup function"
         if t == "formula":
@@ -347,6 +353,8 @@ class Engine:
         deleted = [str(r["id"]) for r in self.conn.execute(
             "SELECT id FROM records WHERE table_id = %s AND deleted AND row_version > %s "
             "UNION SELECT record_id FROM record_tombstones WHERE table_id = %s AND row_version > %s", (tid, rv, tid, rv)).fetchall()]
+        alive = {str(r["id"]) for r in changed}
+        deleted = [d for d in deleted if d not in alive]  # deleted and restored since: it's simply changed
         return {"token": now, "records": changed, "deleted": deleted, "refs": self.refs(tid, changed)}
 
     def _fields_sig(self, tid):

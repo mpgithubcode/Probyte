@@ -76,7 +76,7 @@ def test_synced_fields_locked_and_table_delete_removes_calendar(user):
     F = user.fields(t["id"])
     assert user.patch(API + f"/fields/{F['status']}", json={"name": "State"}).status_code == 400
     assert user.delete(API + f"/fields/{F['due']}").status_code == 400
-    res = user.j("DELETE", f"/tables/{t['id']}")
+    res = user.j("DELETE", f"/tables/{t['id']}", params={"forever": "true"})   # (normally it goes to the trash first)
     assert res["server"] == "deleted the calendar"
     import requests
     assert requests.request("PROPFIND", t["calendar_url"], auth=user.dav_auth(), headers={"Depth": "0"}).status_code == 404
