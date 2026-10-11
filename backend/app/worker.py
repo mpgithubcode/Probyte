@@ -9,7 +9,7 @@ import os
 import signal
 import threading
 
-from . import attachments, backup, jobs, sync, webhooks  # noqa: F401  (importing registers the job handlers)
+from . import attachments, audit, backup, jobs, sync, webhooks  # noqa: F401  (importing registers the job handlers)
 from .db import connection, init_db
 from .routes.tables import purge_expired
 
@@ -27,6 +27,8 @@ def prune():
     with connection() as conn:
         conn.execute("DELETE FROM record_tombstones WHERE deleted_at < now() - interval '2 days'")
     purge_expired()  # the trash keeps things for 30 days
+    with connection() as conn:
+        audit.prune(conn)  # record history: 180 days
 
 
 def start(stop: threading.Event):

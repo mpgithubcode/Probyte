@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 
 import caldav
 
-from . import jobs, vcard, webhooks
+from . import audit, jobs, vcard, webhooks
 from .carddav import CardDAV
 from .dav import TIMEOUT as DAV_TIMEOUT, Collection, check_url, path_of
 from .db import Jsonb, connection
@@ -113,6 +113,7 @@ def sync_table(table_id, full: bool = False) -> dict:
 
 
 def _sync(table_id: str, full: bool) -> dict:
+    audit.set_actor("Phone / calendar sync")  # changes pulled from the server, in record history
     stats = {"pulled": 0, "updated": 0, "removed": 0, "pushed": 0, "deleted": 0, "fetched": 0, "skipped": False, "errors": []}
 
     with connection() as conn:
@@ -194,6 +195,7 @@ def _sync(table_id: str, full: bool) -> dict:
                 if rec is None:
                     new = insert_record(conn, table_id, to_data(vals, {}), caldav_uid=uid, caldav_href=item_url, caldav_raw=raw)
                     conn.execute("UPDATE records SET caldav_etag = %s WHERE id = %s", (etag, new["id"]))
+                    audit.note(conn, table_id, new["id"], "created")
                     webhooks.emit(conn, table_id, "record.created", new["id"])
                     by_uid[uid] = {**new, "caldav_etag": etag}
                     stats["pulled"] += 1
@@ -201,10 +203,12 @@ def _sync(table_id: str, full: bool) -> dict:
                     conn.execute("UPDATE records SET caldav_href = %s WHERE id = %s", (item_url, rec["id"]))  # local edit wins
                 elif rec["caldav_raw"] != raw:
                     # Only if nobody edited it here since we read it: a newer local edit wins (and is pushed next).
+                    new_data = to_data(vals, rec["data"])
                     cur = conn.execute("UPDATE records SET data = %s, caldav_href = %s, caldav_raw = %s, caldav_etag = %s, updated_at = now() "
                                        "WHERE id = %s AND updated_at = %s AND sync_status = 'synced' AND NOT deleted",
-                                       (Jsonb(to_data(vals, rec["data"])), item_url, raw, etag, rec["id"], rec["updated_at"]))
+                                       (Jsonb(new_data), item_url, raw, etag, rec["id"], rec["updated_at"]))
                     if cur.rowcount:
+                        audit.note(conn, table_id, rec["id"], "updated", rec["data"], new_data, fields)
                         webhooks.emit(conn, table_id, "record.updated", rec["id"])
                         stats["updated"] += 1
                 else:
@@ -216,6 +220,7 @@ def _sync(table_id: str, full: bool) -> dict:
                     cur = conn.execute("DELETE FROM records WHERE id = %s AND updated_at = %s AND sync_status = 'synced'",
                                        (rec["id"], rec["updated_at"]))  # edited here meanwhile: keep it (it's pushed again)
                     if cur.rowcount:
+                        audit.note(conn, table_id, rec["id"], "deleted")
                         webhooks.emit(conn, table_id, "record.deleted", rec["id"])
                         stats["removed"] += 1
             sync_state["ignored"] = {p: e for p, e in ignored.items() if p in present}

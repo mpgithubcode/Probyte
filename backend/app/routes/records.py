@@ -280,3 +280,28 @@ def paste(table_id: str, body: PasteIn, user=User):
             except HTTPException as e:
                 errors.append(f"Row {n}: {e.detail}")
     return {"updated": updated, "created": created, "errors": errors[:20]}
+
+
+# ======================================================================== history
+
+@router.get("/api/records/{record_id}/history")
+def record_history(record_id: str, user=User):
+    """Who changed what in a record, newest first (kept 180 days)."""
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT h.at, h.actor, h.action, h.changes, h.table_id FROM record_history h JOIN tables t ON t.id = h.table_id "
+            "WHERE h.record_id = %s AND t.user_id = %s ORDER BY h.at DESC, h.id DESC LIMIT 200", (record_id, user["id"])).fetchall()
+        if not rows:
+            exists = conn.execute("SELECT 1 FROM records r JOIN tables t ON t.id = r.table_id WHERE r.id = %s AND t.user_id = %s",
+                                  (record_id, user["id"])).fetchone()
+            if not exists:
+                store.not_found("Record not found")
+            return {"entries": []}
+        fields = {str(f["id"]): f for f in store.get_fields(conn, rows[0]["table_id"])}
+    out = []
+    for h in rows:
+        changes = [{"field_id": fid, "field": fields[fid]["name"] if fid in fields else "(deleted field)", "old": old, "new": new}
+                   for fid, (old, new) in h["changes"].items()]
+        changes.sort(key=lambda c: list(fields).index(c["field_id"]) if c["field_id"] in fields else 999)
+        out.append({"at": h["at"], "actor": h["actor"], "action": h["action"], "changes": changes})
+    return {"entries": out}

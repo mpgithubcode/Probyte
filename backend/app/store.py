@@ -8,7 +8,7 @@ from . import formula as F
 from .auth import api_bases
 from .compute import COMPUTED_TYPES, FIELD_TYPES, FILTER_OPS, Engine
 from .db import Jsonb
-from . import jobs, recur, webhooks
+from . import audit, jobs, recur, webhooks
 from .ical import LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, component_kind, ical_to_values, is_date_only, new_uid
 
 SELECT_TYPES = ("single_select", "multi_select")
@@ -572,6 +572,7 @@ def create_record(conn, table_id, data: dict, user_id=None):
     else:
         r = insert_record(conn, table_id, data, user_id=user_id)
     _sync_links(conn, fields, r["id"], table_id, {}, data)
+    audit.note(conn, table_id, r["id"], "created")
     _changed(conn, table, "record.created", r["id"])
     return r, table
 
@@ -602,11 +603,13 @@ def update_record(conn, record_id, patch: dict, user_id=None):
         (Jsonb(data), status, user_id, record_id),
     ).fetchone()
     _sync_links(conn, fields, record_id, r["table_id"], old, patch)
+    audit.note(conn, r["table_id"], record_id, "updated", old, data, fields)
     if history is not None:
         # A repeating task moved on to its next date; keep the finished occurrence as a completed task.
         apply_task_auto(table, fields, old, history, patch)
         h = insert_record(conn, r["table_id"], history, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
         _sync_links(conn, fields, h["id"], r["table_id"], {}, history)
+        audit.note(conn, r["table_id"], h["id"], "created")
         _changed(conn, table, "record.created", h["id"])
     _changed(conn, table, "record.updated", record_id)
     return r, table
@@ -693,6 +696,7 @@ def delete_record(conn, record_id, user_id=None):
         conn.execute("UPDATE records SET deleted = true, updated_at = now() WHERE id = %s", (record_id,))
     else:
         conn.execute("DELETE FROM records WHERE id = %s", (record_id,))
+    audit.note(conn, r["table_id"], record_id, "deleted")
     _changed(conn, table, "record.deleted", record_id)
     return table
 
@@ -724,6 +728,7 @@ def restore_record(conn, record_id, user_id=None):
         _sync_links(conn, fields, record_id, t["table_id"], {}, data)
     conn.execute("DELETE FROM record_trash WHERE id = %s", (record_id,))
     conn.execute("DELETE FROM record_tombstones WHERE record_id = %s", (record_id,))  # it's back: no longer "deleted"
+    audit.note(conn, t["table_id"], record_id, "restored")
     _changed(conn, table, "record.created", record_id)
     return table
 

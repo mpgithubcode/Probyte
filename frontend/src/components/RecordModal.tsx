@@ -6,8 +6,10 @@ import { CellValue, Chip, FieldInput } from "./Cells";
 import { CAN_ALL, type Can } from "./viewTypes";
 import { FieldIcon, Icon } from "./Icon";
 import { Modal } from "./Overlay";
+import { RecordHistory } from "./RecordHistory";
 
-export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onButton, can = CAN_ALL, occurrence }: {
+export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onButton, can = CAN_ALL, occurrence, history = true }: {
+  history?: boolean;  // show "who changed what" (not on public links)
   ds: Dataset; rec: Rec; fields: Field[];
   onUpdate: (patch: Record<string, any>) => void; onDelete: () => void; onClose: () => void; onButton: (f: Field) => void;
   can?: Can;
@@ -97,6 +99,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
             </div>
           </div>
         ))}
+        {history && <RecordHistory key={rec.id} recordId={rec.id} fields={fields} />}
       </div>
     </Modal>
   );

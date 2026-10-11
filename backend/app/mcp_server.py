@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from . import apiv1, auth
+from . import apiv1, audit, auth
 from .db import connection
 
 log = logging.getLogger("probyte.mcp")
@@ -226,7 +226,7 @@ def _static_user():
              conn.execute("SELECT id, username, is_admin, radicale_hash FROM users ORDER BY is_admin DESC, created_at LIMIT 1").fetchone())
     if not u:
         raise HTTPException(401, f"MCP_BEARER_USER '{STATIC_USER}' doesn't exist")
-    return dict(u) | {"api_key": True, "api_scope": STATIC_SCOPE, "api_key_id": "env"}
+    return dict(u) | {"api_key": True, "api_scope": STATIC_SCOPE, "api_key_id": "env", "actor": f"{u['username']} via the MCP token"}
 
 
 async def _authenticate(request: Request):
@@ -235,13 +235,16 @@ async def _authenticate(request: Request):
         return None, None, "Sign in: connect with OAuth, or send a bearer token (Authorization: Bearer …)"
     if STATIC_TOKEN and hmac.compare_digest(key.encode(), STATIC_TOKEN.encode()):
         try:
-            return await run_in_threadpool(_static_user), None, None
+            user = await run_in_threadpool(_static_user)
         except HTTPException as e:
             return None, None, str(e.detail)
+        audit.set_actor(user["actor"], user["id"])
+        return user, None, None
     try:
         user, bases = await run_in_threadpool(auth.key_user, key, "/mcp")
     except HTTPException as e:
         return None, None, str(e.detail)
+    audit.set_actor(user["actor"], user["id"])
     return user, bases, None
 
 

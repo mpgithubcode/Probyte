@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import attachments, auth, ratelimit, store
+from . import attachments, audit, auth, ratelimit, store
 from .compute import COMPUTED_TYPES, Engine
 from .db import Jsonb, app_secret, connection
 from .routes.common import FastJSON
@@ -309,6 +309,7 @@ def core_create(token: str, view_id: str, data: dict, table_id: str | None, cook
     from . import recordops
     with connection() as conn:
         s = _load(conn, token)
+        audit.set_actor(f"Public link “{s['name']}”")
         _require(s, cookie)
         if not s["permissions"].get("add"):
             raise HTTPException(403, "Adding records isn't allowed on this link")
@@ -332,6 +333,7 @@ def core_update(token: str, view_id: str, record_id: str, data: dict, cookie: st
     from . import recordops
     with connection() as conn:
         s = _load(conn, token)
+        audit.set_actor(f"Public link “{s['name']}”")
         _require(s, cookie)
         if not s["permissions"].get("edit"):
             raise HTTPException(403, "Editing isn't allowed on this link")
@@ -352,6 +354,7 @@ def core_delete(token: str, view_id: str, record_id: str, cookie: str | None) ->
     from . import recordops
     with connection() as conn:
         s = _load(conn, token)
+        audit.set_actor(f"Public link “{s['name']}”")
         _require(s, cookie)
         if not s["permissions"].get("delete"):
             raise HTTPException(403, "Deleting isn't allowed on this link")

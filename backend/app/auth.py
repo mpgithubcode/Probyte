@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
+from . import audit
 from .db import connection
 
 SESSION_COOKIE = "probyte_session"
@@ -91,7 +92,8 @@ def new_api_key() -> tuple[str, str]:
 def _key_user(key: str, method: str, path: str) -> tuple[dict, set | None]:
     with connection() as conn:
         row = conn.execute(
-            "SELECT k.id AS key_id, k.scope, k.base_ids, k.last_used_at, u.id, u.username, u.is_admin, u.radicale_hash "
+            "SELECT k.id AS key_id, k.name AS key_name, k.source AS key_source, k.scope, k.base_ids, k.last_used_at, "
+            "u.id, u.username, u.is_admin, u.radicale_hash "
             "FROM api_keys k JOIN users u ON u.id = k.user_id "
             "WHERE k.key_hash = %s AND (k.expires_at IS NULL OR k.expires_at > now())", (_token_hash(key),)
         ).fetchone()
@@ -105,6 +107,8 @@ def _key_user(key: str, method: str, path: str) -> tuple[dict, set | None]:
             conn.execute("UPDATE api_keys SET last_used_at = now() WHERE id = %s", (row["key_id"],))
     user = {k: row[k] for k in ("id", "username", "is_admin", "radicale_hash")} | {"api_key": True, "api_scope": row["scope"],
                                                                                    "api_key_id": str(row["key_id"])}
+    # for record history: an app connected with OAuth goes by its name, other keys by theirs
+    user["actor"] = row["key_name"] if row["key_source"] == "oauth" else f"{row['username']} via API key “{row['key_name']}”"
     return user, set(row["base_ids"]) if row["base_ids"] is not None else None
 
 
@@ -138,12 +142,14 @@ async def current_user(request: Request) -> dict:
     if key:
         user, bases = await run_in_threadpool(_key_user, key, request.method, request.url.path)
         api_bases.set(bases)
+        audit.set_actor(user["actor"], user["id"])
         return user
     api_bases.set(None)
     token = request.cookies.get(SESSION_COOKIE)
     if token:
         user = await run_in_threadpool(_session_user, token)
         if user:
+            audit.set_actor(user["username"], user["id"])
             return user
     raise HTTPException(401, "Not logged in")
 

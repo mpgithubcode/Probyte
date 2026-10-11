@@ -209,7 +209,7 @@ export function ShareApp({ token }: { token: string }) {
         </main>
         {!embed && <footer className="share-foot">Shared with <a href="/" target="_blank" rel="noreferrer">Probyte</a></footer>}
         {rec && ds && (
-          <RecordModal ds={ds} rec={rec} fields={ds.fields} can={can} onClose={() => setOpenRec(null)} occurrence={openOcc}
+          <RecordModal ds={ds} rec={rec} fields={ds.fields} can={can} history={false} onClose={() => setOpenRec(null)} occurrence={openOcc}
             onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)} />
         )}
         {draft && ds && <NewRecordForm fields={ds.fields} initial={draft.data} onSave={saveDraft} onClose={() => setDraft(null)} />}
