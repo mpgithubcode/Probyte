@@ -11,8 +11,9 @@ function loadCollapsed(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]")); } catch { return new Set(); }
 }
 
-export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, onNewCombo, onSettings, onTrash, onLogout, onChanged, onError }: {
+export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, onNewCombo, onSettings, onTrash, onSearch, onLogout, onChanged, onError }: {
   onTrash: () => void;
+  onSearch: () => void;
   ws: Workspace;
   user: User;
   active?: { kind: string; id: string };
@@ -67,6 +68,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
 
         <div className="side-head">
           <span>Bases</span>
+          <button className="icon-btn" title="Search everything (Ctrl K)" aria-label="Search everything" onClick={onSearch}><Icon name="search" size={14} /></button>
           <button className="icon-btn" title="New base" onClick={newBase}><Icon name="plus" size={14} /></button>
         </div>
 

@@ -31,8 +31,9 @@ const ExportModal = lazy(() => import("./ImportExport").then((m) => ({ default: 
 const POLL_MS = 60000;
 const POLL_LINKED_MS = 15000;
 
-export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSidebar, onMenu, onNavigate, onWorkspaceChanged, onError }: {
+export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSidebar, openRecord, onMenu, onNavigate, onWorkspaceChanged, onError }: {
   hiddenInSidebar?: boolean;
+  openRecord?: string;  // a record to open (from search: #/table/<id>?record=<id>)
   kind: "table" | "combo"; id: string; viewId?: string; tables: TableInfo[]; me: User; bases: Base[]; onMenu: () => void;
   onNavigate: (viewId?: string) => void; onWorkspaceChanged: (goHome?: boolean) => void; onError: (msg: string) => void;
 }) {
@@ -83,6 +84,13 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   }, [kind, id]);
 
   useEffect(() => { if (ds) remember(ds); }, [ds]);
+
+  // opened from search: show that record once the table is here, then drop it from the address
+  useEffect(() => {
+    if (!openRecord || !ds || !ds.records.some((r) => r.id === openRecord)) return;
+    setOpenRec(openRecord);
+    history.replaceState(null, "", location.hash.replace(/\?record=[^&]*/, ""));
+  }, [openRecord, ds?.records.length]);
 
   // A combined database shows its own tables at once; sources that are linked tables arrive one by one.
   const fetching = useRef(new Set<string>());

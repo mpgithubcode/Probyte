@@ -1051,3 +1051,12 @@ button.cal-day { font: inherit; color: inherit; text-align: left; background: va
 .hist-change { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; color: var(--text-soft); }
 .hist-field { color: var(--muted); min-width: 90px; }
 .hist-value { background: var(--bg-soft); border-radius: 4px; padding: 0 5px; }
+
+/* search everything (Ctrl/⌘ K) */
+.search.big { padding: 8px 12px; }
+.search.big input { font-size: 16px; }
+.search-hits { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
+.search-hit { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 10px;
+  border: 0; background: none; border-radius: 6px; cursor: pointer; color: inherit; }
+.search-hit.active { background: var(--accent-soft); }
+.search-hit-title { font-weight: 500; }

@@ -865,3 +865,25 @@ def test_spreadsheet_keys_copy_and_paste(browser, table_user):
         document.querySelector('.grid-wrap').dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true})); }""")
     eventually(lambda: sorted(v for v in (r["data"].get(price) for r in u.records(t["id"])) if v is not None) == [9.5, 1250] or None)
     assert not pg.errors, pg.errors
+
+
+def test_search_everything(browser, table_user):
+    u, t, F = table_user
+    other = u.table(name="Contacts book")
+    O = u.fields(other["id"])
+    u.j("POST", f"/tables/{other['id']}/records", json={"data": {O["Name"]: "Ada Lovelace", O["Notes"]: "met at the chess club"}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.keyboard.press("Control+k")
+    pg.fill(".search-modal input", "chess")
+    hit = pg.locator(".search-hit").first
+    expect(hit).to_contain_text("Ada Lovelace")
+    expect(hit).to_contain_text("Contacts book")
+    pg.keyboard.press("Enter")
+    expect(pg.locator(".page-head h1")).to_have_text("Contacts book")
+    expect(pg.locator(".modal .record-title")).to_contain_text("Ada Lovelace")
+    pg.keyboard.press("Escape")
+    pg.click(".side-head [aria-label='Search everything']")                # the sidebar button too
+    expect(pg.locator(".search-modal input")).to_be_focused()
+    assert not pg.errors, pg.errors

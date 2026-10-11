@@ -11,18 +11,19 @@ import { setWeekStart } from "./util";
 
 const ComboModal = lazy(() => import("./components/ComboModal").then((m) => ({ default: m.ComboModal })));
 const NewTableModal = lazy(() => import("./components/NewTableModal").then((m) => ({ default: m.NewTableModal })));
+const SearchModal = lazy(() => import("./components/SearchModal").then((m) => ({ default: m.SearchModal })));
 const TrashModal = lazy(() => import("./components/TrashModal").then((m) => ({ default: m.TrashModal })));
 const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
 
-interface Route { kind: "table" | "combo"; id: string; viewId?: string }
+interface Route { kind: "table" | "combo"; id: string; viewId?: string; record?: string }
 
 function parseHash(): Route | null {
-  const m = location.hash.match(/^#\/(table|combo)\/([^/]+)(?:\/([^/]+))?/);
-  return m ? { kind: m[1] as Route["kind"], id: m[2], viewId: m[3] } : null;
+  const m = location.hash.match(/^#\/(table|combo)\/([^/?]+)(?:\/([^/?]+))?(?:\?record=([^&]+))?/);
+  return m ? { kind: m[1] as Route["kind"], id: m[2], viewId: m[3], record: m[4] } : null;
 }
 
 function go(r: Route | null) {
-  location.hash = r ? `/${r.kind}/${r.id}${r.viewId ? `/${r.viewId}` : ""}` : "";
+  location.hash = r ? `/${r.kind}/${r.id}${r.viewId ? `/${r.viewId}` : ""}${r.record ? `?record=${r.record}` : ""}` : "";
 }
 
 export default function App() {
@@ -46,7 +47,15 @@ export default function App() {
 function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogout: () => void; onUserChanged: (u: User) => void }) {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [route, setRoute] = useState<Route | null>(parseHash);
-  const [modal, setModal] = useState<"table" | "combo" | "settings" | "trash" | null>(null);
+  const [modal, setModal] = useState<"table" | "combo" | "settings" | "trash" | "search" | null>(null);
+  // Ctrl/⌘ K: search everything
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setModal("search"); setDrawer(false); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
   const openSettings = (tab: SettingsTab = "account") => { setSettingsTab(tab); setModal("settings"); setDrawer(false); };
   const [modalBase, setModalBase] = useState<string | undefined>(undefined);
@@ -94,10 +103,10 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
         onOpen={(kind, id) => { go({ kind, id }); setDrawer(false); }}
         onNewTable={(b) => openModal("table", b)} onNewCombo={(b) => openModal("combo", b)}
         onSettings={() => openSettings()}
-        onLogout={logout} onChanged={loadWs} onError={onError} onTrash={() => { setModal("trash"); setDrawer(false); }} />
+        onLogout={logout} onChanged={loadWs} onError={onError} onTrash={() => { setModal("trash"); setDrawer(false); }} onSearch={() => { setModal("search"); setDrawer(false); }} />
 
       {route ? (
-        <DatasetPage key={`${route.kind}:${route.id}`} kind={route.kind} id={route.id} viewId={route.viewId} tables={ws.tables} me={user}
+        <DatasetPage key={`${route.kind}:${route.id}`} kind={route.kind} id={route.id} viewId={route.viewId} tables={ws.tables} me={user} openRecord={route.record}
           hiddenInSidebar={!!(route.kind === "table" ? ws.tables : ws.combos).find((x) => x.id === route.id)?.hidden}
           bases={ws.bases} onMenu={() => setDrawer(true)}
           onNavigate={(viewId) => go({ ...route, viewId })}
@@ -126,6 +135,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
       )}
       {modal === "settings" && <SettingsModal user={user} ws={ws} initialTab={settingsTab} onClose={() => setModal(null)} onAccountsChanged={loadWs} onUserChanged={onUserChanged} />}
         {modal === "trash" && <TrashModal onClose={() => setModal(null)} onChanged={loadWs} />}
+        {modal === "search" && <SearchModal onClose={() => setModal(null)} onOpen={(tableId, recordId) => go({ kind: "table", id: tableId, record: recordId })} />}
       </Suspense>
 
       {toast && (
