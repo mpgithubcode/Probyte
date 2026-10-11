@@ -81,6 +81,8 @@ export interface Filter { field: string; op: FilterOp; value?: string }
 export interface FilterGroup { conjunction: "and" | "or"; items: (Filter | FilterGroup)[] }
 export interface SortSpec { field: string; dir: "asc" | "desc"; hideTitle?: boolean; noArrow?: boolean }  // the last two: group levels
 
+export type ListAlign = "start" | "left" | "center" | "right";
+
 export interface ViewConfig {
   hidden?: string[];
   shown?: string[];   // fields hidden by default (Record ID) that this view shows
@@ -93,7 +95,8 @@ export interface ViewConfig {
   hideEmptyColumns?: boolean;                             // Board
   hideUnassigned?: boolean;                               // Board: hide the "No <field>" column
   hideBlankCards?: boolean;                               // Board: hide cards with no title and no values
-  listProps?: { field: string; align: "left" | "center" | "right" }[];  // List: property order and placement
+  // List: property order, placement (start = right after the color dot, before the title) and whether its name shows
+  listProps?: { field: string; align: ListAlign; label?: boolean }[];
   fieldOrder?: string[];
   pageSize?: number;  // table / list / gallery: records per page (unset = all)  // column order dragged in the table view (also used for cards)
   listLabels?: boolean;                                   // List: show property names (default on)

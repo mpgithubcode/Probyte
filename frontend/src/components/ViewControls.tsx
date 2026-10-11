@@ -1,4 +1,5 @@
 import type { Field, Filter, FilterGroup, FilterOp, SortSpec, ViewConfig } from "../types";
+import type { ListProp } from "./ListView";
 import { canGroupBy, valueType } from "../util";
 import { Icon } from "./Icon";
 
@@ -200,23 +201,32 @@ export function BoardOptions({ config, groupField, setConfig }: { config: ViewCo
 // ------------------------------------------------------------------ list properties
 
 export function ListOptions({ layout, config, setConfig }: {
-  layout: { field: Field; align: "left" | "center" | "right" }[]; config: ViewConfig; setConfig: (p: Partial<ViewConfig>) => void;
+  layout: ListProp[]; config: ViewConfig; setConfig: (p: Partial<ViewConfig>) => void;
 }) {
-  const save = (items: { field: Field; align: "left" | "center" | "right" }[]) =>
-    setConfig({ listProps: items.map((x) => ({ field: x.field.id, align: x.align })) });
+  const save = (items: ListProp[]) =>
+    setConfig({ listProps: items.map((x) => ({ field: x.field.id, align: x.align, label: x.label })) });
   const move = (i: number, d: number) => { const n = [...layout]; [n[i], n[i + d]] = [n[i + d], n[i]]; save(n); };
+  const allNames = layout.length > 0 && layout.every((x) => x.label);
   return (
     <div className="pop-body list-options">
       <label className="inline-check">
-        <input type="checkbox" checked={config.listLabels !== false} onChange={(e) => setConfig({ listLabels: e.target.checked })} />
+        <input type="checkbox" checked={allNames} ref={(el) => { if (el) el.indeterminate = !allNames && layout.some((x) => x.label); }}
+          onChange={(e) => { setConfig({ listLabels: e.target.checked }); save(layout.map((x) => ({ ...x, label: e.target.checked }))); }} />
         Show property names
       </label>
-      <p className="muted small">Order is left to right within each side. Empty values aren't shown; hide a property under Fields.</p>
+      <p className="muted small">
+        <b>Start</b> puts a property right after the color dot, before the title. Order is left to right within each place;
+        the eye shows or hides a property's name. Hide a property completely under Fields.
+      </p>
       {layout.map((x, i) => (
         <div key={x.field.id} className="list-opt-row">
           <span className="list-opt-name">{x.field.name}</span>
+          <button className={`icon-btn ${x.label ? "on" : "off"}`} aria-pressed={x.label} title={x.label ? "Name shown" : "Name hidden"}
+            aria-label={`Show the name of ${x.field.name}`} onClick={() => save(layout.map((y, j) => (j === i ? { ...y, label: !y.label } : y)))}>
+            <Icon name="eye" size={14} />
+          </button>
           <div className="segmented sm" role="group" aria-label={`${x.field.name} position`}>
-            {(["left", "center", "right"] as const).map((a) => (
+            {(["start", "left", "center", "right"] as const).map((a) => (
               <button key={a} className={x.align === a ? "active" : ""} onClick={() => save(layout.map((y, j) => (j === i ? { ...y, align: a } : y)))}>
                 {a[0].toUpperCase() + a.slice(1)}
               </button>

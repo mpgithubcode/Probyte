@@ -37,9 +37,14 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChanged, initialTab = "account" }: {
   user: User; ws: Workspace; onClose: () => void; onAccountsChanged: () => void; onUserChanged?: (u: User) => void; initialTab?: Tab;
 }) {
+  const [prefError, setPrefError] = useState("");
   const setPref = async (patch: Prefs) => {
-    const prefs = await api.patch<Prefs>("/auth/prefs", patch);
-    onUserChanged?.({ ...user, prefs });
+    setPrefError("");
+    onUserChanged?.({ ...user, prefs: { ...user.prefs, ...patch } });  // applies at once; saved in the background
+    try {
+      const prefs = await api.patch<Prefs>("/auth/prefs", patch);
+      onUserChanged?.({ ...user, prefs });
+    } catch (e) { onUserChanged?.(user); setPrefError((e as Error).message); }
   };
   const [tab, setTab] = useState<Tab>(initialTab);
   const [dav, setDav] = useState<DavInfo | null>(null);
@@ -160,6 +165,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
               {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => <option key={d} value={i}>{d}</option>)}
             </select>
           </label>
+          {prefError && <div className="error">{prefError}</div>}
           <h3>Change password</h3>
           <input className="input" type="password" placeholder="Current password" autoComplete="current-password"
             value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />

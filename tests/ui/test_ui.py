@@ -87,11 +87,11 @@ def test_list_columns_line_up(browser, seeded, phone):
         pg.locator(".list-opt-row").filter(has_text=name).first.locator(f"button:has-text('{zone}')").click()
     pg.keyboard.press("Escape")
     pg.wait_for_timeout(200)
-    xs = lambda z: set(pg.locator(f".list-row .list-zone.{z}").evaluate_all("e => e.map(x => Math.round(x.getBoundingClientRect().left))"))
-    assert len(xs("left")) == 1 and len(xs("center")) == 1
-    mid_row, mid_zone = pg.evaluate("""() => { const r = document.querySelector('.list-row').getBoundingClientRect(),
-      z = document.querySelector('.list-row .list-zone.center').getBoundingClientRect(); return [r.left + r.width / 2, z.left + z.width / 2] }""")
-    assert abs(mid_row - mid_zone) <= 1
+    # every property sits in the same column on every row (one grid shared by all rows)
+    lefts = pg.evaluate("""() => { const cols = {}; document.querySelectorAll('.list-row').forEach(r =>
+        [...r.children].forEach((c, i) => { if (c.offsetWidth) (cols[i] ??= new Set()).add(Math.round(c.getBoundingClientRect().left)); }));
+      return Object.values(cols).map(s => s.size) }""")
+    assert lefts and all(n == 1 for n in lefts), lefts
 
 
 def test_phone_week_scrolls_sideways(browser, seeded):

@@ -1,4 +1,5 @@
 """End-to-end flows in a real browser, the way a person uses the app: sign up, build a table, edit, filter, share."""
+import re
 import uuid
 
 import pytest
@@ -598,7 +599,7 @@ def test_list_view_layout(browser):
     row = pg.locator(".list-row").filter(has_text="Water plants")
     # true/false fields are checkboxes; the Completed box is the last thing on the row
     assert row.locator("input[type=checkbox]").count() >= 1
-    assert row.locator(".list-zone.right .list-prop").last.locator("input[type=checkbox]").count() == 1
+    assert row.locator(".list-prop").last.locator("input[type=checkbox]").count() == 1
     # rows sit indented under their group header; no lines between rows, only under headers
     head_left = pg.locator(".list-group").first.bounding_box()["x"] + 8
     dot_left = row.locator(".list-dot").bounding_box()["x"]
@@ -606,7 +607,7 @@ def test_list_view_layout(browser):
     assert row.evaluate("e => getComputedStyle(e).borderBottomWidth") in ("0px", "")
     assert pg.locator(".list-group").first.evaluate("e => getComputedStyle(e).borderBottomWidth") != "0px"
     # ticking the box here saves it
-    row.locator(".list-zone.right .list-prop").last.locator("input").check()
+    row.locator(".list-prop").last.locator("input").check()
     eventually(lambda: next(r for r in u.records(t["id"]) if r["data"][F["summary"]] == "Water plants")["data"][F["done"]] is True or None)
     # nothing runs off the row at any width
     for w in (1280, 1100, 960, 860, 761, 700, 520, 390):
@@ -651,9 +652,8 @@ def test_first_day_of_the_week(browser):
     pg.goto(f"{BASE}/#/table/{t['id']}")
     if pg.locator(".view-tab:has-text('Calendar')").count():
         pg.click(".view-tab:has-text('Calendar')")
-    pg.wait_for_selector(".cal-weekday")
-    assert pg.locator(".cal-weekday").first.text_content() == "Sun"
-    assert u.j("GET", "/auth/me")["prefs"]["week_start"] == 0
+    expect(pg.locator(".cal-weekday").first).to_have_text("Sun")
+    eventually(lambda: u.j("GET", "/auth/me")["prefs"].get("week_start") == 0 or None)
     pg.reload()                                                       # remembered
     pg.wait_for_selector(".cal-weekday")
     assert pg.locator(".cal-weekday").first.text_content() == "Sun"
@@ -717,4 +717,33 @@ def test_combine_with_a_table_from_a_link(browser, table_user):
     expect(pg.locator(".grid tbody")).to_contain_text("Partner chair", timeout=15000)   # arrives after the local rows
     expect(pg.locator(".grid tbody")).to_contain_text("Chair")
     expect(pg.locator(".sources-loading")).to_have_count(0)
+    assert not pg.errors, pg.errors
+
+
+def test_list_properties_start_position_and_names(browser):
+    u = Client()
+    t = u.table("tasks", "Chores")
+    F = u.fields(t["id"])
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Hoover", F["priority"]: "High"}})
+    u.j("POST", f"/tables/{t['id']}/views", json={"name": "Todo list", "type": "list"})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".view-tab:has-text('Todo list')")
+    pg.click(".tool-btn:has-text('Properties')")
+    opt = lambda name: pg.locator(".list-opt-row").filter(has=pg.locator(".list-opt-name", has_text=re.compile(f"^{name}$")))
+    opt("Completed").locator("button:has-text('Start')").click()
+    opt("Priority").locator("button[aria-pressed]").click()   # hide its name
+    pg.keyboard.press("Escape")
+    row = pg.locator(".list-row").first
+    # the Completed box comes right after the color dot, before the title
+    order = row.evaluate("""r => [...r.children].filter(c => c.offsetWidth).map(c => c.classList.contains('list-start') ? 'dot'
+        : c.classList.contains('list-title') ? 'title' : c.querySelector('input[type=checkbox]') ? 'box' : 'prop')""")
+    assert order[:3] == ["dot", "box", "title"], order
+    prio = row.locator(".list-prop").filter(has_text="High")
+    assert prio.locator(".list-prop-name").count() == 0                               # name hidden for this one
+    pg.wait_for_timeout(600)
+    cfg = next(v for v in u.j("GET", f"/tables/{t['id']}")["views"] if v["name"] == "Todo list")["config"]
+    done = next(p for p in cfg["listProps"] if p["field"] == F["done"])
+    assert done["align"] == "start" and next(p for p in cfg["listProps"] if p["field"] == F["priority"])["label"] is False
     assert not pg.errors, pg.errors
