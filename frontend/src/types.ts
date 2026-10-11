@@ -18,7 +18,15 @@ export interface FieldOptions {
   renames?: Record<string, string>;  // sent when saving: select options renamed in the editor (old name -> new name)
   choices?: Choice[];
   includeTime?: boolean;
+  dateFormat?: "local" | "long" | "iso" | "us" | "eu";
+  timeFormat?: "12" | "24";
   max?: number;
+  // number
+  numberFormat?: "decimal" | "percent" | "currency";
+  currency?: string;
+  separators?: boolean;
+  // single / multi select: false = only the listed options can be chosen
+  allowNew?: boolean;
   // link
   foreignTableId?: string;
   relationship?: "one" | "many";
@@ -61,6 +69,10 @@ export interface Field {
   readonly?: boolean;
   computed?: boolean;
   mapping?: Record<string, string>; // combined databases: table_id -> source field id
+  description?: string | null;
+  required?: boolean;
+  unique_values?: boolean;
+  default_value?: unknown;
 }
 
 export interface Rec {

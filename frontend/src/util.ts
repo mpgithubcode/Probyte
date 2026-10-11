@@ -1,4 +1,4 @@
-import type { Field, FieldType, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig } from "./types";
+import type { Field, FieldOptions, FieldType, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig } from "./types";
 
 export const PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#ec4899", "#64748b", "#84cc16", "#f97316"];
 
@@ -105,14 +105,31 @@ export function shiftValue(v: unknown, n: number): unknown {
   return d.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-export function formatDate(v: unknown, includeTime?: boolean) {
+export const DATE_FORMATS: { value: NonNullable<FieldOptions["dateFormat"]>; label: string }[] = [
+  { value: "local", label: "Local (Oct 11, 2026)" }, { value: "long", label: "Long (Sunday, October 11, 2026)" },
+  { value: "iso", label: "ISO (2026-10-11)" }, { value: "us", label: "US (10/11/2026)" }, { value: "eu", label: "European (11/10/2026)" },
+];
+
+function formatDay(d: Date, fmt?: FieldOptions["dateFormat"]) {
+  switch (fmt) {
+    case "iso": return keyOf(d);
+    case "us": return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}`;
+    case "eu": return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+    case "long": return d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    default: return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+}
+
+/** A date value as text; o: the field's date / time format. */
+export function formatDate(v: unknown, includeTime?: boolean, o?: Pick<FieldOptions, "dateFormat" | "timeFormat">) {
   if (!v || typeof v !== "string") return "";
-  if (isDateOnly(v)) return parseKey(v).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  if (isDateOnly(v)) return formatDay(parseKey(v), o?.dateFormat);
   const d = new Date(v);
   if (isNaN(+d)) return v;
-  return includeTime
-    ? d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-    : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  if (!includeTime) return formatDay(d, o?.dateFormat);
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit",
+    ...(o?.timeFormat ? { hour12: o.timeFormat === "12" } : {}) });
+  return `${formatDay(d, o?.dateFormat)}, ${time}`;
 }
 
 export function formatTime(v: unknown) {
@@ -153,12 +170,22 @@ export function recordTitle(fields: Field[], r: Rec) {
   return v ? String(v) : "Untitled";
 }
 
-export function formatNumber(v: unknown, precision?: number) {
+/** A number as text; o: the field's precision, or its number format (decimal / percent / currency, separators). */
+export function formatNumber(v: unknown, o?: number | Pick<FieldOptions, "precision" | "numberFormat" | "currency" | "separators">) {
   const n = Number(v);
   if (!Number.isFinite(n)) return String(v);
-  return precision !== undefined && precision !== null
-    ? n.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision })
-    : n.toLocaleString(undefined, { maximumFractionDigits: 10 });
+  const opts = typeof o === "number" ? { precision: o } : o ?? {};
+  const p = opts.precision;
+  const fixed = p !== undefined && p !== null;
+  const x = opts.numberFormat === "percent" ? n * 100 : n;
+  let s = x.toLocaleString(undefined, {
+    minimumFractionDigits: fixed ? p : opts.numberFormat === "currency" ? 2 : 0,
+    maximumFractionDigits: fixed ? p : opts.numberFormat === "currency" ? 2 : 10,
+    useGrouping: opts.separators !== false,
+  });
+  if (opts.numberFormat === "percent") s += "%";
+  if (opts.numberFormat === "currency") s = n < 0 ? `-${opts.currency ?? "$"}${s.slice(1)}` : `${opts.currency ?? "$"}${s}`;
+  return s;
 }
 
 export function displayText(field: Field, v: unknown, refs?: Refs): string {
@@ -176,12 +203,12 @@ export function displayText(field: Field, v: unknown, refs?: Refs): string {
       return (Array.isArray(v) ? v : [v]).map((x) => (inner ? displayText(inner, x, refs) : String(x))).join(", ");
     }
     case "checkbox": return v ? "true" : "false";
-    case "date": return formatDate(v, field.options.includeTime);
+    case "date": return formatDate(v, field.options.includeTime, field.options);
     case "created_time": case "last_modified_time": return formatDate(v, true);
   }
   const vt = valueType(field);
   if (vt === "date") return formatDate(v, !isDateOnly(v));
-  if (vt === "number" && typeof v === "number") return formatNumber(v, field.options.precision);
+  if (vt === "number" && typeof v === "number") return formatNumber(v, field.type === "rating" ? undefined : field.options);
   if (vt === "boolean") return v ? "true" : "false";
   if (Array.isArray(v)) return v.join(", ");
   return String(v);

@@ -9,7 +9,7 @@ from .auth import api_bases
 from .compute import COMPUTED_TYPES, FIELD_TYPES, FILTER_OPS, Engine
 from .db import Jsonb
 from . import audit, jobs, recur, webhooks
-from .ical import LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, component_kind, ical_to_values, is_date_only, new_uid
+from .ical import DEFAULT_TZ, LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, component_kind, ical_to_values, is_date_only, new_uid
 
 SELECT_TYPES = ("single_select", "multi_select")
 DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables synced with a CalDAV calendar / CardDAV address book
@@ -444,9 +444,94 @@ def normalize_data(conn, table, fields, data: dict, user_id=None, record_id=None
                      for i in dict.fromkeys(str(a["id"]) for a in items) if i in rows]
             elif items:
                 continue  # attachments can only be set by a logged-in user
+        if t in SELECT_TYPES and f["options"].get("allowNew") is False:
+            known = {c["name"] for c in f["options"].get("choices", [])}
+            for x in (v if isinstance(v, list) else [v]):
+                if x not in (None, "") and str(x) not in known:
+                    bad(f"“{x}” isn't one of the options of {f['name']}")
         ensure_choices(conn, f, v)
         out[str(k)] = v
     return out
+
+
+# ---------------------------------------------------------------- field rules (field editor: required, unique, default)
+
+RULE_TYPES = {"text", "long_text", "number", "rating", "email", "url", "phone", "date", "single_select", "multi_select",
+              "checkbox", "user", "link", "attachment", "recurrence"}
+UNIQUE_TYPES = {"text", "number", "email", "url", "phone", "date"}
+DEFAULT_TYPES = {"text", "long_text", "number", "rating", "email", "url", "phone", "date", "single_select", "multi_select",
+                 "checkbox", "user"}
+
+
+def is_blank(v) -> bool:
+    return v is None or v is False or (isinstance(v, (str, list, dict)) and not (v.strip() if isinstance(v, str) else v))
+
+
+def field_rules(conn, f, *, required=None, unique=None, default=None, clear_default=False) -> dict:
+    """Validate the rules set in the field editor; returns the column values to store."""
+    t = f["type"]
+    req = bool(required) if required is not None else f.get("required", False)
+    uniq = bool(unique) if unique is not None else f.get("unique_values", False)
+    dv = None if clear_default else (default if default is not None else f.get("default_value"))
+    req = req and t in RULE_TYPES
+    uniq = uniq and t in UNIQUE_TYPES
+    if dv is not None and t not in DEFAULT_TYPES:
+        dv = None
+    if t == "date" and isinstance(dv, str) and dv not in ("today", "now") and not dv[:10].replace("-", "").isdigit():
+        bad("A date's default is “today”, “now” or a date")
+    if t in ("number", "rating") and dv is not None and not (isinstance(dv, (int, float)) and not isinstance(dv, bool)):
+        bad("A number's default must be a number")
+    if t == "multi_select" and dv is not None and not isinstance(dv, list):
+        dv = [dv]
+    if is_blank(dv) and t != "checkbox":
+        dv = None
+    if uniq and not f.get("unique_values") and f.get("id"):
+        dup = conn.execute(
+            "SELECT lower(data->>%s) AS v FROM records WHERE table_id = %s AND NOT deleted AND COALESCE(data->>%s, '') <> '' "
+            "GROUP BY 1 HAVING count(*) > 1 LIMIT 1", (str(f["id"]), f["table_id"], str(f["id"]))).fetchone()
+        if dup:
+            bad(f"{f['name']} already has the value “{dup['v']}” more than once; make the values unique first")
+    return {"required": req, "unique_values": uniq, "default_value": dv}
+
+
+def _resolve_default(f, dv, user_id):
+    if f["type"] == "date" and dv == "today":
+        return datetime.now(DEFAULT_TZ).date().isoformat()
+    if f["type"] == "date" and dv == "now":
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if f["type"] == "user":
+        ids = dv if isinstance(dv, list) else [dv]
+        return [str(user_id) if x == "me" else x for x in ids if x and (x != "me" or user_id)]
+    return dv
+
+
+def apply_defaults(fields, data: dict, user_id=None) -> dict:
+    """A new record's empty fields get their default value."""
+    out = dict(data)
+    for f in fields:
+        dv = f.get("default_value")
+        if dv is not None and f["type"] not in COMPUTED_TYPES and (str(f["id"]) not in out or out[str(f["id"])] in (None, "", [])):
+            out[str(f["id"])] = _resolve_default(f, dv, user_id)
+    return out
+
+
+def check_rules(conn, table_id, fields, data: dict, keys, record_id=None):
+    """Required fields can't be left empty and unique fields can't repeat a value (for the fields in keys)."""
+    for f in fields:
+        fid = str(f["id"])
+        if fid not in keys:
+            continue
+        v = data.get(fid)
+        if f.get("required") and is_blank(v):
+            bad(f"{f['name']} is required")
+        if f.get("unique_values") and not is_blank(v):
+            if isinstance(v, str):
+                q = "lower(data->>%s) = lower(%s)"
+            else:
+                q, v = "data->%s = %s", Jsonb(v)
+            if conn.execute(f"SELECT 1 FROM records WHERE table_id = %s AND NOT deleted AND id IS DISTINCT FROM %s AND {q} LIMIT 1",
+                            (table_id, record_id, fid, v)).fetchone():
+                bad(f"{f['name']} must be unique: another record already has “{data.get(fid)}”")
 
 
 def apply_event_defaults(table, fields, data: dict, patch: dict):
@@ -553,7 +638,8 @@ def create_record(conn, table_id, data: dict, user_id=None):
     if table["kind"] == "remote":
         bad("Records of a linked table are written through its link")
     fields = get_fields(conn, table_id)
-    data = normalize_data(conn, table, fields, data or {}, user_id)
+    data = normalize_data(conn, table, fields, apply_defaults(fields, data or {}, user_id), user_id)
+    check_rules(conn, table_id, fields, data, {str(f["id"]) for f in fields})
     if table["kind"] in ("tasks", "mixed"):
         keys = {f["system_key"]: str(f["id"]) for f in fields if f["system_key"]}
         if table["kind"] == "mixed" and not data.get(keys["component"]):
@@ -584,6 +670,7 @@ def update_record(conn, record_id, patch: dict, user_id=None):
     fields = get_fields(conn, r["table_id"])
     patch = normalize_data(conn, table, fields, patch or {}, user_id, record_id)
     old = dict(r["data"])
+    check_rules(conn, r["table_id"], fields, patch, {k for k, v in patch.items() if v != old.get(k)}, record_id)
     data = {**old, **patch}
     keys = {f["system_key"]: str(f["id"]) for f in fields if f["system_key"]}
     patch = apply_done(table, keys, old, data, patch)

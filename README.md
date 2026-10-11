@@ -42,7 +42,7 @@ Every database and combined database can have any number of Notion-style views, 
 
 | View | What it shows |
 |---|---|
-| **Table** | Spreadsheet grid; click a cell to edit it. Drag a column header to move the column (the order is saved with the view; the title column stays first). A column header's menu can **freeze** the columns up to it, so they stay put while the rest scrolls sideways |
+| **Table** | Spreadsheet grid; click a cell to edit it. Drag a column header to move the column, the title column included (the order is saved with the view). A column header's menu can **freeze** the columns up to it, so they stay put while the rest scrolls sideways. The footer shows a **summary** per column (click it): sum, average, min, max for numbers, earliest / latest for dates, filled, empty, unique and % filled for anything, checked / unchecked for checkboxes, over the view's records |
 | **Board** | Kanban columns grouped by a single-select field; drag cards between columns |
 | **Timeline** | Records as bars between a start and end date. Drag a bar to move it, or drag its edges to change the start or end. Day, week and month scales. Click an empty row to give an undated record dates. |
 | **Calendar** | **Month**, **Week** and **Day**. Month: drag items to another day. Week/Day: a time grid with an all-day row (on phones the week scrolls sideways and opens on today); click a slot to add, drag a block to move it (15-minute steps, across days in Week), drag its bottom edge to change the end |
@@ -53,6 +53,12 @@ Every database and combined database can have any number of Notion-style views, 
 **Filters, sorts and groups (like Teable).** **Filter** builds conditions joined by *and* / *or*, with nested **condition groups** (e.g. *Type is Event* **or** (*Status is In Progress* **and** *Type is Task*)); numbers and dates have greater/less than, before/after. A condition without a value is ignored until you fill it in. **Sort** takes several levels ("by Type, then by Title Z → A"). In Table, List and Gallery views, **Group** nests up to three levels (e.g. Type → Status); groups follow the field's option order (dates and numbers ascending, empty last), collapse with a click, and a group's **+** adds a record with that group's values. The same filters and sorts apply on public links and in the API's `view=`.
 
 **Group headers.** Each group level has two switches in **Group**: **Title** (show that level's header row, e.g. "Event" / "Task", or let its records simply follow each other) and **Collapse arrow** (whether the header can fold its group away).
+
+**Names per view.** **Fields** in the toolbar shows or hides each field and can give it a different name in that view only (e.g. "Remarks" for *Notes* in one view); the field itself, the API and formulas keep its real name.
+
+**Table icons.** Click a table's (or combined database's) icon next to its title to pick an emoji from a searchable picker, or paste any emoji; it shows in the sidebar too. **Remove icon** goes back to the default.
+
+**Calendar subscription links.** A table's (or combined database's) **⋯ → Subscribe in a calendar app…** makes a secret, read-only `.ics` address that Apple Calendar, Google Calendar, Outlook and others can subscribe to (buttons for webcal and Google Calendar are included). A link can follow a view, so only that view's records (its filters) are in the calendar and a calendar view's date fields are used; otherwise it uses the table's Start and End / Due, or its first date fields. Records without a date are left out; repeating items repeat. Calendar apps refresh it about hourly. **New address** replaces the secret (the old address stops working) and **Delete** removes it. Anyone with the address can read the calendar, without signing in.
 
 **Adding records.** Every view has a **New** button left of the search box (also on public links that allow adding).
 
@@ -124,7 +130,7 @@ Everything is under **Settings → API & MCP**.
 
 A stable API for scripts and automation tools (n8n, Make, Zapier, Home Assistant, GPT Actions). Interactive docs: `/api/v1/docs`; OpenAPI spec (with this server's address, ready to import): `/api/v1/openapi.json`.
 
-- Tables by **id or name** (`?base=` if two bases share a name); fields keyed by **name**.
+- Tables by **id or name** (`?base=` if two bases share a name); fields keyed by **name**, or by **id** with `?fieldKeyType=id` (as in Teable; also `field_key=id`, and `field_key` in the MCP tools), so renaming a field never breaks an integration. Field ids are under the field editor's **Advanced properties**.
 - Values written as **plain text**: `"2026-10-12"` / `"2026-10-12T15:30:00Z"` for dates, option names for selects, lists or `"a, b"` for multiple selects, record **titles** or ids for links, usernames for user fields. Unknown fields and unreadable values give a clear `400`.
 - `GET …/records` supports `filter` (`{"Status": "Done"}` or `[{"field": "Due", "op": "lt", "value": "2026-11-01"}]`; ops `is, is_not, contains, not_contains, gt, gte, lt, lte, empty, not_empty`), `search`, `sort=-Due,Name`, `view`, `fields`, `limit` (≤ 1000) / `offset` with `next_offset`, and `cell_format=text` for values as shown in the app.
 - Batch create / update / delete (up to 1000, all-or-nothing) and **upsert** (`match_on: ["Email"]`).
@@ -160,6 +166,14 @@ Probyte POSTs `record.created`, `record.updated` and `record.deleted` events (wi
 | Basic | Single line text, Long text, Number, Single select, Multiple select, User, Date, Rating, Checkbox, Attachment, URL, Email |
 | Advanced | Formula, Link to record, Lookup, Rollup, Conditional lookup, Conditional rollup, Button, Auto number |
 | System | Created time, Last modified time, Created by, Last modified by |
+
+**The field editor** opens as a panel on the right (click a column header → **Edit field**, or **+** to add one):
+- **Name**, an optional **description** (shown when hovering the column), and **Advanced properties** with the field's id.
+- **Type**, with what it's for. Changing it converts the values (see below).
+- **Options** for selects: drag to reorder, a colour each, Enter adds the next one. **Allow new options when editing** off means only the listed options can be picked (in the app, the API, imports and public links).
+- **Formatting**: numbers as decimal, percent or currency (with a symbol), decimal places and thousands separators; dates as local, long, ISO, US or European, with or without time, in 12- or 24-hour format.
+- **Field value validation rules**: **Required** (a record can't be added or saved with it empty; marked * on the column) and, for text, numbers, email, URL and dates, **Unique** (no two records share a value; case doesn't matter). Values synced in from phones aren't blocked.
+- **Default value** for new records: text, a number, an option, checked, *today* / *now* for dates, or *whoever adds the record* for user fields.
 
 - **Link to record** connects records across tables, or within one table. By default it is two-way: adding a link also creates the matching field in the other table, and the two stay in sync. Deleting a record removes it from every link that points to it.
 - **Lookup** shows a field from the linked records. **Rollup** summarises it: count, sum, average, min, max, and/or/xor, join, unique.
@@ -400,7 +414,8 @@ backend/app/
   vcard.py     record <-> vCard conversion that keeps unmanaged properties
   migrate.py   runs migrations/ (numbered .sql / .py files, each once; recorded in schema_migrations)
   migrations/  0001 baseline schema, data fixes, jobs + sync state, table/row versions, live changes, settings,
-               encrypted secrets, trash, record history, view settings cleanup
+               encrypted secrets, trash, record history, view settings cleanup, icons + calendar feeds, field rules
+  feeds.py     calendar subscription links (/ics/<token>.ics)
   backup.py    backups (pg_dump + calendars + files) and restoring them
   secretbox.py encryption of stored passwords (key outside the database)
   ratelimit.py slowing down password guessing

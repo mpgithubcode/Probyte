@@ -104,9 +104,19 @@ def field_out(f) -> dict:
         out["read_only"] = True
     if f.get("system_key") and f["system_key"] not in ("record_id",):
         out["synced"] = True  # part of the CalDAV/CardDAV item
+    if f.get("description"):
+        out["description"] = f["description"]
+    if f.get("required"):
+        out["required"] = True
+    if f.get("unique_values"):
+        out["unique"] = True
+    if f.get("default_value") is not None:
+        out["default"] = f["default_value"]
     opts = {}
     if o.get("choices") is not None:
         opts["choices"] = [c["name"] for c in o["choices"]]
+        if o.get("allowNew") is False:
+            opts["only_listed_choices"] = True
     if f["type"] == "link":
         opts["linked_table_id"] = o.get("foreignTableId")
         opts["relationship"] = o.get("relationship", "many")

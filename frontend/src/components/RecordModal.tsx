@@ -82,7 +82,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
         )}
         {shown.map((f) => (
           <div key={f.id} className="form-row">
-            <span className="form-label"><FieldIcon type={f.type} /> {f.name}</span>
+            <span className="form-label" title={f.description ?? undefined}><FieldIcon type={f.type} /> {f.name}{f.required && <span className="req-mark" title="Required"> *</span>}</span>
             <div className="form-input">
               {f.type === "button" ? (
                 <button className="cell-button" style={{ background: f.options.color ?? "var(--accent)" }}
@@ -154,7 +154,7 @@ export function NewRecordForm({ fields, initial, onSave, onClose }: {
       <div className="form">
         {shown.map((f) => (
           <div key={f.id} className="form-row">
-            <span className="form-label"><FieldIcon type={f.type} /> {f.name}</span>
+            <span className="form-label" title={f.description ?? undefined}><FieldIcon type={f.type} /> {f.name}{f.required && <span className="req-mark" title="Required"> *</span>}</span>
             <div className="form-input">
               <FieldInput field={f} value={data[f.id]} onCommit={(v) => setData((d) => ({ ...d, [f.id]: v }))} />
             </div>

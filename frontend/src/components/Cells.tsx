@@ -62,7 +62,7 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
       return <span className="chips">{(Array.isArray(value) ? value : [value]).map((v: string) => (
         <Chip key={v} name={v} color={choiceColor(field, v)} />))}</span>;
     case "date":
-      return <span>{formatDate(value, field.options.includeTime)}</span>;
+      return <span>{formatDate(value, field.options.includeTime, field.options)}</span>;
     case "created_time": case "last_modified_time":
       return <span>{formatDate(value, true)}</span>;
     case "recurrence":
@@ -96,7 +96,7 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
   }
   const vt = valueType(field);
   if (vt === "boolean") return <span className={`check ${value ? "on" : ""}`}>{value ? "✓" : ""}</span>;
-  if (vt === "number" && typeof value === "number") return <span className="num">{formatNumber(value, field.options.precision)}</span>;
+  if (vt === "number" && typeof value === "number") return <span className="num">{formatNumber(value, field.options)}</span>;
   if (vt === "date" || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z)?$/.test(value) && field.type === "formula")) {
     return <span>{formatDate(value, !isDateOnly(value))}</span>;
   }
@@ -257,7 +257,7 @@ function ChoicePicker({ field, value, onCommit, onDone, inline }: InputProps) {
   const [q, setQ] = useState("");
   const choices = field.options.choices ?? [];
   const shown = choices.filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase()));
-  const canCreate = !field.readonly && q.trim() && !choices.some((c) => c.name.toLowerCase() === q.trim().toLowerCase());
+  const canCreate = !field.readonly && field.options.allowNew !== false && q.trim() && !choices.some((c) => c.name.toLowerCase() === q.trim().toLowerCase());
 
   const close = () => { setQ(""); shell.close(); };
   const pick = (name: string) => {
@@ -278,7 +278,7 @@ function ChoicePicker({ field, value, onCommit, onDone, inline }: InputProps) {
       </span>
       {shell.open && shell.anchorEl && (
         <Popover anchor={shell.anchorEl} onClose={close} width={240}>
-          <input className="input" autoFocus placeholder={field.readonly ? "Search" : "Search or create…"} value={q}
+          <input className="input" autoFocus placeholder={field.readonly || field.options.allowNew === false ? "Search" : "Search or create…"} value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {

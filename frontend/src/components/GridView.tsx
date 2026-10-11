@@ -304,7 +304,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
               )}
             </th>
             {visible.map((f) => (
-              <th key={f.id} style={{ width: WIDTHS[f.type] ?? 200, ...fz(f).style }} title={f.options._error ?? undefined}
+              <th key={f.id} style={{ width: WIDTHS[f.type] ?? 200, ...fz(f).style }} title={f.options._error ?? f.description ?? undefined}
                 className={`${fz(f).className} ${dragCol === f.id ? "col-dragging" : ""} ${overCol === f.id && dragCol && dragCol !== f.id
                   ? (visible.findIndex((x) => x.id === dragCol) < visible.findIndex((x) => x.id === f.id) ? "col-over-after" : "col-over") : ""}`}
                 draggable={!isTouch}
@@ -315,7 +315,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
                 onClick={(e) => setMenu({ field: f, anchor: e.currentTarget })}>
                 <div className="th-inner">
                   <FieldIcon type={f.type} />
-                  <span className="th-name">{f.name}</span>
+                  <span className="th-name">{f.name}{f.required && <span className="req-mark" title="Required"> *</span>}</span>
                   {f.system_key && f.system_key !== "remote" && f.system_key !== "record_id" && <span title="Synced with the server (locked)"><Icon name="lock" size={11} className="th-lock" /></span>}
                   {f.options._error && <span className="th-warn" title={f.options._error}>!</span>}
                   {sorts.map((s, i) => s.field === f.id && (

@@ -104,12 +104,20 @@ class FieldIn(BaseModel):
     name: str
     type: str
     options: dict[str, Any] = {}
+    description: str | None = None
+    required: bool = False
+    unique: bool = False
+    default_value: Any = None
 
 
 class FieldPatch(BaseModel):
     name: str | None = None
     type: str | None = None
     options: dict[str, Any] | None = None
+    description: str | None = None
+    required: bool | None = None
+    unique: bool | None = None
+    default_value: Any = None   # send null to remove the default
 
 
 class FormulaCheck(BaseModel):

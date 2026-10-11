@@ -339,6 +339,11 @@ def create_field(table_id: str, body: FieldIn, user=User):
             f = store.create_link_pair(conn, table, body.name, {**opts, "symmetric": body.options.get("symmetric", True)}, user["id"])
         else:
             f = store.create_field(conn, table_id, body.name, body.type, opts)
+        rules = store.field_rules(conn, {**f, "required": False, "unique_values": False, "default_value": None, "id": None},
+                                  required=body.required, unique=body.unique, default=body.default_value)
+        conn.execute("UPDATE fields SET description = %s, required = %s, unique_values = %s, default_value = %s WHERE id = %s",
+                     ((body.description or "").strip()[:1000] or None, rules["required"], rules["unique_values"],
+                      Jsonb(rules["default_value"]) if rules["default_value"] is not None else None, f["id"]))
         return _describe_field(conn, f["id"], table_id)
 
 
@@ -346,6 +351,10 @@ def create_field(table_id: str, body: FieldIn, user=User):
 def update_field(field_id: str, body: FieldPatch, user=User):
     with connection() as conn:
         f = _own_field(conn, field_id, user)
+        if f["system_key"] and f["system_key"] != "remote" and set(body.model_fields_set) <= {"description"}:
+            # a locked field can still be described
+            conn.execute("UPDATE fields SET description = %s WHERE id = %s", ((body.description or "").strip()[:1000] or None, field_id))
+            return _describe_field(conn, field_id, f["table_id"])
         if f["system_key"] and f["system_key"] != "remote":
             raise HTTPException(400, "This field is locked: it's part of the synced calendar / contact item (or built in). "
                                      "Hide it in a view, or add your own field next to it.")
@@ -376,6 +385,17 @@ def update_field(field_id: str, body: FieldPatch, user=User):
                                    (Jsonb({"symmetricFieldId": str(sym["id"])}), f["id"])).fetchone()
         if snapshot is not None:
             values.convert_field(conn, f, updated, snapshot)
+        sent = body.model_fields_set
+        rules = store.field_rules(conn, updated if new_type == f["type"] else {**updated, "unique_values": False},
+                                  required=body.required, unique=body.unique,
+                                  default=body.default_value,
+                                  clear_default=("default_value" in sent and body.default_value is None)
+                                  or (new_type != f["type"] and "default_value" not in sent))
+        desc = (body.description or "").strip()[:1000] or None if "description" in sent else updated["description"]
+        updated = conn.execute(
+            "UPDATE fields SET description = %s, required = %s, unique_values = %s, default_value = %s WHERE id = %s RETURNING *",
+            (desc, rules["required"], rules["unique_values"],
+             Jsonb(rules["default_value"]) if rules["default_value"] is not None else None, field_id)).fetchone()
         return _describe_field(conn, updated["id"], f["table_id"])
 
 

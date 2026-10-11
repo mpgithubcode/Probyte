@@ -74,8 +74,8 @@ def test_sign_up_and_build_a_table(browser):
     expect(pg.locator(".page-head h1")).to_have_text("Projects")
     # add a number field
     pg.click(".page-head button:has-text('Field')")
-    pg.fill(".modal .row-2 input.input", "Budget")
-    pg.click(".modal .row-2 .stack:has-text('Type') button")
+    pg.fill(".modal label:has-text('Name') input", "Budget")
+    pg.click(".modal .type-button")
     pg.click(".type-item:has-text('Number')")
     pg.click(".modal-foot button:has-text('Save')")
     expect(pg.locator("th .th-name", has_text="Budget")).to_be_visible()
@@ -672,7 +672,9 @@ def test_dragging_columns(browser, table_user):
     pg.wait_for_timeout(800)
     pg.reload()
     expect(pg.locator("thead th .th-name").nth(1)).to_have_text("Status")   # saved with the view
-    assert heads()[0] == "Name"                                            # the title column stays first
+    # the title column moves too
+    pg.locator("thead th").filter(has_text="Name").drag_to(pg.locator("thead th").filter(has_text="Status"))
+    expect(pg.locator("thead th .th-name").first).to_have_text("Status")
     assert not pg.errors, pg.errors
 
 
@@ -886,4 +888,96 @@ def test_search_everything(browser, table_user):
     pg.keyboard.press("Escape")
     pg.click(".side-head [aria-label='Search everything']")                # the sidebar button too
     expect(pg.locator(".search-modal input")).to_be_focused()
+    assert not pg.errors, pg.errors
+
+
+def test_field_editor_rules_formats_and_options(browser):
+    u = Client()
+    t = u.table(name="Products")
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    # a required, unique text field with a description
+    pg.click("thead .add-col button")
+    drawer = pg.locator(".modal.drawer")
+    drawer.locator("label:has-text('Name') input").fill("SKU")
+    drawer.locator("button:has-text('Add description')").click()
+    drawer.locator("textarea").fill("Stock keeping unit")
+    drawer.locator(".toggle-row:has-text('Required')").click()
+    drawer.locator(".toggle-row:has-text('Unique')").click()
+    pg.click(".modal-foot button:has-text('Save')")
+    expect(drawer).to_have_count(0)
+    sku = next(f for f in u.j("GET", f"/tables/{t['id']}")["fields"] if f["name"] == "SKU")
+    assert sku["required"] and sku["unique_values"] and sku["description"] == "Stock keeping unit"
+    expect(pg.locator("thead th:has-text('SKU') .req-mark")).to_have_count(1)
+    # a currency number with a default
+    pg.click("thead .add-col button")
+    drawer.locator("label:has-text('Name') input").fill("Price")
+    drawer.locator(".type-button").click()
+    pg.click(".type-item:has-text('Number')")
+    drawer.locator(".segmented button:has-text('Currency')").click()
+    drawer.locator("label:has-text('Symbol') input").fill("€")
+    drawer.locator(".field-section:has-text('Default value') input").fill("9.5")
+    expect(drawer).to_contain_text("€12,345.68")
+    pg.click(".modal-foot button:has-text('Save')")
+    expect(drawer).to_have_count(0)
+    # a select with options added by Enter, reordered by dragging, and only those allowed
+    pg.click("thead .add-col button")
+    drawer.locator("label:has-text('Name') input").fill("Size")
+    drawer.locator(".type-button").click()
+    pg.click(".type-item:has-text('Single select')")
+    drawer.locator("button:has-text('Add option')").click()
+    opts = drawer.locator(".choice-row input.input")
+    opts.nth(0).fill("Small")
+    opts.nth(0).press("Enter")
+    opts.nth(1).fill("Large")
+    opts.nth(1).press("Enter")
+    opts.nth(2).fill("Medium")
+    drawer.locator(".choice-row .drag-handle").nth(2).drag_to(drawer.locator(".choice-row").nth(1))
+    expect(opts.nth(1)).to_have_value("Medium")
+    drawer.locator(".toggle-row:has-text('Allow new options')").click()
+    drawer.locator(".field-section:has-text('Default value') select").select_option("Medium")
+    pg.click(".modal-foot button:has-text('Save')")
+    expect(drawer).to_have_count(0)
+    fields = {f["name"]: f for f in u.j("GET", f"/tables/{t['id']}")["fields"]}
+    assert [c["name"] for c in fields["Size"]["options"]["choices"]] == ["Small", "Medium", "Large"]
+    assert fields["Size"]["options"]["allowNew"] is False and fields["Size"]["default_value"] == "Medium"
+    assert fields["Price"]["options"]["numberFormat"] == "currency" and fields["Price"]["default_value"] == 9.5
+    # a new record gets the defaults and shows the format; the required field is enforced
+    r = u.request("POST", API + f"/tables/{t['id']}/records", json={"data": {}})
+    assert r.status_code == 400 and "SKU is required" in r.text
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {fields["SKU"]["id"]: "X1"}})
+    expect(pg.locator(".grid tbody")).to_contain_text("€9.50")
+    expect(pg.locator(".grid tbody")).to_contain_text("Medium")
+    assert not pg.errors, pg.errors
+
+
+def test_view_names_footer_icon_and_calendar_link(browser, table_user):
+    u, t, F = table_user
+    num = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Qty", "type": "number"})
+    for i, r in enumerate(u.records(t["id"])):
+        u.j("PATCH", f"/records/{r['id']}", json={"data": {num["id"]: i + 1}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    # a name for this view only
+    pg.click(".tool-btn:has-text('Fields')")
+    pg.fill("input[aria-label='Name of Notes in this view']", "Remarks")
+    pg.keyboard.press("Escape")
+    expect(pg.locator("thead th .th-name").filter(has_text="Remarks")).to_have_count(1)
+    assert any(f["name"] == "Notes" for f in u.j("GET", f"/tables/{t['id']}")["fields"])
+    # a sum in the footer
+    pg.locator("tfoot .summary-cell").nth(3).click()
+    pg.click(".menu-item:has-text('Sum')")
+    expect(pg.locator("tfoot .summary-cell").nth(3)).to_contain_text("10")
+    # an emoji icon
+    pg.click("button[aria-label='Change icon']")
+    pg.locator(".emoji-btn").first.click()
+    eventually(lambda: next(x for x in u.workspace()["tables"] if x["id"] == t["id"]).get("icon"))
+    expect(pg.locator(".title-row .emoji-icon")).to_have_count(1)
+    # a calendar subscription link
+    pg.click("button[aria-label='More']")
+    pg.click(".menu-item:has-text('Subscribe in a calendar app')")
+    pg.click(".modal button:has-text('Create link')")
+    expect(pg.locator(".modal .feed-url")).to_contain_text("/ics/")
     assert not pg.errors, pg.errors
