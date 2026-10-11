@@ -309,7 +309,10 @@ def _records_by_id(conn, table_id, ids, cell_format="json", field_key="name"):
     eng = Engine(conn)
     fields = eng.describe(table_id)
     want = {str(i) for i in ids}
-    found = {str(r["id"]): r for r in eng.records(table_id) if str(r["id"]) in want}
+    if len(want) <= 100:  # just written: compute those records alone
+        found = {i: r for i in want if (r := eng.record(table_id, i))}
+    else:
+        found = {str(r["id"]): r for r in eng.records(table_id) if str(r["id"]) in want}
     return [record_out(eng, fields, found[str(i)], cell_format, field_key) for i in ids if str(i) in found]
 
 

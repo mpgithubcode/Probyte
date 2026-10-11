@@ -1,8 +1,15 @@
 """Computed field values (formula, lookup, rollup, conditional lookup/rollup, auto number,
 created/modified time & by), evaluated when records are read so they are never stale.
 
-One Engine per request; it caches computed tables so lookups across linked tables are cheap.
+One Engine per request; it caches computed tables so lookups across linked tables are cheap. Computed tables
+are also kept between requests (_shared), keyed by the data_version of the table and every table its values
+depend on (bumped by database triggers on any record or field change), so an unchanged table isn't recomputed.
 """
+import os
+import re
+import threading
+import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 from . import formula as F
@@ -14,6 +21,36 @@ COMPUTED_TYPES = {"formula", "lookup", "rollup", "conditional_lookup", "conditio
 FIELD_TYPES = STORED_TYPES | COMPUTED_TYPES
 LIST_TYPES = {"multi_select", "link", "user", "attachment", "lookup", "conditional_lookup"}
 FILTER_OPS = {"is", "is_not", "contains", "not_contains", "gt", "gte", "lt", "lte", "empty", "not_empty"}
+CACHE_ROWS = int(os.environ.get("COMPUTE_CACHE_ROWS", "300000"))  # records kept computed in memory; 0 disables
+TIME_FUNCS = re.compile(r"\b(TODAY|NOW|FROMNOW|TONOW)\s*\(", re.I)  # formulas whose value changes by itself
+
+# table id -> {"key", "others", "fields", "row_version", "recs"}; least recently used first
+_shared: OrderedDict = OrderedDict()
+_shared_rows = 0
+_shared_lock = threading.Lock()
+
+
+def _cache_get(tid) -> dict | None:
+    with _shared_lock:
+        hit = _shared.get(tid)
+        if hit:
+            _shared.move_to_end(tid)
+        return hit
+
+
+def _cache_put(tid, entry: dict):
+    global _shared_rows
+    if len(entry["recs"]) > CACHE_ROWS:
+        return
+    with _shared_lock:
+        old = _shared.pop(tid, None)
+        if old:
+            _shared_rows -= len(old["recs"])
+        _shared[tid] = entry
+        _shared_rows += len(entry["recs"])
+        while _shared_rows > CACHE_ROWS and _shared:
+            _, gone = _shared.popitem(last=False)
+            _shared_rows -= len(gone["recs"])
 
 
 def _iso(dt):
@@ -206,12 +243,14 @@ class Engine:
             self._raw[tid] = remote.records(self.conn, self.table(tid))
         if tid not in self._raw:
             rows = self.conn.execute(
-                "SELECT id, table_id, data, sync_status, created_at, updated_at, seq, created_by, updated_by "
+                "SELECT id, table_id, data, sync_status, created_at, updated_at, seq, created_by, updated_by, row_version "
                 "FROM records WHERE table_id = %s AND NOT deleted ORDER BY created_at, id", (tid,)).fetchall()
             self._raw[tid] = [{**r, "data": dict(r["data"])} for r in rows]
         return self._raw[tid]
 
     def records(self, table_id) -> list:
+        """Every record of a table with computed values. Treat the result as read-only: it may be shared
+        with other requests through the cache."""
         tid = str(table_id)
         if tid in self._computed:
             return self._computed[tid]
@@ -220,22 +259,124 @@ class Engine:
             return self._computed[tid]
         if tid in self._active:
             return self.raw(tid)  # circular lookup between tables: fall back to stored values
+        key = self.version(tid)
+        entry = _cache_get(tid) if key is not None else None
+        if entry and entry["key"] == key:
+            recs = entry["recs"]
+            self._events_done(tid, self.fields(tid), recs)
+        else:
+            recs = self._refresh(tid, key, entry)
+        self._computed[tid] = recs
+        return recs
+
+    def _refresh(self, tid, key, entry) -> list:
+        """Compute a table, reusing a stale cache entry when only this table's own records changed:
+        then just the rows written since (higher row_version) are read and computed."""
+        fsig = self._fields_sig(tid)
+        others = tuple(k for k in key if not (isinstance(k, tuple) and k[0] == tid)) if key else None
         self._active.add(tid)
         try:
-            recs = [{**r, "data": dict(r["data"])} for r in self.raw(tid)]
-            fields = self.fields(tid)
-            computed = [f for f in fields if f["type"] in COMPUTED_TYPES]
-            for r in recs:
-                for f in computed:
-                    r["data"].pop(str(f["id"]), None)  # never trust stale stored values
-            self._drop_gone_links(fields, recs)
-            for f in self._order(computed):
-                self._compute_field(f, recs)
-            self._events_done(tid, fields, recs)
-            self._computed[tid] = recs
-            return recs
+            if entry and entry["others"] == others and entry["fields"] == fsig and not self._self_dependent(tid):
+                recs = self._apply_changes(tid, entry)
+                if recs is not None:
+                    _cache_put(tid, {**entry, "key": key, "recs": recs[0], "row_version": recs[1]})
+                    return recs[0]
+            raw = self.raw(tid)
+            recs = [{**r, "data": dict(r["data"])} for r in raw]
+            self._compute_all(tid, recs)
         finally:
             self._active.discard(tid)
+        if key is not None:
+            _cache_put(tid, {"key": key, "others": others, "fields": fsig, "recs": recs,
+                             "row_version": max((r.get("row_version") or 0 for r in raw), default=0)})
+        return recs
+
+    def _apply_changes(self, tid, entry):
+        """(records, newest row_version) with the rows changed since the entry merged in; None to start over."""
+        rows = self.conn.execute(
+            "SELECT id, table_id, data, sync_status, created_at, updated_at, seq, created_by, updated_by, row_version, deleted "
+            "FROM records WHERE table_id = %s AND row_version > %s", (tid, entry["row_version"])).fetchall()
+        if len(rows) > max(500, len(entry["recs"]) // 4):
+            return None  # a big change: recomputing everything is simpler and about as quick
+        changed = {str(r["id"]): r for r in rows}
+        fresh = [{**r, "data": dict(r["data"])} for r in rows if not r["deleted"]]
+        self._compute_all(tid, fresh)
+        fresh_by_id = {str(r["id"]): r for r in fresh}
+        out = [fresh_by_id.pop(str(r["id"]), r) for r in entry["recs"] if str(r["id"]) not in changed or str(r["id"]) in fresh_by_id]
+        if fresh_by_id:  # new records
+            out.extend(fresh_by_id.values())
+            out.sort(key=lambda r: (r["created_at"], str(r["id"])))
+        total = self.conn.execute("SELECT count(*) AS n FROM records WHERE table_id = %s AND NOT deleted", (tid,)).fetchone()["n"]
+        if total != len(out):
+            return None  # rows were deleted outright: start over
+        return out, max((r["row_version"] for r in rows), default=entry["row_version"])
+
+    def _fields_sig(self, tid):
+        return tuple((str(f["id"]), f["type"], f["is_primary"], repr(sorted(f["options"].items()))) for f in self.fields(tid))
+
+    def _self_dependent(self, tid) -> bool:
+        """Do this table's computed values read other records of the same table (a link to itself)?"""
+        return any(str(f["options"].get("foreignTableId")) == tid for f in self.fields(tid)
+                   if f["type"] in ("link", "conditional_lookup", "conditional_rollup"))
+
+    def record(self, table_id, record_id) -> dict | None:
+        """One record with computed values, without computing the rest of its table (for answering writes)."""
+        tid = str(table_id)
+        if tid in self._computed or self.is_remote(tid):
+            return self.index(tid).get(str(record_id))
+        row = self.conn.execute(
+            "SELECT id, table_id, data, sync_status, created_at, updated_at, seq, created_by, updated_by "
+            "FROM records WHERE id = %s AND table_id = %s AND NOT deleted", (str(record_id), tid)).fetchone()
+        if not row:
+            return None
+        rec = {**row, "data": dict(row["data"])}
+        self._active.add(tid)
+        try:
+            self._compute_all(tid, [rec])
+        finally:
+            self._active.discard(tid)
+        return rec
+
+    def _compute_all(self, tid, recs):
+        fields = self.fields(tid)
+        computed = [f for f in fields if f["type"] in COMPUTED_TYPES]
+        for r in recs:
+            for f in computed:
+                r["data"].pop(str(f["id"]), None)  # never trust stale stored values
+        self._drop_gone_links(fields, recs)
+        for f in self._order(computed):
+            self._compute_field(f, recs)
+        self._events_done(tid, fields, recs)
+
+    def _depends_on(self, tid) -> set | None:
+        """The table and every table its computed values read from (None if one is a linked table,
+        whose data has its own cache)."""
+        seen, todo = set(), [str(tid)]
+        while todo:
+            t = todo.pop()
+            if t in seen:
+                continue
+            if self.is_remote(t):
+                return None
+            seen.add(t)
+            for f in self.fields(t):
+                ft = f["options"].get("foreignTableId") if f["type"] in ("link", "conditional_lookup", "conditional_rollup") else None
+                if ft:
+                    todo.append(str(ft))
+        return seen
+
+    def version(self, tid) -> tuple | None:
+        """What a table's computed values depend on; None when they can't be cached."""
+        if CACHE_ROWS <= 0:
+            return None
+        deps = self._depends_on(tid)
+        if not deps:
+            return None
+        rows = self.conn.execute("SELECT id, data_version FROM tables WHERE id = ANY(%s::uuid[])", (list(deps),)).fetchall()
+        key = tuple(sorted((str(r["id"]), r["data_version"]) for r in rows))
+        if any(f["type"] == "formula" and TIME_FUNCS.search(f["options"].get("expression") or "") for t in deps for f in self.fields(t)):
+            key += (int(time.time() // 60),)  # NOW()/TODAY(): recompute at most once a minute
+        return key
 
     def _events_done(self, tid, fields, recs):
         """An event's Completed box is ticked once it's over (events have no completion on the server)."""

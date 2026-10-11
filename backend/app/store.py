@@ -629,10 +629,8 @@ def list_records(conn, table_id, engine=None):
 
 def computed_record(conn, record_id, table_id):
     """One record with its computed fields filled in."""
-    for r in Engine(conn).records(table_id):
-        if str(r["id"]) == str(record_id):
-            return clean_record(r)
-    return None
+    r = Engine(conn).record(table_id, record_id)
+    return clean_record(r) if r else None
 
 
 def delete_field_cleanup(conn, f):

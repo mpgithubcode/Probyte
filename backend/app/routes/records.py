@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from .. import attachments, recordops, store, values
 from ..compute import COMPUTED_TYPES, Engine
 from ..db import connection
+from ..viewfilter import apply_view
 from .common import FastJSON, RecordIn, User, _record_out
 
 router = APIRouter()
@@ -28,7 +29,6 @@ def _from_names(fields, data: dict) -> dict:
 @router.get("/api/tables/{table_id}/records")
 def api_list_records(table_id: str, field_key: Literal["id", "name"] = "id", view: str | None = None, user=User):
     """Records with computed values. ?view=<id> applies that view's filters and sort; ?field_key=name keys data by field name."""
-    from .viewfilter import apply_view
     with connection() as conn:
         store.get_table(conn, table_id, user["id"])
         eng = Engine(conn)

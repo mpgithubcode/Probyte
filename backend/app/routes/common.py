@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, Literal
 
+import orjson
 from fastapi import Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -22,10 +23,13 @@ def _json_default(o):
 
 
 class FastJSON(JSONResponse):
-    """json.dumps with UUID/datetime support: much quicker than FastAPI's generic encoder for big tables."""
+    """orjson with UUID/datetime support: many times quicker than FastAPI's generic encoder for big tables."""
 
     def render(self, content) -> bytes:
-        return json.dumps(content, default=_json_default, ensure_ascii=False, separators=(",", ":")).encode()
+        try:
+            return orjson.dumps(content, default=_json_default, option=orjson.OPT_NON_STR_KEYS)
+        except TypeError:  # e.g. integers beyond 64 bits
+            return json.dumps(content, default=_json_default, ensure_ascii=False, separators=(",", ":")).encode()
 
 COMPONENTS = {"tasks": ["VTODO"], "events": ["VEVENT"], "mixed": ["VEVENT", "VTODO"]}
 
@@ -195,7 +199,7 @@ def _own_view(conn, view_id, user):
 
 def _record_out(conn, table_id, record_id):
     """The record as it now looks (computed fields filled in; fresh from the source for linked tables)."""
-    for r in Engine(conn).records(table_id):
-        if str(r["id"]) == str(record_id):
-            return store.clean_record(r)
+    r = Engine(conn).record(table_id, record_id)
+    if r:
+        return store.clean_record(r)
     return {"id": str(record_id), "table_id": str(table_id), "data": {}}

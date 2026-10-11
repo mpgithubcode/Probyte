@@ -8,3 +8,4 @@ icalendar==6.1.0
 bcrypt==4.2.0
 python-multipart==0.0.12
 Pillow==10.4.0
+orjson==3.10.7

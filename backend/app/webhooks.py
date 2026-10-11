@@ -126,7 +126,7 @@ def _payload(conn, table, event, record_id) -> dict:
     if event != "record.deleted":
         eng = Engine(conn)
         fields = eng.describe(table["id"])
-        rec = next((r for r in eng.records(table["id"]) if str(r["id"]) == record_id), None)
+        rec = eng.record(table["id"], record_id)
         if rec is None:
             return {}
         out["record"] = apiv1.record_out(eng, fields, rec)

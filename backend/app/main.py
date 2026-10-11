@@ -9,6 +9,7 @@ from pathlib import Path
 import psycopg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -45,6 +46,23 @@ CORS_HEADERS = {
     "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
     "Access-Control-Max-Age": "86400",
 }
+
+
+class CompressAPI:
+    """gzip for the JSON API (table payloads shrink ~10x); never for streams (MCP, live updates) or DAV."""
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=2048, compresslevel=5)
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        if path.startswith("/api/") and not path.endswith("/events"):
+            return await self.gzip(scope, receive, send)
+        return await self.app(scope, receive, send)
+
+
+app.add_middleware(CompressAPI)
 
 
 @app.middleware("http")

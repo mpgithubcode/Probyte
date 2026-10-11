@@ -3,6 +3,7 @@
 #   scripts/test.sh            all tests
 #   scripts/test.sh api        backend tests only
 #   scripts/test.sh -k sync    any pytest arguments
+#   scripts/test.sh bench      timings at 1k/10k/50k rows (tests/bench/bench.py)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080} RADICALE_PORT=${TEST_RADICALE_PORT:-15232}
@@ -16,10 +17,12 @@ docker compose up -d --build --wait >/dev/null 2>&1
 for i in $(seq 60); do docker compose exec -T app python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/auth/config')" >/dev/null 2>&1 && break; sleep 1; done
 
 target=tests
+cmd="python -m pytest -q -p no:cacheprovider --rootdir tests -c /dev/null"
+if [ "${1:-}" = bench ]; then shift; cmd="pip install -q 'psycopg[binary]' 2>/dev/null; python tests/bench/bench.py"; target=""; fi
 if [ "${1:-}" = api ] || [ "${1:-}" = ui ]; then target="tests/$1"; shift; fi
 docker rm -f probyte-test-runner >/dev/null 2>&1 || true
 docker create --name probyte-test-runner --network probyte-test_default -w /work \
   -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 "$PLAYWRIGHT_IMAGE" \
-  bash -c "pip install -q pytest requests playwright==1.48.0 2>/dev/null && python -m pytest -q -p no:cacheprovider --rootdir tests -c /dev/null $target $*" >/dev/null
+  bash -c "pip install -q pytest requests playwright==1.48.0 2>/dev/null && $cmd $target $*" >/dev/null
 docker cp tests probyte-test-runner:/work/tests >/dev/null
 docker start -a probyte-test-runner
