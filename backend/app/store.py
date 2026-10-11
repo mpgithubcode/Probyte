@@ -9,7 +9,7 @@ from .auth import api_bases
 from .compute import COMPUTED_TYPES, FIELD_TYPES, FILTER_OPS, Engine
 from .db import Jsonb
 from . import jobs, recur, webhooks
-from .ical import LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, is_date_only, new_uid
+from .ical import LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, component_kind, ical_to_values, is_date_only, new_uid
 
 SELECT_TYPES = ("single_select", "multi_select")
 DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables synced with a CalDAV calendar / CardDAV address book
@@ -179,11 +179,13 @@ def ensure_system_fields(conn):
     """Add synced fields defined in code (ical.SYSTEM_FIELDS) that a table doesn't have yet. Runs at startup."""
     for t in conn.execute("SELECT id, kind FROM tables WHERE kind IN ('tasks', 'events', 'mixed', 'contacts')").fetchall():
         by_key = {f["system_key"]: f for f in get_fields(conn, t["id"]) if f["system_key"]}
-        added = False
+        added = set()
         for key, fname, ftype, opts, primary in SYSTEM_FIELDS[t["kind"]]:
             if key not in by_key:
                 by_key[key] = _create_system_field(conn, t["id"], key, fname, ftype, opts, primary)
-                added = True
+                added.add(key)
+        if "alarm" in added:
+            _backfill_reminders(conn, t, by_key["alarm"])
         if added:
             if "done" in by_key and by_key.get("summary"):
                 _place_after(conn, t["id"], by_key["done"], by_key["summary"])
@@ -191,6 +193,22 @@ def ensure_system_fields(conn):
                     d, st = str(by_key["done"]["id"]), str(by_key["status"]["id"])
                     conn.execute("UPDATE records SET data = jsonb_set(data, %s, to_jsonb(COALESCE(data->>%s, '') = 'Completed')) "
                                  "WHERE table_id = %s AND NOT data ? %s", ([d], st, t["id"], d))
+
+
+def _backfill_reminders(conn, table, field):
+    """A newly added Reminder field starts with the alerts the items already have (set on a phone), so the next
+    edit here doesn't remove them."""
+    fid = str(field["id"])
+    for r in conn.execute("SELECT id, caldav_raw FROM records WHERE table_id = %s AND caldav_raw LIKE %s",
+                          (table["id"], "%BEGIN:VALARM%")).fetchall():
+        try:
+            kind = component_kind(r["caldav_raw"]) if table["kind"] == "mixed" else table["kind"]
+            _, vals = ical_to_values(kind, r["caldav_raw"])
+        except Exception:
+            continue
+        if vals.get("alarm"):
+            ensure_choices(conn, field, vals["alarm"])
+            conn.execute("UPDATE records SET data = jsonb_set(data, %s, to_jsonb(%s::text)) WHERE id = %s", ([fid], vals["alarm"], r["id"]))
 
 
 def rename_choices(conn, field, renames: dict):
@@ -742,8 +760,27 @@ def get_combo(conn, combo_id, user_id=None):
     return c
 
 
+# What a field means, for lining up fields of different tables in a combined database. Synced fields know it
+# (SEMANTIC_KEY); other fields get it from a common name, if their type fits that meaning.
+NAME_MEANINGS = {
+    "start": ({"start", "start date", "starts", "begin", "begins", "from", "start time"}, {"date"}),
+    "end": ({"end", "end date", "ends", "due", "due date", "deadline", "until", "finish", "end time"}, {"date"}),
+    "status": ({"status", "state", "stage"}, {"single_select"}),
+    "description": ({"description", "notes", "note", "details", "comments"}, {"text", "long_text"}),
+    "tags": ({"tags", "tag", "labels", "label", "categories", "category"}, {"multi_select", "single_select"}),
+    "location": ({"location", "place", "where", "venue"}, {"text", "long_text"}),
+    "priority": ({"priority"}, {"single_select"}),
+    "email": ({"email", "e-mail", "mail"}, {"email", "text"}),
+    "phone": ({"phone", "telephone", "mobile", "phone number"}, {"text"}),
+    "company": ({"company", "organisation", "organization", "org"}, {"text"}),
+}
+
+
 def _semantic(f):
-    return SEMANTIC_KEY.get(f["system_key"]) if f["system_key"] else None
+    if f["system_key"]:
+        return SEMANTIC_KEY.get(f["system_key"])
+    name = f["name"].strip().lower()
+    return next((sem for sem, (names, types) in NAME_MEANINGS.items() if name in names and f["type"] in types), None)
 
 
 def build_combo_fields(conn, table_ids: list[str]) -> list[dict]:

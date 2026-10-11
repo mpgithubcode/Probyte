@@ -402,3 +402,18 @@ def test_stored_passwords_are_encrypted(user):
         secret = conn.execute("SELECT secret FROM webhooks WHERE id = %s", (hook["id"],)).fetchone()[0]
     assert stored.startswith("enc1:") and pw not in stored
     assert secret.startswith("enc1:") and hook["secret"] not in secret
+
+
+def test_combined_fields_line_up_by_meaning(user):
+    tasks = user.table("mixed", "Personal")
+    proj = user.table(name="Projects")
+    P = user.fields(proj["id"])
+    start = user.j("POST", f"/tables/{proj['id']}/fields", json={"name": "Start", "type": "date", "options": {}})["id"]
+    due = user.j("POST", f"/tables/{proj['id']}/fields", json={"name": "Due", "type": "date", "options": {}})["id"]
+    c = user.j("POST", "/combos", json={"name": "All", "base_id": user.base_id, "sources": [{"table_id": tasks["id"]}, {"table_id": proj["id"]}]})
+    fields = user.j("GET", f"/combos/{c['id']}")["fields"]
+    by_source = {f["name"]: f.get("mapping", {}) for f in fields}
+    mapped = lambda fid: next(n for n, m in by_source.items() if m.get(proj["id"]) == fid)
+    assert mapped(start) == "Start" and "End" in mapped(due) and "Due" in mapped(due)
+    assert "Description" in mapped(P["Notes"]) and mapped(P["Status"]) == "Status"
+    assert len([n for n, m in by_source.items() if tasks["id"] in m and proj["id"] in m]) >= 5

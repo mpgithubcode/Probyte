@@ -139,3 +139,32 @@ def test_sync_status_is_reported(user):
     user.post(API + f"/tables/{t['id']}/sync")
     info = user.j("GET", f"/tables/{t['id']}")["table"]
     assert info.get("last_sync_error")
+
+
+def test_reminders_sync_both_ways(user):
+    t = user.table("mixed", "Reminders")
+    F = user.fields(t["id"])
+    ev = user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Dentist", F["component"]: "Event",
+        F["dtstart"]: "2026-10-20T09:00:00Z", F["dtend"]: "2026-10-20T10:00:00Z", F["alarm"]: "15 minutes before"}})
+    user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Pay rent", F["component"]: "Task",
+        F["dtend"]: "2026-10-21T12:00:00Z", F["alarm"]: "1 hour before"}})
+    user.sync(t["id"])
+    body = user.server_item(t["calendar_url"], "Dentist")[1]
+    assert "BEGIN:VALARM" in body and "TRIGGER:-PT15M" in body and "ACTION:DISPLAY" in body
+    task = user.server_item(t["calendar_url"], "Pay rent")[1]
+    assert "TRIGGER;VALUE=DATE-TIME:20261021T110000Z" in task                  # an hour before it's due
+    # a phone changes the event's alert to 10 minutes and adds a second one: it's read, and kept on our next edit
+    href, body = user.server_item(t["calendar_url"], "Dentist")
+    phone = body.replace("TRIGGER:-PT15M", "TRIGGER:-PT10M").replace("END:VEVENT",
+        "BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-P1D\r\nEND:VALARM\r\nEND:VEVENT")
+    user.put_item(href, phone)
+    user.sync(t["id"])
+    assert user.record(t["id"], ev["id"])["data"][F["alarm"]] == "10 minutes before"
+    user.j("PATCH", f"/records/{ev['id']}", json={"data": {F["location"]: "Main street"}})
+    user.sync(t["id"])
+    body = user.server_item(t["calendar_url"], "Dentist")[1]
+    assert "TRIGGER:-PT10M" in body and "TRIGGER:-P1D" in body                # both alerts untouched
+    # clearing the Reminder removes the alerts
+    user.j("PATCH", f"/records/{ev['id']}", json={"data": {F["alarm"]: None}})
+    user.sync(t["id"])
+    assert "VALARM" not in user.server_item(t["calendar_url"], "Dentist")[1]

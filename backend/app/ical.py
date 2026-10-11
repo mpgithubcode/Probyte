@@ -8,7 +8,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from icalendar import Calendar, Event, Todo
+from icalendar import Alarm, Calendar, Event, Todo
 from icalendar.prop import vRecur
 
 # Floating (timezone-less) times from the server are interpreted in this zone,
@@ -23,6 +23,9 @@ EVENT_STATUS = {"TENTATIVE": "Tentative", "CONFIRMED": "Confirmed", "CANCELLED":
 EVENT_OUTCOMES = {"ATTENDED": "Attended", "MISSED": "Missed"}
 OUTCOME_PROP = "X-PROBYTE-STATUS"
 PRIORITY_CHOICES = ["High", "Medium", "Low"]
+# Reminder: when the phone alerts (an iCalendar VALARM), before an event's start or a task's due date (or start)
+REMINDER_CHOICES = ["At time", "5 minutes before", "15 minutes before", "30 minutes before", "1 hour before",
+                    "2 hours before", "1 day before", "2 days before", "1 week before"]
 
 
 def _choices(names, colors=None):
@@ -39,6 +42,7 @@ SYSTEM_FIELDS = {
         ("priority", "Priority", "single_select", {"choices": _choices(PRIORITY_CHOICES, ["#ef4444", "#f59e0b", "#3b82f6"])}, False),
         ("due", "Due", "date", {"includeTime": True}, False),
         ("dtstart", "Start", "date", {"includeTime": True}, False),
+        ("alarm", "Reminder", "single_select", {"choices": _choices(REMINDER_CHOICES, ["#f59e0b"])}, False),
         ("description", "Description", "long_text", {}, False),
         ("categories", "Tags", "multi_select", {"choices": []}, False),
         ("started", "Started At", "date", {"includeTime": True}, False),
@@ -51,6 +55,7 @@ SYSTEM_FIELDS = {
         ("dtstart", "Start", "date", {"includeTime": True}, False),
         ("dtend", "End", "date", {"includeTime": True}, False),
         ("all_day", "All Day", "checkbox", {}, False),
+        ("alarm", "Reminder", "single_select", {"choices": _choices(REMINDER_CHOICES, ["#f59e0b"])}, False),
         ("location", "Location", "text", {}, False),
         ("status", "Status", "single_select",
          {"choices": _choices([*EVENT_STATUS.values(), *EVENT_OUTCOMES.values()], ["#f59e0b", "#22c55e", "#ef4444", "#14b8a6", "#64748b"])}, False),
@@ -73,6 +78,7 @@ SYSTEM_FIELDS["mixed"] = [
     ("dtstart", "Start", "date", {"includeTime": True}, False),
     ("dtend", "End / Due", "date", {"includeTime": True}, False),
     ("all_day", "All Day", "checkbox", {}, False),
+    ("alarm", "Reminder", "single_select", {"choices": _choices(REMINDER_CHOICES, ["#f59e0b"])}, False),
     ("location", "Location", "text", {}, False),
     ("description", "Description", "long_text", {}, False),
     ("categories", "Tags", "multi_select", {"choices": []}, False),
@@ -365,6 +371,93 @@ def find_component(cal: Calendar, kind: str):
     return comps[0] if comps else None
 
 
+# ---------------------------------------------------------------- reminders (VALARM)
+
+_UNITS = [("week", timedelta(weeks=1)), ("day", timedelta(days=1)), ("hour", timedelta(hours=1)), ("minute", timedelta(minutes=1))]
+
+
+def reminder_label(before: timedelta) -> str:
+    """How long before the moment an alert comes, as the Reminder field shows it ("15 minutes before")."""
+    if before <= timedelta(0):
+        return "At time" if before == timedelta(0) else reminder_label(-before).replace("before", "after")
+    for unit, size in _UNITS:
+        if before % size == timedelta(0):
+            n = before // size
+            return f"{n} {unit}{'s' if n != 1 else ''} before"
+    return f"{round(before.total_seconds() / 60)} minutes before"
+
+
+def reminder_offset(label) -> timedelta | None:
+    """The Reminder field's text -> how long before (None when empty or not understood)."""
+    if not label:
+        return None
+    text = str(label).strip().lower()
+    if text in ("at time", "at start", "on time"):
+        return timedelta(0)
+    parts = text.split()
+    if len(parts) == 3 and parts[2] in ("before", "after") and parts[0].isdigit():
+        size = next((sz for unit, sz in _UNITS if parts[1].rstrip("s") == unit), None)
+        if size is not None:
+            d = int(parts[0]) * size
+            return d if parts[2] == "before" else -d
+    return None
+
+
+def _alarm_anchor(kind: str, comp):
+    """The moment a task's or event's alerts count from: an event's start, a task's due date (or start).
+    All-day dates count from 09:00 that day."""
+    d = _dt_prop(comp, "dtstart") if kind == "events" else (_dt_prop(comp, "due") or _dt_prop(comp, "dtstart"))
+    if d is not None and not isinstance(d, datetime):
+        d = datetime(d.year, d.month, d.day, 9, tzinfo=DEFAULT_TZ)
+    if isinstance(d, datetime) and d.tzinfo is None:
+        d = d.replace(tzinfo=DEFAULT_TZ)
+    return d
+
+
+def _alarms(comp) -> list:
+    return [c for c in comp.subcomponents if c.name == "VALARM" and c.get("trigger") is not None]
+
+
+def _reminder(kind: str, comp) -> str | None:
+    """The first time-based alert of an item, as a Reminder value."""
+    for a in _alarms(comp):
+        trig = a.get("trigger").dt
+        if isinstance(trig, timedelta):
+            related_end = str(a.get("trigger").params.get("RELATED", "START")).upper() == "END"
+            if kind == "events" and related_end:
+                start, end = _dt_prop(comp, "dtstart"), _dt_prop(comp, "dtend")
+                if isinstance(start, datetime) and isinstance(end, datetime):
+                    trig = trig + (end - start)
+            return reminder_label(-trig)
+        anchor = _alarm_anchor(kind, comp)
+        if isinstance(trig, datetime) and anchor is not None:
+            if trig.tzinfo is None:
+                trig = trig.replace(tzinfo=DEFAULT_TZ)
+            return reminder_label(anchor - trig)
+    return None
+
+
+def _set_reminder(kind: str, comp, label):
+    """Write the Reminder as the item's one alert. Events: relative to the start (doesn't go stale when the event
+    moves). Tasks: at a set time before the due date, the way Apple Reminders writes them (refreshed on each write)."""
+    for a in _alarms(comp):
+        comp.subcomponents.remove(a)
+    before = reminder_offset(label)
+    if before is None:
+        return
+    alarm = Alarm()
+    alarm.add("action", "DISPLAY")
+    alarm.add("description", str(comp.get("summary", "")) or "Reminder")
+    if kind == "events":
+        alarm.add("trigger", -before)
+    else:
+        anchor = _alarm_anchor(kind, comp)
+        if anchor is None:
+            return  # a task without a date can't remind
+        alarm.add("trigger", (anchor - before).astimezone(timezone.utc))
+    comp.add_component(alarm)
+
+
 def ical_to_values(kind: str, raw: str) -> tuple[str | None, dict]:
     """Parse an iCalendar body. Returns (uid, {system_key: value})."""
     cal = Calendar.from_ical(raw)
@@ -378,6 +471,7 @@ def ical_to_values(kind: str, raw: str) -> tuple[str | None, dict]:
         "categories": _categories(comp),
         "rrule": _recurrence(comp, cal, kind),
         "location": str(comp.get("location", "")) or None,       # VTODOs can have one too
+        "alarm": _reminder(kind, comp),
         "last_modified": to_value(_dt_prop(comp, "last-modified") or _dt_prop(comp, "dtstamp")),  # not a field
     }
     status = str(comp.get("status", "")).upper()
@@ -500,6 +594,11 @@ def build_ical(kind: str, uid: str, vals: dict, raw: str | None = None) -> str:
         _set(comp, "status", status)
         _set(comp, OUTCOME_PROP, outcome)
 
+    if "alarm" in vals:
+        # an event's alert is only rewritten when the Reminder changed (other apps' alerts stay as they were);
+        # a task's is written fresh each time, as its time follows the due date
+        if kind == "tasks" or _reminder(kind, comp) != (vals.get("alarm") or None):
+            _set_reminder(kind, comp, vals.get("alarm"))
     return cal.to_ical().decode()
 
 
