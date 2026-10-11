@@ -77,19 +77,14 @@ def _matches(eng, f, v, flt) -> bool:
 
 
 def view_filter(config: dict) -> dict:
-    """A view's filter as a group {conjunction, items}; older views have a flat AND list in `filters`."""
+    """A view's filter as a group {conjunction, items}."""
     g = config.get("filter")
-    if isinstance(g, dict) and isinstance(g.get("items"), list):
-        return g
-    return {"conjunction": "and", "items": list(config.get("filters") or [])}
+    return g if isinstance(g, dict) and isinstance(g.get("items"), list) else {"conjunction": "and", "items": []}
 
 
 def view_sorts(config: dict) -> list:
-    """[{field, dir}, ...]: `sorts`, or the single `sort` of older views."""
-    s = config.get("sorts")
-    if isinstance(s, list):
-        return [x for x in s if isinstance(x, dict) and x.get("field")]
-    return [config["sort"]] if isinstance(config.get("sort"), dict) and config["sort"].get("field") else []
+    """[{field, dir}, ...]"""
+    return [x for x in config.get("sorts") or [] if isinstance(x, dict) and x.get("field")]
 
 
 def _test(eng, by_id, r, node) -> bool:
@@ -148,3 +143,21 @@ def _sorted(eng, by_id, out, sort):
         if sort.get("dir") == "desc":  # keep empty values last in both directions
             out = [r for r in out if not _empty(r["data"].get(sid))] + [r for r in out if _empty(r["data"].get(sid))]
     return out
+
+
+def normalize_config(vtype: str, cfg: dict) -> dict:
+    """A view config sent in an older shape (flat `filters`, one `sort`, a table view's `groupBy`) -> today's."""
+    c = dict(cfg or {})
+    if "filters" in c:
+        flat = c.pop("filters") or []
+        if not (isinstance(c.get("filter"), dict) and isinstance(c["filter"].get("items"), list)):
+            c["filter"] = {"conjunction": "and", "items": [x for x in flat if isinstance(x, dict)]}
+    if "sort" in c:
+        one = c.pop("sort")
+        if not isinstance(c.get("sorts"), list) and isinstance(one, dict) and one.get("field"):
+            c["sorts"] = [one]
+    if vtype != "kanban" and "groupBy" in c:
+        by = c.pop("groupBy")
+        if by and not isinstance(c.get("groups"), list):
+            c["groups"] = [{"field": by, "dir": "asc"}]
+    return c

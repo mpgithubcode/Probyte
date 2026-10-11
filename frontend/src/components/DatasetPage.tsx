@@ -355,7 +355,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   // the records this view shows, and the page of them on screen (table / list / gallery can be paged)
   const allRecords = useMemo(() => (ds && view ? applyView(ds.records, ds.fields, view.config, search, ds.refs) : []), [ds, view, search]);
   const paging = usePaged(allRecords, view && PAGED_VIEWS.has(view.type) ? view.config.pageSize : undefined,
-    `${view?.id}|${search}|${JSON.stringify(view?.config.filter ?? view?.config.filters ?? null)}|${JSON.stringify(view?.config.sorts ?? null)}`);
+    `${view?.id}|${search}|${JSON.stringify(view?.config.filter ?? null)}|${JSON.stringify(view?.config.sorts ?? null)}`);
 
   if (!ds || !view) return <div className="page loading">Loading…</div>;
 

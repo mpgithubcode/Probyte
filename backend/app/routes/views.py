@@ -6,6 +6,7 @@ from .. import recordops, remote, store
 from ..compute import Engine
 from ..db import Jsonb, connection
 from ..ical import PALETTE
+from ..viewfilter import normalize_config
 from .common import ComboIn, ComboPatch, ComboRecordIn, ComboSource, FastJSON, RecordIn, User, ViewIn, ViewPatch, _own_view, _record_out
 
 router = APIRouter()
@@ -36,7 +37,7 @@ def _with_defaults(vtype: str, config: dict, fields: list) -> dict:
 def create_table_view(table_id: str, body: ViewIn, user=User):
     with connection() as conn:
         store.get_table(conn, table_id, user["id"])
-        config = _with_defaults(body.type, body.config, store.get_fields(conn, table_id))
+        config = _with_defaults(body.type, normalize_config(body.type, body.config), store.get_fields(conn, table_id))
         return store.create_view(conn, table_id=table_id, name=body.name, type=body.type, config=config)
 
 
@@ -45,7 +46,7 @@ def create_combo_view(combo_id: str, body: ViewIn, user=User):
     with connection() as conn:
         combo = store.get_combo(conn, combo_id, user["id"])
         _, fields = store.resolve_combo(conn, combo)
-        config = _with_defaults(body.type, body.config, fields)
+        config = _with_defaults(body.type, normalize_config(body.type, body.config), fields)
         return store.create_view(conn, combo_id=combo_id, name=body.name, type=body.type, config=config)
 
 
@@ -55,7 +56,7 @@ def update_view(view_id: str, body: ViewPatch, user=User):
         v = _own_view(conn, view_id, user)
         return conn.execute(
             "UPDATE views SET name = %s, config = %s WHERE id = %s RETURNING *",
-            (body.name or v["name"], Jsonb(v["config"] if body.config is None else body.config), view_id),
+            (body.name or v["name"], Jsonb(v["config"] if body.config is None else normalize_config(v["type"], body.config)), view_id),
         ).fetchone()
 
 

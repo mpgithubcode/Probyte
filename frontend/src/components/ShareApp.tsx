@@ -88,7 +88,7 @@ export function ShareApp({ token }: { token: string }) {
   const viewType = payload?.view.type;
   const allRecords = useMemo(() => (ds && payload ? applyView(ds.records, ds.fields, config, search, ds.refs) : []), [ds, payload, config, search]);
   const paging = usePaged(allRecords, viewType && PAGED_VIEWS.has(viewType) ? config.pageSize : undefined,
-    `${viewId}|${search}|${JSON.stringify(config.filter ?? config.filters ?? null)}|${JSON.stringify(config.sorts ?? null)}`);
+    `${viewId}|${search}|${JSON.stringify(config.filter ?? null)}|${JSON.stringify(config.sorts ?? null)}`);
 
   if (meta === null) return <div className="boot">Loading…</div>;
   if (meta === "missing") return <div className="boot share-missing"><Icon name="lock" size={28} /><p>This link doesn't exist or is no longer available.</p></div>;

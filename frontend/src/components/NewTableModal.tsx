@@ -6,9 +6,8 @@ import { Modal } from "./Overlay";
 
 const KINDS: { kind: TableKind; title: string; desc: string; icon: string }[] = [
   { kind: "generic", title: "Blank database", desc: "Your own fields, stored in Probyte", icon: "table" },
-  { kind: "tasks", title: "CalDAV tasks", desc: "VTODO items synced with a calendar", icon: "tasks" },
-  { kind: "events", title: "CalDAV events", desc: "VEVENT items synced with a calendar", icon: "calendar" },
-  { kind: "mixed", title: "Tasks & events", desc: "One calendar holding both tasks and events", icon: "calendar-check" },
+  // One calendar type: tasks and events together (existing tasks-only / events-only tables keep working)
+  { kind: "mixed", title: "Tasks & events", desc: "Synced with a calendar: your phone's Reminders and Calendar apps", icon: "calendar-check" },
   { kind: "contacts", title: "Contacts", desc: "vCards synced with a CardDAV address book", icon: "contacts" },
   { kind: "remote", title: "From a link", desc: "Show a table shared with a Probyte public link — from any server", icon: "link" },
 ];
@@ -20,7 +19,15 @@ interface LinkMeta {
 }
 
 const NEEDS: Record<string, string[]> = { tasks: ["VTODO"], events: ["VEVENT"], mixed: ["VTODO", "VEVENT"], contacts: ["VCARD"] };
-const supports = (c: CalendarInfo, kind: TableKind) => (NEEDS[kind] ?? []).every((x) => c.components.includes(x));
+// "Tasks & events" takes any calendar with tasks or events; one holding only one of them makes a tasks or events table
+const supports = (c: CalendarInfo, kind: TableKind) => kind === "mixed"
+  ? ["VEVENT", "VTODO"].some((x) => c.components.includes(x))
+  : (NEEDS[kind] ?? []).every((x) => c.components.includes(x));
+const kindFor = (c: CalendarInfo | undefined, kind: TableKind): TableKind => {
+  if (kind !== "mixed" || !c) return kind;
+  const ev = c.components.includes("VEVENT"), td = c.components.includes("VTODO");
+  return ev && td ? "mixed" : ev ? "events" : "tasks";
+};
 const KIND_WORD: Record<string, string> = { tasks: "tasks", events: "events", mixed: "tasks + events", contacts: "contacts" };
 
 export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onManageAccounts }: {
@@ -80,7 +87,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
     setBusy(true);
     setError("");
     try {
-      const body: Record<string, unknown> = { name: name.trim(), kind, base_id: base };
+      const body: Record<string, unknown> = { name: name.trim(), kind: calendarUrl === "__new" ? kind : kindFor(calendars?.find((c) => c.url === calendarUrl), kind), base_id: base };
       if (kind === "remote") {
         body.remote = { url, password: linkPw || undefined, item_id: pick!.item, view_id: pick!.view };
       } else if (kind !== "generic") {
@@ -208,7 +215,11 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
             )}
             <p className="hint">{book
               ? "Existing contacts are imported, and changes sync both ways. Photos, extra numbers and other details Probyte doesn't show are kept."
-              : "Existing items in the calendar are imported, and changes sync both ways."}</p>
+              : "Existing items in the calendar are imported, and changes sync both ways."}
+              {(() => {
+                const k = calendarUrl !== "__new" ? kindFor(calendars?.find((c) => c.url === calendarUrl), kind) : kind;
+                return k !== kind ? ` This calendar only holds ${k === "events" ? "events" : "tasks"}, so the table will too.` : null;
+              })()}</p>
           </>
         )}
         {error && <div className="error">{error}</div>}

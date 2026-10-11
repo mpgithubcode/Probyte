@@ -179,17 +179,18 @@ def map_view_config(table_id, cfg: dict) -> dict:
     """A remote view's settings, re-pointed at the mirrored fields."""
     m = lambda x: lid(table_id, x) if x else x  # noqa: E731
     out = dict(cfg)
+    if isinstance(out.get("sort"), dict) and not isinstance(out.get("sorts"), list):  # a source server from before multi-sort
+        out["sorts"] = [out["sort"]]
+    out.pop("sort", None)
     for k in ("groupBy", "dateField", "endField", "colorField", "coverField"):
         if out.get(k):
             out[k] = m(out[k])
     out["hidden"] = [m(x) for x in out.get("hidden") or []]
     out["shown"] = [m(x) for x in out.get("shown") or []]
-    if out.get("sort"):
-        out["sort"] = {**out["sort"], "field": m(out["sort"]["field"])}
     for k in ("sorts", "groups"):
         if isinstance(out.get(k), list):
             out[k] = [{**x, "field": m(x.get("field"))} for x in out[k] if isinstance(x, dict)]
-    out["filters"] = []  # the source already applied its filters
+    out.pop("filters", None)  # the source already applied its filters
     out.pop("filter", None)
     if out.get("chart"):
         out["chart"] = {**out["chart"], "xField": m(out["chart"].get("xField")), "yField": m(out["chart"].get("yField"))}

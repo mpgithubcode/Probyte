@@ -387,15 +387,15 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
                 )}
               </>;
             })()}
-            <button className="menu-item" onClick={() => { setConfig({ sorts: [{ field: menu.field.id, dir: "asc" }], sort: undefined }); setMenu(null); }}>
+            <button className="menu-item" onClick={() => { setConfig({ sorts: [{ field: menu.field.id, dir: "asc" }] }); setMenu(null); }}>
               <Icon name="sort" size={14} /> Sort ascending
             </button>
-            <button className="menu-item" onClick={() => { setConfig({ sorts: [{ field: menu.field.id, dir: "desc" }], sort: undefined }); setMenu(null); }}>
+            <button className="menu-item" onClick={() => { setConfig({ sorts: [{ field: menu.field.id, dir: "desc" }] }); setMenu(null); }}>
               <Icon name="sort" size={14} /> Sort descending
             </button>
             {(groupedBy.has(menu.field.id) || groupSpecs.length < 3) && (
               <button className="menu-item" onClick={() => {
-                setConfig({ groupBy: undefined, groups: groupedBy.has(menu.field.id) ? groupSpecs.filter((s) => s.field !== menu.field.id)
+                setConfig({ groups: groupedBy.has(menu.field.id) ? groupSpecs.filter((s) => s.field !== menu.field.id)
                   : [...groupSpecs, { field: menu.field.id, dir: "asc" }] });
                 setMenu(null);
               }}>

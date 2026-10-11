@@ -86,11 +86,9 @@ export type ListAlign = "start" | "left" | "center" | "right";
 export interface ViewConfig {
   hidden?: string[];
   shown?: string[];   // fields hidden by default (Record ID) that this view shows
-  sort?: { field: string; dir: "asc" | "desc" } | null;   // older views: one sort (see sorts)
   sorts?: SortSpec[];
-  filters?: Filter[];                                     // older views: AND-ed conditions (see filter)
   filter?: FilterGroup;
-  groupBy?: string;                                       // Board columns (and older grouped views)
+  groupBy?: string;                                       // Board: the field whose options are the columns
   groups?: SortSpec[];                                    // Table / List / Gallery: up to 3 group levels
   hideEmptyColumns?: boolean;                             // Board
   hideUnassigned?: boolean;                               // Board: hide the "No <field>" column

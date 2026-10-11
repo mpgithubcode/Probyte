@@ -114,7 +114,7 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
       </button>
       {filterPop.anchor && (
         <Popover anchor={filterPop.anchor} onClose={filterPop.close} width={620}>
-          <FilterEditor fields={fields} filter={filter} onChange={(g) => setConfig({ filter: g, filters: undefined })} />
+          <FilterEditor fields={fields} filter={filter} onChange={(g) => setConfig({ filter: g })} />
         </Popover>
       )}
 
@@ -123,7 +123,7 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
       </button>
       {sortPop.anchor && (
         <Popover anchor={sortPop.anchor} onClose={sortPop.close} width={480}>
-          <SortEditor fields={fields} sorts={sorts} onChange={(x) => setConfig({ sorts: x, sort: undefined })} />
+          <SortEditor fields={fields} sorts={sorts} onChange={(x) => setConfig({ sorts: x })} />
         </Popover>
       )}
 
@@ -134,7 +134,7 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
           </button>
           {groupPop.anchor && (
             <Popover anchor={groupPop.anchor} onClose={groupPop.close} width={480}>
-              <GroupEditorList fields={fields} groups={groups} onChange={(x) => setConfig({ groups: x, groupBy: undefined })} />
+              <GroupEditorList fields={fields} groups={groups} onChange={(x) => setConfig({ groups: x })} />
             </Popover>
           )}
         </>

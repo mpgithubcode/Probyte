@@ -417,3 +417,19 @@ def test_combined_fields_line_up_by_meaning(user):
     assert mapped(start) == "Start" and "End" in mapped(due) and "Due" in mapped(due)
     assert "Description" in mapped(P["Notes"]) and mapped(P["Status"]) == "Status"
     assert len([n for n, m in by_source.items() if tasks["id"] in m and proj["id"] in m]) >= 5
+
+
+def test_older_view_settings_are_read_in_todays_shape(user):
+    t = user.table(name="Old views")
+    F = user.fields(t["id"])
+    for n, s in (("a", "Todo"), ("b", "Done"), ("c", "Todo")):
+        user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: n, F["Status"]: s}})
+    v = user.j("POST", f"/tables/{t['id']}/views", json={"name": "Old", "type": "grid", "config": {
+        "filters": [{"field": F["Status"], "op": "is", "value": "Todo"}], "sort": {"field": F["Name"], "dir": "desc"}, "groupBy": F["Status"]}})
+    cfg = v["config"]
+    assert "filters" not in cfg and "sort" not in cfg and "groupBy" not in cfg
+    assert cfg["filter"]["items"][0]["value"] == "Todo" and cfg["sorts"][0]["dir"] == "desc" and cfg["groups"][0]["field"] == F["Status"]
+    got = user.j("GET", f"/tables/{t['id']}/records", params={"view": v["id"]})["records"]
+    assert [r["data"][F["Name"]] for r in got] == ["c", "a"]
+    board = user.j("POST", f"/tables/{t['id']}/views", json={"name": "B", "type": "kanban", "config": {"groupBy": F["Status"]}})
+    assert board["config"]["groupBy"] == F["Status"]                     # a board's columns stay

@@ -235,11 +235,11 @@ const isGroup = (n: Filter | FilterGroup): n is FilterGroup => Array.isArray((n 
 
 /** A view's filter as a group; older views kept a flat list of AND-ed conditions. */
 export function viewFilter(config: ViewConfig): FilterGroup {
-  return config.filter && Array.isArray(config.filter.items) ? config.filter : { conjunction: "and", items: config.filters ?? [] };
+  return config.filter && Array.isArray(config.filter.items) ? config.filter : { conjunction: "and", items: [] };
 }
-export const viewSorts = (config: ViewConfig): SortSpec[] => config.sorts ?? (config.sort ? [config.sort] : []);
+export const viewSorts = (config: ViewConfig): SortSpec[] => config.sorts ?? [];
 /** Group levels for Table / List / Gallery (older views: groupBy). */
-export const viewGroups = (config: ViewConfig): SortSpec[] => config.groups ?? (config.groupBy ? [{ field: config.groupBy, dir: "asc" }] : []);
+export const viewGroups = (config: ViewConfig): SortSpec[] => config.groups ?? [];  // (a board's groupBy is its columns, not this)
 export const countConditions = (g: FilterGroup): number => g.items.reduce((n, i) => n + (isGroup(i) ? countConditions(i) : 1), 0);
 
 function test(byId: Map<string, Field>, r: Rec, node: Filter | FilterGroup, refs?: Refs): boolean {
