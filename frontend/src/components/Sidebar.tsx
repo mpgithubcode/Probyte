@@ -103,7 +103,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                   <div className="base-items">
                     {tables.map((t) => (
                       <button key={t.id} className={`side-item ${is("table", t.id) ? "active" : ""} ${t.hidden ? "is-hidden" : ""}`} onClick={() => onOpen("table", t.id)}>
-                        <Icon name={tableIcon(t.kind)} size={15} />
+                        {t.icon ? <span className="emoji-icon">{t.icon}</span> : <Icon name={tableIcon(t.kind)} size={15} />}
                         <span className="side-name">{t.name}</span>
                         {t.kind === "remote"
                           ? t.remote?.error && <span className="side-dot err" title={t.remote.error} />
@@ -112,7 +112,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                     ))}
                     {combos.map((c) => (
                       <button key={c.id} className={`side-item ${is("combo", c.id) ? "active" : ""} ${c.hidden ? "is-hidden" : ""}`} onClick={() => onOpen("combo", c.id)}>
-                        <Icon name="layers" size={15} />
+                        {c.icon ? <span className="emoji-icon">{c.icon}</span> : <Icon name="layers" size={15} />}
                         <span className="side-name">{c.name}</span>
                         <span className="side-swatches">{c.sources.map((s) => <span key={s.table_id} style={{ background: s.color }} />)}</span>
                       </button>

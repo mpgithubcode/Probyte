@@ -13,7 +13,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import builtin_dav, live, mcp_server, oauth, rest_v1, shares, store
+from . import builtin_dav, feeds, live, mcp_server, oauth, rest_v1, shares, store
 from .routes import admin, auth as auth_routes, records, tables, views, workspace
 from .db import connection, init_db
 
@@ -99,7 +99,7 @@ def _bad_id(request: Request, exc):
 
 
 
-for r in (auth_routes, workspace, tables, records, views, live, admin):
+for r in (auth_routes, workspace, tables, records, views, live, admin, feeds):
     app.include_router(r.router)
 
 app.include_router(shares.router)

@@ -413,12 +413,11 @@ export const dayOfWeek = (d: Date) => (d.getDay() - weekStartDay + 7) % 7;
 export const weekdayNames = () => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].slice(weekStartDay)
   .concat(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].slice(0, weekStartDay));
 
-/** Fields in a view's own column order (dragged in the table view); the title field stays first, new fields go last. */
+/** Fields in a view's own column order (dragged in the table view; the title field too); new fields go last. */
 export function orderFields(fields: Field[], order?: string[]): Field[] {
   if (!order?.length) return fields;
   const pos = new Map(order.map((id, i) => [id, i]));
-  return [...fields].sort((a, b) => (a.is_primary ? -1 : b.is_primary ? 1 : 0)
-    || (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity) || fields.indexOf(a) - fields.indexOf(b));
+  return [...fields].sort((a, b) => (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity) || fields.indexOf(a) - fields.indexOf(b));
 }
 
 /** Text copied from a spreadsheet (tab-separated; cells with tabs, line breaks or quotes come "quoted") -> rows of cells. */
@@ -440,4 +439,11 @@ export function parseTsv(text: string): string[][] {
   }
   if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
   return rows;
+}
+
+/** Fields as one view shows them: with the names that view gives them (the field's own name in `realName`). */
+export function withDisplayNames(fields: Field[], config: ViewConfig): Field[] {
+  const names = config.fieldNames;
+  if (!names || !Object.keys(names).length) return fields;
+  return fields.map((f) => (names[f.id]?.trim() ? { ...f, name: names[f.id].trim(), realName: f.name } : f));
 }

@@ -51,6 +51,7 @@ export interface FieldOptions {
 }
 
 export interface Field {
+  realName?: string;  // in a view that renames it: the field's own name
   id: string;
   name: string;
   type: FieldType;
@@ -97,6 +98,8 @@ export interface ViewConfig {
   listProps?: { field: string; align: ListAlign; label?: boolean }[];
   fieldOrder?: string[];
   pageSize?: number;
+  fieldNames?: Record<string, string>;  // names fields go by in this view only (the field keeps its own)
+  summary?: Record<string, string>;     // table view footer: field id -> what to show (sum, avg, filled…)
   frozen?: number;  // table view: how many columns (after the row numbers) stay put when scrolling sideways  // table / list / gallery: records per page (unset = all)  // column order dragged in the table view (also used for cards)
   listLabels?: boolean;                                   // List: show property names (default on)
   calMode?: "month" | "week" | "day";                     // Calendar
@@ -134,6 +137,7 @@ export interface TableInfo {
   base_id: string;
   name: string;
   hidden?: boolean;  // left out of the sidebar
+  icon?: string | null;  // an emoji instead of the default icon
   kind: TableKind;
   account_id: string | null;
   calendar_url: string | null;
@@ -163,7 +167,7 @@ export interface DavInfo {
   password: string | null;
 }
 
-export interface ComboSummary { id: string; base_id: string; name: string; sources: { table_id: string; color: string }[]; hidden?: boolean }
+export interface ComboSummary { id: string; base_id: string; name: string; sources: { table_id: string; color: string }[]; hidden?: boolean; icon?: string | null }
 
 export interface LinkSource { table_id: string; name: string; color?: string | null; kind?: string }
 export interface Source { table_id: string; name: string; kind: TableKind; color: string; link_sources?: LinkSource[] | null }
@@ -205,4 +209,5 @@ export interface Dataset {
   token?: string | null;  // where these records stand, for fetching just the changes (tables only)
   loadedAt?: number;      // when it was last loaded in full
   pending?: string[];     // combined databases: linked-table sources still loading
+  icon?: string | null;   // combined databases: an emoji (tables have it in `table`)
 }

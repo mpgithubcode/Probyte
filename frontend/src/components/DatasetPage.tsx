@@ -1,10 +1,11 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
-import { applyView, choiceColor, debounce, hiddenIds, orderFields, recordTitle, timeAgo } from "../util";
+import { applyView, choiceColor, debounce, hiddenIds, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
 import { RefsContext, invalidateTitles } from "./Cells";
 import { Icon, tableIcon } from "./Icon";
 import { Popover, usePopover } from "./Overlay";
+import { EmojiPicker } from "./EmojiPicker";
 import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
 import { VIEW_TYPES, ViewOptions, ViewTabs } from "./Toolbar";
@@ -25,6 +26,7 @@ const FieldModal = lazy(() => import("./FieldModal").then((m) => ({ default: m.F
 const ComboModal = lazy(() => import("./ComboModal").then((m) => ({ default: m.ComboModal })));
 const LinkSettings = lazy(() => import("./LinkSettings").then((m) => ({ default: m.LinkSettings })));
 const ImportModal = lazy(() => import("./ImportExport").then((m) => ({ default: m.ImportModal })));
+const FeedsModal = lazy(() => import("./FeedsModal").then((m) => ({ default: m.FeedsModal })));
 const ExportModal = lazy(() => import("./ImportExport").then((m) => ({ default: m.ExportModal })));
 
 // Changes arrive live (onTableChange); polling is the fallback. Linked tables have no live updates: poll them more often.
@@ -48,9 +50,20 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [syncing, setSyncing] = useState(false);
   const [linkEdit, setLinkEdit] = useState(false);
   const [transfer, setTransfer] = useState<"import" | "export" | null>(null);
+  const [feedsOpen, setFeedsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const more = usePopover();
+  const iconPop = usePopover();
+  const setIcon = async (icon: string) => {
+    iconPop.close();
+    if (!ds) return;
+    setDs((d) => d && (d.kind === "combo" ? { ...d, icon } : { ...d, table: d.table && { ...d.table, icon } }));
+    try {
+      await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { icon });
+      onWorkspaceChanged();
+    } catch (e) { onError((e as Error).message); }
+  };
   const inflight = useRef(0);
 
   const dsRef = useRef(ds);
@@ -261,7 +274,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       else if (r.patch && Object.keys(r.patch).length) ops.update(rec, r.patch);
     },
     open: (rec) => { setOpenRec(rec.id); setOpenOcc(rec.occurrence ?? null); },
-    editField: (f) => setFieldEdit(f),
+    editField: (f) => setFieldEdit(f && (ds?.fields.find((x) => x.id === f.id) ?? f)),  // the field itself, not a view's name for it
     colorFor(rec, colorField = view?.config.colorField) {
       if (!ds) return undefined;
       if (colorField) {
@@ -360,11 +373,12 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   if (!ds || !view) return <div className="page loading">Loading…</div>;
 
   const hidden = hiddenIds(ds.fields, view.config);
-  const visible = orderFields(ds.fields, view.config.fieldOrder).filter((f) => !hidden.has(f.id));
+  const vfields = withDisplayNames(ds.fields, view.config);  // the names this view gives fields
+  const visible = orderFields(vfields, view.config.fieldOrder).filter((f) => !hidden.has(f.id));
   const pg = paging;
   const records = PAGED_VIEWS.has(view.type) ? pg.items : allRecords;
   const rec = openRec ? ds.records.find((r) => r.id === openRec) : undefined;
-  const props = { ds, view, fields: ds.fields, visible, records, ops, setConfig };
+  const props = { ds, view, fields: vfields, visible, records, allRecords, ops, setConfig };
   const t = ds.table;
   const isCaldav = t && ["tasks", "events", "mixed", "contacts"].includes(t.kind);
   const link = t?.kind === "remote" ? t.remote : null;
@@ -375,7 +389,16 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       <header className="page-head">
         <div className="title-row">
           <button className="icon-btn menu-btn" onClick={onMenu} aria-label="Menu"><Icon name="menu" size={20} /></button>
-          <Icon name={ds.kind === "combo" ? "layers" : tableIcon(t!.kind)} size={20} className="title-icon" />
+          <button className="title-icon-btn" title="Change icon" aria-label="Change icon" onClick={iconPop.open}>
+            {(ds.kind === "combo" ? ds.icon : t?.icon)
+              ? <span className="emoji-icon big">{ds.kind === "combo" ? ds.icon : t?.icon}</span>
+              : <Icon name={ds.kind === "combo" ? "layers" : tableIcon(t!.kind)} size={20} className="title-icon" />}
+          </button>
+          {iconPop.anchor && (
+            <Popover anchor={iconPop.anchor} onClose={iconPop.close} width={300}>
+              <EmojiPicker onPick={(e) => setIcon(e)} onRemove={(ds.kind === "combo" ? ds.icon : t?.icon) ? () => setIcon("") : undefined} />
+            </Popover>
+          )}
           {renaming ? (
             <input className="input title-input" autoFocus defaultValue={ds.name}
               onBlur={(e) => { renameDataset(e.target.value.trim()); setRenaming(false); }}
@@ -423,6 +446,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
                   <button className="menu-item" onClick={() => { setTransfer("import"); more.close(); }}><Icon name="upload" size={14} /> Import from file…</button>
                 )}
                 <button className="menu-item" onClick={() => { setTransfer("export"); more.close(); }}><Icon name="download" size={14} /> Export…</button>
+                <button className="menu-item" onClick={() => { setFeedsOpen(true); more.close(); }}><Icon name="calendar" size={14} /> Subscribe in a calendar app…</button>
                 {ds.kind === "table" ? (
                   <button className="menu-item" onClick={() => { setCombineNew(true); more.close(); }}><Icon name="layers" size={14} /> Combine with other tables…</button>
                 ) : (
@@ -484,7 +508,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             api.del(`/views/${v.id}`).catch((e) => onError(e.message));
             onNavigate(undefined);
           }} />
-        <ViewOptions view={view} fields={ds.fields} config={view.config} setConfig={setConfig} search={search} setSearch={setSearch}
+        <ViewOptions view={view} fields={vfields} config={view.config} setConfig={setConfig} search={search} setSearch={setSearch}
           onAdd={ops.can.add ? () => ops.create({}, true) : undefined} />
       </header>
 
@@ -504,13 +528,14 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       <Suspense fallback={null}>
 
       {rec && (
-        <RecordModal ds={ds} rec={rec} fields={ds.fields} onClose={() => setOpenRec(null)} occurrence={openOcc}
+        <RecordModal ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc}
           onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)}
         />
       )}
       {transfer === "import" && ds.kind === "table" && (
         <ImportModal ds={ds} onClose={() => setTransfer(null)} onDone={(msg) => { setTransfer(null); onError(msg); refresh(); onWorkspaceChanged(); }} />
       )}
+      {feedsOpen && <FeedsModal kind={ds.kind} id={ds.id} name={ds.name} views={ds.views} onClose={() => setFeedsOpen(false)} />}
       {transfer === "export" && <ExportModal ds={ds} view={view} search={search} onClose={() => setTransfer(null)} />}
       {linkEdit && link && (
         <LinkSettings tableId={ds.id} link={link} onClose={() => setLinkEdit(false)} onSaved={() => { setLinkEdit(false); reload(); onWorkspaceChanged(); }} />

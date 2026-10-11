@@ -2,6 +2,7 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type
 import type { Field, Rec } from "../types";
 import { buildGroups, displayText, fitField, isEditable, orderFields, parseTsv, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
 import { isTouch } from "./useNarrow";
+import { summarize, summaryKinds } from "./Summary";
 import { CellValue, Chip, FieldInput, RefsContext } from "./Cells";
 import { anchorOf } from "../recur";
 import { FieldIcon, Icon } from "./Icon";
@@ -18,7 +19,7 @@ const WIDTHS: Record<string, number> = {
 
 type Row = { kind: "group"; g: GroupNode } | { kind: "rec"; r: Rec; n: number };
 
-export function GridView({ ds, view, fields, visible, records, ops, setConfig }: ViewProps) {
+export function GridView({ ds, view, fields, visible, records, allRecords, ops, setConfig }: ViewProps) {
   const canEdit = (f: Field) => ops.can.edit && isEditable(f);
   const { refs } = useContext(RefsContext);
   const [editing, setEditing] = useState<{ rec: string; field: string; initial?: string } | null>(null);
@@ -36,6 +37,7 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
     wrapRef.current?.focus({ preventScroll: true });  // at once: the next key press already belongs to the grid
   };
   const [menu, setMenu] = useState<{ field: Field; anchor: HTMLElement } | null>(null);
+  const [sumMenu, setSumMenu] = useState<{ field: Field; anchor: HTMLElement } | null>(null);  // footer: pick a total
   // dragging a column header to a new place (mouse only): the order is saved with the view
   const [dragCol, setDragCol] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
@@ -305,9 +307,9 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
               <th key={f.id} style={{ width: WIDTHS[f.type] ?? 200, ...fz(f).style }} title={f.options._error ?? undefined}
                 className={`${fz(f).className} ${dragCol === f.id ? "col-dragging" : ""} ${overCol === f.id && dragCol && dragCol !== f.id
                   ? (visible.findIndex((x) => x.id === dragCol) < visible.findIndex((x) => x.id === f.id) ? "col-over-after" : "col-over") : ""}`}
-                draggable={!f.is_primary && !isTouch}
+                draggable={!isTouch}
                 onDragStart={(e) => { setDragCol(f.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", f.id); }}
-                onDragOver={(e) => { if (dragCol && !f.is_primary) { e.preventDefault(); setOverCol(f.id); } }}
+                onDragOver={(e) => { if (dragCol) { e.preventDefault(); setOverCol(f.id); } }}
                 onDragEnd={() => { setDragCol(null); setOverCol(null); }}
                 onDrop={(e) => { e.preventDefault(); if (dragCol) moveColumn(dragCol, f.id); setDragCol(null); setOverCol(null); }}
                 onClick={(e) => setMenu({ field: f, anchor: e.currentTarget })}>
@@ -359,7 +361,39 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
             </tr>
           )}
         </tbody>
+        <tfoot>
+          <tr className="summary-row">
+            <td className="rownum muted small">{(allRecords ?? records).length.toLocaleString()}</td>
+            {visible.map((f) => {
+              const kind = view.config.summary?.[f.id];
+              const z = fz(f);
+              return (
+                <td key={f.id} className={`summary-cell ${kind ? "on" : ""}${z.className}`} style={z.style} title="Show a total for this column"
+                  onClick={(e) => setSumMenu({ field: f, anchor: e.currentTarget })}>
+                  {kind ? <><span className="muted small">{summaryKinds(f).find((k) => k.id === kind)?.label}</span> {summarize(f, kind, allRecords ?? records)}</>
+                    : <span className="summary-hint">Summary ▾</span>}
+                </td>
+              );
+            })}
+            <td />
+          </tr>
+        </tfoot>
       </table>
+      {sumMenu && (
+        <Popover anchor={sumMenu.anchor} onClose={() => setSumMenu(null)} width={180}>
+          <div className="menu-list">
+            {[{ id: "", label: "None" }, ...summaryKinds(sumMenu.field)].map((k) => (
+              <button key={k.id} className={`menu-item ${(view.config.summary?.[sumMenu.field.id] ?? "") === k.id ? "active" : ""}`}
+                onClick={() => {
+                  const summary = { ...(view.config.summary ?? {}) };
+                  if (k.id) summary[sumMenu.field.id] = k.id; else delete summary[sumMenu.field.id];
+                  setConfig({ summary });
+                  setSumMenu(null);
+                }}>{k.label}</button>
+            ))}
+          </div>
+        </Popover>
+      )}
 
       {sel.size > 0 && ops.bulk && (
         <BulkBar count={sel.size} fields={fields.filter((f) => canEdit(f) && f.type !== "button")} can={ops.can}

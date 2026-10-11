@@ -27,7 +27,8 @@ export interface ViewProps {
   view: View;
   fields: Field[];   // all fields
   visible: Field[];  // fields not hidden in this view
-  records: Rec[];    // filtered + sorted
+  records: Rec[];    // filtered + sorted (the page shown, when the view is paged)
+  allRecords?: Rec[];  // every record the view shows, on all pages (for totals)
   ops: Ops;
   setConfig: (patch: Partial<ViewConfig>) => void;
 }

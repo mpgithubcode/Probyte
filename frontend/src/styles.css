@@ -1060,3 +1060,30 @@ button.cal-day { font: inherit; color: inherit; text-align: left; background: va
   border: 0; background: none; border-radius: 6px; cursor: pointer; color: inherit; }
 .search-hit.active { background: var(--accent-soft); }
 .search-hit-title { font-weight: 500; }
+
+/* Fields popover: show / hide and a name per view */
+.fields-pop { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow-y: auto; }
+.field-pop-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 8px; align-items: center; }
+
+/* table view footer: a total per column */
+.grid tfoot td { position: sticky; bottom: 0; z-index: 2; background: var(--bg-soft); border-top: 1px solid var(--border); height: 32px;
+  font-size: 13px; padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; cursor: pointer; }
+.grid tfoot td.rownum { text-align: center; cursor: default; z-index: 3; }
+.grid tfoot td.frozen { z-index: 3; }
+.summary-hint { color: var(--muted); font-size: 12px; opacity: 0; }
+.grid tfoot td:hover .summary-hint { opacity: 1; }
+
+/* emoji icons for tables */
+.emoji-icon { font-size: 15px; line-height: 1; width: 16px; display: inline-flex; justify-content: center; flex-shrink: 0; }
+.emoji-icon.big { font-size: 22px; width: 26px; }
+.title-icon-btn { border: 0; background: none; padding: 2px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; color: inherit; }
+.title-icon-btn:hover { background: var(--bg-hover); }
+.emoji-picker { display: flex; flex-direction: column; gap: 8px; }
+.emoji-scroll { max-height: 280px; overflow-y: auto; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.emoji-btn { border: 0; background: none; font-size: 20px; padding: 4px; border-radius: 6px; cursor: pointer; line-height: 1; }
+.emoji-btn:hover { background: var(--bg-hover); }
+
+/* calendar subscription links */
+.feed-row { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.feed-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

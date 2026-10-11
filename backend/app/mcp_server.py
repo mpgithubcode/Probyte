@@ -52,6 +52,9 @@ def _tool(name, title, description, props, required=(), read_only=False, destruc
                             "idempotentHint": idempotent or read_only, "openWorldHint": False}}
 
 
+FIELD_KEY = {"type": "string", "enum": ["name", "id"], "default": "name",
+             "description": "Key fields in results by name (default) or by field id; field names and ids are both accepted in input"}
+
 TOOLS = [
     _tool("list_bases", "List bases and tables", "All bases you can access, with their tables and combined databases.", {}, read_only=True),
     _tool("describe_table", "Describe a table", "A table's fields (name, type, select options, link targets, which are read-only) and views.",
@@ -59,26 +62,26 @@ TOOLS = [
     _tool("list_records", "List records",
           "Records of a table or combined database, as field name → value (values as shown in Probyte). "
           "Supports filters, text search, sorting and paging; returns total and next_offset.",
-          {"table": TABLE, "base": BASE, "view": {"type": "string", "description": "Apply a view's filters and sort (id or name)"},
+          {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "view": {"type": "string", "description": "Apply a view's filters and sort (id or name)"},
            "filters": FILTERS, "search": {"type": "string", "description": "Text to find in any field"},
            "sort": {"type": "array", "items": {"type": "object", "properties": {"field": {"type": "string"},
                     "direction": {"type": "string", "enum": ["asc", "desc"]}}, "required": ["field"]}},
            "fields": {"type": "array", "items": {"type": "string"}, "description": "Only return these fields"},
            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 25},
            "offset": {"type": "integer", "minimum": 0, "default": 0}}, ["table"], read_only=True),
-    _tool("get_record", "Get a record", "One record by id, with all its fields.", {"record_id": {"type": "string"}}, ["record_id"], read_only=True),
+    _tool("get_record", "Get a record", "One record by id, with all its fields.", {"field_key": FIELD_KEY, "record_id": {"type": "string"}}, ["record_id"], read_only=True),
     _tool("search", "Search everything", "Find records containing some text in any field of any table.",
           {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, ["query"], read_only=True),
     _tool("create_records", "Create records", "Add records to a table (up to 200 per call; all-or-nothing).",
-          {"table": TABLE, "base": BASE, "records": {"type": "array", "items": FIELD_VALUES, "minItems": 1, "maxItems": 200}},
+          {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "records": {"type": "array", "items": FIELD_VALUES, "minItems": 1, "maxItems": 200}},
           ["table", "records"]),
     _tool("update_records", "Update records", "Change some fields of existing records; fields you leave out stay as they are.",
-          {"table": TABLE, "base": BASE, "records": {"type": "array", "minItems": 1, "maxItems": 200, "items": {
+          {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "records": {"type": "array", "minItems": 1, "maxItems": 200, "items": {
               "type": "object", "properties": {"id": {"type": "string"}, "fields": FIELD_VALUES}, "required": ["id", "fields"]}}},
           ["table", "records"], idempotent=True),
     _tool("upsert_records", "Create or update records",
           "For each record: update the one whose match_on fields have the same values, or create it.",
-          {"table": TABLE, "base": BASE, "records": {"type": "array", "items": FIELD_VALUES, "minItems": 1, "maxItems": 200},
+          {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "records": {"type": "array", "items": FIELD_VALUES, "minItems": 1, "maxItems": 200},
            "match_on": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Field names that identify a record, e.g. [\"Email\"]"}},
           ["table", "records", "match_on"], idempotent=True),
     _tool("delete_records", "Delete records", "Delete records by id (synced items are also removed from the calendar / address book).",
@@ -110,20 +113,21 @@ def _call(user: dict, name: str, a: dict):
         return {"bases": run(apiv1.list_bases)}
     if name == "describe_table":
         return run(apiv1.table_schema, a["table"], a.get("base"))
+    fk = "id" if a.get("field_key") == "id" else "name"  # key fields by name (default) or by id, as in Teable
     if name == "list_records":
         return run(apiv1.query_records, a["table"], base=a.get("base"), view=a.get("view"), filters=a.get("filters"),
                    search=a.get("search"), sort=a.get("sort"), fields=a.get("fields"), limit=min(int(a.get("limit") or 25), 200),
-                   offset=a.get("offset") or 0, cell_format="text")
+                   offset=a.get("offset") or 0, cell_format="text", field_key=fk)
     if name == "get_record":
-        return run(apiv1.get_record, a["record_id"], "text")
+        return run(apiv1.get_record, a["record_id"], "text", fk)
     if name == "search":
         return {"results": run(apiv1.search_all, a["query"], min(int(a.get("limit") or 20), 100))}
     if name == "create_records":
-        return {"created": run(apiv1.create_records, a["table"], a["records"], a.get("base"), "text")}
+        return {"created": run(apiv1.create_records, a["table"], a["records"], a.get("base"), "text", fk)}
     if name == "update_records":
-        return {"updated": run(apiv1.update_records, a["table"], a["records"], a.get("base"), "text")}
+        return {"updated": run(apiv1.update_records, a["table"], a["records"], a.get("base"), "text", fk)}
     if name == "upsert_records":
-        return run(apiv1.upsert_records, a["table"], a["records"], a["match_on"], a.get("base"), "text")
+        return run(apiv1.upsert_records, a["table"], a["records"], a["match_on"], a.get("base"), "text", fk)
     if name == "delete_records":
         return {"deleted": run(apiv1.delete_records, a["table"], a["ids"], a.get("base"))}
     if name == "create_table":

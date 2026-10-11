@@ -161,6 +161,8 @@ def update_table(table_id: str, body: TablePatch, user=User):
             conn.execute("UPDATE tables SET base_id = %s WHERE id = %s", (body.base_id, table_id))
         if body.hidden is not None:
             conn.execute("UPDATE tables SET hidden = %s WHERE id = %s", (body.hidden, table_id))
+        if body.icon is not None:
+            conn.execute("UPDATE tables SET icon = %s WHERE id = %s", (body.icon.strip()[:16] or None, table_id))
         return _table_out(store.get_table(conn, table_id))
 
 

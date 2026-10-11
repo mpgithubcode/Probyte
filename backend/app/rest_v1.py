@@ -62,7 +62,12 @@ async def api_user(request: Request, _b=Security(_bearer), _h=Security(_header))
 
 User = Depends(api_user)
 Fmt = Query("json", description="`json`: raw values (link and user fields as ids). `text`: values as shown in Probyte.")
-Key = Query("name", description="Key fields by `name` or by field `id`.")
+def _field_key(field_key: Literal["name", "id"] | None = Query(None, description="Key fields by `name` (default) or by field `id`."),
+               fieldKeyType: Literal["name", "id"] | None = Query(None, description="Same as field_key (Teable's name for it).")) -> str:
+    return fieldKeyType or field_key or "name"
+
+
+Key = Depends(_field_key)
 
 
 def _run(fn, *args, **kw):
@@ -173,13 +178,13 @@ def list_records(table: str, base: str | None = None, view: str | None = Query(N
                  filter: str | None = None, search: str | None = Query(None, description="Text to find in any field"),
                  sort: str | None = None, fields: str | None = Query(None, description="Comma-separated field names to return"),
                  limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0), cell_format: Literal["json", "text"] = Fmt,
-                 field_key: Literal["name", "id"] = Key, user=User):
+                 field_key: str = Key, user=User):
     return _run(apiv1.query_records, user, table, base=base, view=view, filters=filter, search=search, sort=sort,
                 fields=fields, limit=limit, offset=offset, cell_format=cell_format, field_key=field_key)
 
 
 @v1.get("/tables/{table}/records/{record_id}", tags=["Records"], summary="Get a record")
-def get_record(table: str, record_id: str, cell_format: Literal["json", "text"] = Fmt, field_key: Literal["name", "id"] = Key, user=User):
+def get_record(table: str, record_id: str, cell_format: Literal["json", "text"] = Fmt, field_key: str = Key, user=User):
     return _run(apiv1.get_record, user, record_id, cell_format, field_key, table)
 
 
@@ -187,7 +192,7 @@ def get_record(table: str, record_id: str, cell_format: Literal["json", "text"] 
          description="Send `{\"fields\": {...}}` for one record or `{\"records\": [{\"fields\": {...}}, ...]}` for up to 1000. "
                      "A batch is all-or-nothing.")
 def create_records(table: str, body: dict[str, Any], base: str | None = None, cell_format: Literal["json", "text"] = Fmt,
-                   field_key: Literal["name", "id"] = Key, user=User):
+                   field_key: str = Key, user=User):
     single = "records" not in body
     recs = [body] if single else body["records"]
     if not isinstance(recs, list):
@@ -199,19 +204,19 @@ def create_records(table: str, body: dict[str, Any], base: str | None = None, ce
 @v1.patch("/tables/{table}/records", tags=["Records"], summary="Update records",
           description="Only the fields you send change. Up to 1000 records; all-or-nothing.")
 def update_records(table: str, body: UpdatesIn, base: str | None = None, cell_format: Literal["json", "text"] = Fmt,
-                   field_key: Literal["name", "id"] = Key, user=User):
+                   field_key: str = Key, user=User):
     return {"records": _run(apiv1.update_records, user, table, [r.model_dump() for r in body.records], base, cell_format, field_key)}
 
 
 @v1.patch("/tables/{table}/records/{record_id}", tags=["Records"], summary="Update a record")
 def update_record(table: str, record_id: str, body: FieldsIn, cell_format: Literal["json", "text"] = Fmt,
-                  field_key: Literal["name", "id"] = Key, user=User):
+                  field_key: str = Key, user=User):
     return _run(apiv1.update_records, user, table, [{"id": record_id, "fields": body.fields}], None, cell_format, field_key)[0]
 
 
 @v1.post("/tables/{table}/records/upsert", tags=["Records"], summary="Create or update records by matching fields")
 def upsert_records(table: str, body: UpsertIn, base: str | None = None, cell_format: Literal["json", "text"] = Fmt,
-                   field_key: Literal["name", "id"] = Key, user=User):
+                   field_key: str = Key, user=User):
     return _run(apiv1.upsert_records, user, table, [r.model_dump() for r in body.records], body.match_on, base, cell_format, field_key)
 
 

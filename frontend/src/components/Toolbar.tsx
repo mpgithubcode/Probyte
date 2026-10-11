@@ -144,14 +144,22 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
         <Icon name="eye" size={14} /> {hidden.length ? `${hidden.length} hidden` : "Fields"}
       </button>
       {hidePop.anchor && (
-        <Popover anchor={hidePop.anchor} onClose={hidePop.close} width={240}>
-          <div className="pop-body">
+        <Popover anchor={hidePop.anchor} onClose={hidePop.close} width={300}>
+          <div className="pop-body fields-pop">
+            <p className="muted small">Show or hide fields, and rename them in this view only.</p>
             {fields.map((f) => (
-              <label key={f.id} className="inline-check">
-                <input type="checkbox" checked={!hiddenSet.has(f.id)} disabled={f.is_primary}
+              <div key={f.id} className="field-pop-row">
+                <input type="checkbox" checked={!hiddenSet.has(f.id)} disabled={f.is_primary} aria-label={`Show ${f.realName ?? f.name}`}
                   onChange={(e) => setConfig(setFieldShown(f, e.target.checked, config))} />
-                <FieldIcon type={f.type} /> {f.name}
-              </label>
+                <FieldIcon type={f.type} />
+                <input className="input sm" value={config.fieldNames?.[f.id] ?? ""} placeholder={f.realName ?? f.name}
+                  aria-label={`Name of ${f.realName ?? f.name} in this view`}
+                  onChange={(e) => {
+                    const names = { ...(config.fieldNames ?? {}) };
+                    if (e.target.value) names[f.id] = e.target.value; else delete names[f.id];
+                    setConfig({ fieldNames: names });
+                  }} />
+              </div>
             ))}
           </div>
         </Popover>

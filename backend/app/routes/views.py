@@ -80,7 +80,7 @@ def _combo_payload(conn, combo, defer_remote=False):
         if s["kind"] == "remote" and str(s["table_id"]) not in pending:
             s["link_sources"] = remote.sources(conn, store.get_table(conn, s["table_id"]))
     now = {str(s["table_id"]) for s in sources} - set(pending)
-    return {"combo": {"id": combo["id"], "name": combo["name"], "base_id": combo["base_id"]}, "sources": sources, "fields": fields,
+    return {"combo": {"id": combo["id"], "name": combo["name"], "base_id": combo["base_id"], "icon": combo.get("icon")}, "sources": sources, "fields": fields,
             "views": store.get_views(conn, combo_id=combo["id"]), "records": store.combo_records(conn, combo, eng, only=now),
             "refs": store.combo_refs(conn, combo, eng, only=now), "pending": pending}
 
@@ -143,6 +143,8 @@ def update_combo(combo_id: str, body: ComboPatch, user=User):
             conn.execute("UPDATE combos SET base_id = %s WHERE id = %s", (body.base_id, combo_id))
         if body.hidden is not None:
             conn.execute("UPDATE combos SET hidden = %s WHERE id = %s", (body.hidden, combo_id))
+        if body.icon is not None:
+            conn.execute("UPDATE combos SET icon = %s WHERE id = %s", (body.icon.strip()[:16] or None, combo_id))
         name = body.name or c["name"]
         sources = _sources_json(conn, body.sources, user) if body.sources is not None else c["sources"]
         if body.remap:

@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { buttonAction } from "../buttonAction";
 import type { Dataset, Field, Rec, Refs, Source, View, ViewConfig } from "../types";
-import { applyView, choiceColor, hiddenIds, orderFields } from "../util";
+import { applyView, choiceColor, hiddenIds, orderFields, withDisplayNames } from "../util";
 import { CalendarView } from "./CalendarView";
 import { RefsContext, setAttachmentBase } from "./Cells";
 import { ChartView } from "./ChartView";
@@ -160,7 +160,8 @@ export function ShareApp({ token }: { token: string }) {
 
   const records = view && PAGED_VIEWS.has(view.type) ? paging.items : allRecords;
   const hidden = ds ? hiddenIds(ds.fields, config) : new Set<string>();
-  const visible = ds ? orderFields(ds.fields, config.fieldOrder).filter((f) => !hidden.has(f.id)) : [];
+  const vfields = ds ? withDisplayNames(ds.fields, config) : [];
+  const visible = orderFields(vfields, config.fieldOrder).filter((f) => !hidden.has(f.id));
   const props = ds && view ? { ds, view, fields: ds.fields, visible, records, ops, setConfig: (p: Partial<ViewConfig>) => setLocalConfig((c) => ({ ...c, ...p })) } : null;
   const rec = openRec && ds ? ds.records.find((r) => r.id === openRec) : undefined;
   const current = meta.items.find((i) => i.views.some((v) => v.id === viewId));
