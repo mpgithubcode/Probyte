@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Field, Rec } from "../types";
-import { buildGroups, isEditable, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
+import { buildGroups, fitField, isEditable, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
 import { CellValue, Chip, FieldInput, RefsContext } from "./Cells";
 import { anchorOf } from "../recur";
 import { FieldIcon, Icon } from "./Icon";
@@ -100,7 +100,7 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
       <td key={f.id} className={`cell ${isEditing ? "editing" : ""} ${readonly ? "readonly" : ""}`}
         onClick={() => !readonly && !isEditing && setEditing({ rec: r.id, field: f.id })}>
         {isEditing ? (
-          <FieldInput field={f} value={r.data[f.id]} inline autoFocus anchor={f.type === "recurrence" ? anchorOf(fields, r) : undefined}
+          <FieldInput field={fitField(f, recordKind(fields, r), r.data[f.id])} value={r.data[f.id]} inline autoFocus anchor={f.type === "recurrence" ? anchorOf(fields, r) : undefined}
             onCommit={(v) => ops.update(r, { [f.id]: v })}
             onDone={() => setEditing((e) => (e?.rec === r.id && e.field === f.id ? null : e))} />
         ) : (

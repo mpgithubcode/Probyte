@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CreateTarget, Dataset, Field, Rec } from "../types";
 import { addExdate, anchorOf, findOverride, occurrenceData, overrideKey, seriesDateFields, setOverride } from "../recur";
-import { formatDate, isEditable, recordTitle } from "../util";
+import { fieldApplies, fitField, formatDate, isEditable, recordKind, recordTitle } from "../util";
 import { CellValue, Chip, FieldInput } from "./Cells";
 import { CAN_ALL, type Can } from "./viewTypes";
 import { FieldIcon, Icon } from "./Icon";
@@ -18,7 +18,8 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
   const source = ds.sources?.find((s) => s.table_id === rec.table_id);
   const caldav = ds.kind === "table" ? ds.table?.kind !== "generic" : source?.kind !== "generic";
   const repeatF = fields.find((f) => f.type === "recurrence");
-  const shown = fields.filter((f) => f.id !== "__source");
+  const kind = recordKind(fields, rec);
+  const shown = fields.filter((f) => f.id !== "__source" && fieldApplies(f, kind));
   // one occurrence of a repeating record
   const occ = occurrence && repeatF ? occurrence : null;
   const ov = occ ? findOverride(rec.data[repeatF!.id], occ) : undefined;
@@ -89,7 +90,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
               ) : f.mapping && rec.table_id && !f.mapping[rec.table_id] ? (
                 <span className="muted">Not mapped for this source</span>
               ) : (
-                can.edit ? <FieldInput field={f} value={rec.data[f.id]} onCommit={(v) => onUpdate({ [f.id]: v })}
+                can.edit ? <FieldInput field={fitField(f, kind, rec.data[f.id])} value={rec.data[f.id]} onCommit={(v) => onUpdate({ [f.id]: v })}
                     anchor={f.type === "recurrence" ? anchorOf(fields, rec) : undefined} />
                   : <div className="computed-value"><CellValue field={f} value={rec.data[f.id]} /></div>
               )}

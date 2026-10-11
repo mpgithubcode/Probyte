@@ -317,3 +317,14 @@ def test_security_headers():
     assert r.headers["X-Content-Type-Options"] == "nosniff"
     assert r.headers["X-Frame-Options"] == "SAMEORIGIN"
     assert "X-Frame-Options" not in requests.get(BASE + "/s/anything").headers   # public links can be embedded
+
+
+def test_new_views_get_what_they_need_to_show_something(user):
+    t = user.table("mixed", "Defaults")
+    F = user.fields(t["id"])
+    board = user.j("POST", f"/tables/{t['id']}/views", json={"name": "B", "type": "kanban"})
+    assert board["config"]["groupBy"] == F["status"]                    # a status, not the task/event Type
+    cal = user.j("POST", f"/tables/{t['id']}/views", json={"name": "C", "type": "calendar"})
+    assert cal["config"]["dateField"] == F["dtstart"] and cal["config"]["endField"] == F["dtend"]
+    mine = user.j("POST", f"/tables/{t['id']}/views", json={"name": "T", "type": "timeline", "config": {"dateField": F["dtend"]}})
+    assert mine["config"]["dateField"] == F["dtend"]                     # an explicit choice stays

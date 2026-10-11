@@ -28,6 +28,23 @@ def new_page(browser, phone=False):
     return pg
 
 
+def eventually(check, timeout=6.0):
+    """The app shows an edit at once and saves it in the background: wait for the server to have it."""
+    import time
+    end = time.time() + timeout
+    while True:
+        try:
+            out = check()
+            if out is not False and out is not None:
+                return out
+        except (StopIteration, KeyError, AssertionError):
+            if time.time() > end:
+                raise
+        if time.time() > end:
+            raise AssertionError("the server never got the change")
+        time.sleep(0.25)
+
+
 def sign_in(pg, u):
     pg.goto(BASE)
     pg.fill("input[autocomplete=username]", u.username)
@@ -107,9 +124,7 @@ def test_record_panel_edit_and_delete(browser, table_user):
     notes.click()
     notes.fill("Standing desk")
     notes.press("Tab")
-    pg.wait_for_timeout(500)
-    rec = next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Desk")
-    assert rec["data"].get(F["Notes"]) == "Standing desk"
+    eventually(lambda: next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Desk")["data"].get(F["Notes"]) == "Standing desk" or None)
     modal.locator("button:has-text('Delete')").click()
     modal.locator(".modal-foot button.danger:has-text('Delete')").click()
     pg.wait_for_timeout(500)
@@ -338,9 +353,9 @@ def test_editing_select_checkbox_and_date_in_the_record_panel(browser, table_use
     modal.locator(".form-row").filter(has_text="Status").locator(".form-input > *").first.click()
     pg.locator(".popover .menu-item, .popover button").filter(has_text="Done").first.click()
     pg.keyboard.press("Escape")
-    pg.wait_for_timeout(800)
-    d = next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Chair")["data"]
-    assert d.get(done) is True and d.get(due) == "2026-10-20" and d.get(F["Status"]) == "Done", d
+    d = eventually(lambda: (lambda d: d if d.get(F["Status"]) == "Done" else None)(
+        next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Chair")["data"]))
+    assert d.get(done) is True and d.get(due) == "2026-10-20", d
     assert not pg.errors, pg.errors
 
 
@@ -354,9 +369,7 @@ def test_board_drag_with_a_mouse_changes_the_status(browser, table_user):
     card = pg.locator(".kanban-col .card").filter(has_text="Chair")
     target = pg.locator(".kanban-col").filter(has_text="Done").first
     card.drag_to(target)
-    pg.wait_for_timeout(800)
-    d = next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Chair")["data"]
-    assert d[F["Status"]] == "Done"
+    eventually(lambda: next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Chair")["data"][F["Status"]] == "Done" or None)
     assert not pg.errors, pg.errors
 
 
@@ -382,7 +395,7 @@ def test_calendar_add_on_a_day(browser):
     title.press("Enter")
     pg.keyboard.press("Escape")
     expect(pg.locator(".cal-title", has_text="Team lunch")).to_be_visible()
-    rec = next(r for r in u.records(t["id"]) if r["data"].get(F["summary"]) == "Team lunch")
+    rec = eventually(lambda: next(r for r in u.records(t["id"]) if r["data"].get(F["summary"]) == "Team lunch"))
     assert rec["data"].get(F["dtstart"])
     assert not pg.errors, pg.errors
 
@@ -415,8 +428,7 @@ def test_phone_navigation_and_editing(browser, table_user):
     notes = pg.locator(".modal .form-row").filter(has_text="Notes").locator("textarea, input").first
     notes.fill("From my phone")
     notes.press("Tab")
-    pg.wait_for_timeout(600)
-    assert next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Lamp")["data"].get(F["Notes"]) == "From my phone"
+    eventually(lambda: next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Lamp")["data"].get(F["Notes"]) == "From my phone" or None)
     assert pg.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1")
     assert not pg.errors, pg.errors
 
@@ -472,11 +484,7 @@ def test_repeating_event_skip_and_change_one_date(browser):
     pg.keyboard.press("Escape")
     expect(_day(pg, 26).locator(".cal-item")).to_contain_text("Gym (moved)")
     expect(_day(pg, 12).locator(".cal-item")).to_contain_text("Gym")
-    for _ in range(20):                                      # the last edit may still be on its way
-        rule = u.records(t["id"])[0]["data"][F["rrule"]]
-        if "OVERRIDE" in rule:
-            break
-        pg.wait_for_timeout(250)
+    rule = eventually(lambda: (lambda r: r if "OVERRIDE" in r else None)(u.records(t["id"])[0]["data"][F["rrule"]]))
     assert "EXDATE" in rule and "OVERRIDE" in rule and "Gym (moved)" in rule
     u.sync(t["id"])
     body = u.server_item(t["calendar_url"], "SUMMARY:Gym")[1]
@@ -510,4 +518,28 @@ def test_settings_password_webhook_and_mcp_token(browser):
     session.post(API + "/auth/login", json={"username": u.username, "password": "brand-new-pass-1"})
     hooks = session.get(API + "/v1/webhooks").json()["webhooks"]
     assert [h["name"] for h in hooks] == ["Notify"]
+    assert not pg.errors, pg.errors
+
+
+def test_event_and_task_panels_show_their_own_fields(browser):
+    u = Client()
+    t = u.table("mixed", "Both kinds")
+    F = u.fields(t["id"])
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "An event", F["component"]: "Event", F["dtstart"]: "2026-10-20T10:00:00Z"}})
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "A task", F["component"]: "Task"}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".view-tab:has-text('Table')") if pg.locator(".view-tab.active:has-text('Table')").count() == 0 else None
+    for title, kind in (("An event", "Event"), ("A task", "Task")):
+        rows(pg).filter(has_text=title).locator("td.rownum").click()
+        modal = pg.locator(".modal")
+        labels = modal.locator(".form-label").all_text_contents()
+        assert any("Completed At" in x for x in labels) == (kind == "Task"), labels
+        modal.locator(".form-row").filter(has_text="Status").locator(".form-input > *").first.click()
+        options = pg.locator(".popover").last.text_content()
+        assert ("Attended" in options) == (kind == "Event") and ("In Progress" in options) == (kind == "Task"), options
+        pg.keyboard.press("Escape")
+        pg.keyboard.press("Escape")
+        expect(pg.locator(".modal")).to_have_count(0)
     assert not pg.errors, pg.errors

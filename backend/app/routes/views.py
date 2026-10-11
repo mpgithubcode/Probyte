@@ -13,18 +13,40 @@ router = APIRouter()
 
 # ======================================================================== views
 
+def _with_defaults(vtype: str, config: dict, fields: list) -> dict:
+    """Fill in what a board / calendar / timeline needs to show anything, as the app does when you add one."""
+    config = dict(config or {})
+    if vtype == "kanban" and not config.get("groupBy"):
+        f = next((f for f in fields if f["type"] == "single_select" and f.get("system_key") != "component"), None) \
+            or next((f for f in fields if f["type"] == "single_select"), None)
+        if f:
+            config["groupBy"] = str(f["id"])
+    if vtype in ("calendar", "timeline") and not config.get("dateField"):
+        dates = [f for f in fields if f["type"] == "date"]
+        start = next((f for f in dates if f.get("system_key") == "dtstart"), None) or (dates[0] if dates else None)
+        end = next((f for f in dates if f.get("system_key") in ("dtend", "due")), None)
+        if start:
+            config["dateField"] = str(start["id"])
+            if end and "endField" not in config:
+                config["endField"] = str(end["id"])
+    return config
+
+
 @router.post("/api/tables/{table_id}/views")
 def create_table_view(table_id: str, body: ViewIn, user=User):
     with connection() as conn:
         store.get_table(conn, table_id, user["id"])
-        return store.create_view(conn, table_id=table_id, name=body.name, type=body.type, config=body.config)
+        config = _with_defaults(body.type, body.config, store.get_fields(conn, table_id))
+        return store.create_view(conn, table_id=table_id, name=body.name, type=body.type, config=config)
 
 
 @router.post("/api/combos/{combo_id}/views")
 def create_combo_view(combo_id: str, body: ViewIn, user=User):
     with connection() as conn:
-        store.get_combo(conn, combo_id, user["id"])
-        return store.create_view(conn, combo_id=combo_id, name=body.name, type=body.type, config=body.config)
+        combo = store.get_combo(conn, combo_id, user["id"])
+        _, fields = store.resolve_combo(conn, combo)
+        config = _with_defaults(body.type, body.config, fields)
+        return store.create_view(conn, combo_id=combo_id, name=body.name, type=body.type, config=config)
 
 
 @router.patch("/api/views/{view_id}")

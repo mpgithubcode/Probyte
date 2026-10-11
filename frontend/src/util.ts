@@ -378,3 +378,26 @@ export function buildGroups(records: Rec[], specs: SortSpec[], fields: Field[], 
     return { ...g, path, depth, field, spec, children: next ? buildGroups(g.records, specs, fields, refs, depth + 1, path) : null };
   });
 }
+
+// ------------------------------------------------------------ tasks & events tables: fields per record type
+
+const TASK_STATUSES = new Set(["To Do", "In Progress", "Completed", "Cancelled"]);
+const EVENT_STATUSES = new Set(["Tentative", "Confirmed", "Cancelled", "Attended", "Missed"]);
+const TASK_ONLY_KEYS = new Set(["started", "completed"]);
+
+/** "Task" or "Event" for a record of a tasks & events table; null elsewhere. */
+export function recordKind(fields: Field[], rec: Rec): "Task" | "Event" | null {
+  const f = fields.find((x) => x.system_key === "component");
+  const v = f ? rec.data[f.id] : null;
+  return v === "Task" || v === "Event" ? v : null;
+}
+
+/** Whether a field means anything for this kind of record (an event has no Started / Completed At). */
+export const fieldApplies = (f: Field, kind: "Task" | "Event" | null) => !(kind === "Event" && f.system_key && TASK_ONLY_KEYS.has(f.system_key));
+
+/** The field as it applies to this kind of record: Status offers only that kind's statuses (plus the current value). */
+export function fitField(f: Field, kind: "Task" | "Event" | null, current?: unknown): Field {
+  if (!kind || f.system_key !== "status" || !f.options.choices) return f;
+  const allowed = kind === "Task" ? TASK_STATUSES : EVENT_STATUSES;
+  return { ...f, options: { ...f.options, choices: f.options.choices.filter((c) => allowed.has(c.name) || c.name === current) } };
+}
