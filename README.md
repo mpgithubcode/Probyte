@@ -117,7 +117,7 @@ Settings shows step-by-step instructions for each of these.
 
 ### Webhooks
 
-Probyte POSTs `record.created`, `record.updated` and `record.deleted` events (with the record's fields by name) to your URL whenever records change, whether from the app, the API, an assistant, a public link or a phone sync. Pick the events and tables; changes to one record within a second become one event; failures are retried three times. Each request carries `X-Probyte-Signature: sha256=<HMAC-SHA256 of the body>` using the webhook's secret. Webhooks can also be managed through the API (`/api/v1/webhooks`). Addresses on your own network need `WEBHOOK_ALLOW_PRIVATE=true`.
+Probyte POSTs `record.created`, `record.updated` and `record.deleted` events (with the record's fields by name) to your URL whenever records change, whether from the app, the API, an assistant, a public link or a phone sync. Pick the events and tables; changes to one record within a second become one event. Deliveries go through the worker's job queue: they survive restarts, and failures (no answer, HTTP 5xx or 429) are retried three times with backoff. Each request carries `X-Probyte-Signature: sha256=<HMAC-SHA256 of the body>` using the webhook's secret. Webhooks can also be managed through the API (`/api/v1/webhooks`). Addresses on your own network need `WEBHOOK_ALLOW_PRIVATE=true`.
 
 ## Field types
 
@@ -159,6 +159,8 @@ cp .env.example .env    # then edit it
 docker compose up -d --build
 ```
 
+This starts four containers: `app` (web app and API), `worker` (DAV sync, webhook deliveries and cleanup, from a job queue in Postgres), `db` (Postgres) and `radicale` (the bundled CalDAV/CardDAV server). Database migrations run automatically on start.
+
 Open http://localhost:8080 and create an account. The first account becomes the admin, and any data created before multi-user support belongs to it. Each user only sees their own databases, combined databases and CalDAV accounts.
 
 Every new user automatically gets a **Probyte CalDAV** account, which is their login on the bundled Radicale. To sync with a phone:
@@ -193,6 +195,10 @@ The device password is separate from the Probyte login password, and you can reg
 | `DEFAULT_TZ`        | `UTC`   | Timezone used for floating CalDAV times and all-day dates. Set this to your own timezone, e.g. `Europe/Berlin`. |
 | `SYNC_INTERVAL`     | `300`   | Seconds between background syncs of every CalDAV database (`0` = off) |
 | `AUTO_PUSH_DELAY`   | `2`     | Seconds after a local edit before it is pushed to the server (`-1` = only push on sync) |
+| `WORKER_THREADS`    | `4`     | Jobs the worker runs at once |
+| `RUN_WORKER`        | –       | `embedded` runs the worker inside the web app (single-container setups without the `worker` service) |
+| `ATTACHMENT_GC_INTERVAL` | `3600` | Seconds between cleanups of uploaded files no record uses any more |
+| `COMPUTE_CACHE_ROWS` | `300000` | Records kept computed in memory between requests (`0` = off) |
 | `SESSION_DAYS`      | `30`    | How long a login lasts |
 | `REMOTE_ALLOW_PRIVATE` | `false` | Allow linked tables from Probyte servers on private/LAN addresses |
 | `WEBHOOK_ALLOW_PRIVATE` | `false` | Allow webhooks to private/LAN addresses (e.g. n8n or Home Assistant at home) |
@@ -204,6 +210,7 @@ The device password is separate from the Probyte login password, and you can reg
 
 ## How sync works
 
+- **Incremental:** syncs run in the worker. When the calendar's change tag (CTag / sync-token) is unchanged, nothing is downloaded; otherwise only the items whose ETag changed are fetched (multiget). A table syncs every `SYNC_INTERVAL`, a couple of seconds after a local edit, and on **Sync**.
 - **Pull:** every remote object is compared with the copy stored at the last sync. New objects are imported, changed ones update the record, and records whose object was deleted on the server are removed.
 - **Push:** records edited in Probyte (marked with an orange dot in the grid) are written back. Unknown iCalendar properties such as alarms, recurrence rules and attendees are kept, because Probyte only rewrites the properties it manages.
 - **Conflicts:** if a record was edited locally since the last sync, the local edit wins. Otherwise the server copy wins.
@@ -238,6 +245,20 @@ In a **tasks & events** database, *Type* chooses the component. *End / Due* is w
 
 **iCloud:** iCloud calendars work over CalDAV with an app-specific password (`https://caldav.icloud.com/`), but only for events. Since iOS 13, iCloud Reminders no longer use CalDAV. To get tasks onto an iPhone, use the built-in Probyte CalDAV account, or another CalDAV server such as Nextcloud or Fastmail.
 
+## How it stays fast
+
+- **Computed values are cached.** Formulas, lookups and rollups are calculated when a table is read, then kept in memory against a per-table version that database triggers move on every change. When only some records changed, just those are read and recalculated. Writing a record calculates only that record.
+- **Live updates instead of reloading.** The database announces every change (`NOTIFY`); the web app relays it to open pages over `/api/events`, and pages fetch only the changed records (`/api/tables/{id}/changes`). Changes from phones, the API, assistants and other tabs appear within a second or two. Tables you've opened are kept in memory, so switching back is instant.
+- **Small downloads.** API responses are gzipped (a 50,000-row table is about 3 MB), and each view and dialog loads only when first used.
+- **Background work is queued.** Sync, webhooks and cleanup are jobs in Postgres run by the worker: they survive restarts, retry with backoff, and never slow down a request.
+
+Rough timings on a small server (`scripts/test.sh bench`):
+
+| Rows | Open a table | Open right after an edit | Edit a record |
+|------|--------------|--------------------------|---------------|
+| 10,000 | 0.09 s | 0.09 s | 0.02 s |
+| 50,000 | 0.4 s | 0.5 s | 0.04 s |
+
 ## Development
 
 ```bash
@@ -247,27 +268,51 @@ cd backend
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000      # API on :8000 (OpenAPI docs at /docs)
+python -m app.worker                           # job worker (sync, webhooks); or RUN_WORKER=embedded above
 
 cd ../frontend
 npm install
 npm run dev                                    # UI on :5173, proxies /api to :8000
 ```
 
+### Tests
+
+```bash
+scripts/test.sh            # everything: API tests (pytest) and browser tests (Playwright)
+scripts/test.sh api        # just the API tests;  scripts/test.sh -k sync   any pytest arguments
+scripts/test.sh bench      # timings at 1k / 10k / 50k rows
+KEEP_STACK=1 scripts/test.sh ...   # leave the test stack running afterwards to inspect it
+```
+
+Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale), never your real data. Only Docker is needed.
+
+### Database changes
+
+Add a numbered file to `backend/app/migrations/`: `NNNN_name.sql`, or `NNNN_name.py` with a `run(conn)` function. Each runs once, in order, when the app or worker starts.
+
 ### Layout
 
 ```
 backend/app/
-  main.py         FastAPI routes (+ serves the built frontend)
+  main.py         the FastAPI app: middleware, routers, the built frontend, the pass-through to Radicale
+  routes/         the web app's JSON API: auth, workspace (bases, accounts), tables & fields, records, views & combos
+  live.py         live updates: /api/events (Server-Sent Events) fed by Postgres LISTEN/NOTIFY
+  worker.py       the worker process (python -m app.worker): job threads + periodic schedule
+  jobs.py         durable job queue in Postgres (debounced, retried, SKIP LOCKED)
+  values.py       turning input into stored values: API writes, imports, field type changes
   auth.py         accounts (scrypt password hashes) and cookie sessions
   builtin_dav.py  per-user logins on the bundled Radicale (writes its htpasswd file)
-  store.py        tables / fields / records / links / combined-database data access
-  compute.py      computed fields (formula, lookup, rollup, conditional, system fields)
+  store.py        tables / fields / records / links / combined-database data access; every record write
+                  ends in store._changed (webhook event + DAV push queued in the same transaction)
+  compute.py      computed fields (formula, lookup, rollup, conditional, system fields), the shared cache,
+                  and change tokens for /changes
   formula.py      Teable-style formula language: parser, functions, type inference
   attachments.py  file uploads for attachment fields
   remote.py       linked tables: reading/writing another Probyte's public link (local fast path or HTTP)
   recordops.py    record writes for every table kind (local, CalDAV, linked)
   shares.py       public links (owner management, visitor API, PWA manifest/icons)
-  sync.py      CalDAV/CardDAV two-way sync engine + background scheduler
+  sync.py      CalDAV/CardDAV two-way sync (incremental: CTag/sync-token + ETags), run as worker jobs
+  dav.py       WebDAV plumbing shared by CalDAV and CardDAV (multistatus, collection state, multiget)
   apiv1.py     public API core (tables by name, value conversion, queries, batch writes, upsert)
   rest_v1.py   REST API v1 at /api/v1 (+ OpenAPI and docs)
   mcp_server.py  MCP server at /mcp (Streamable HTTP + SSE)
@@ -275,14 +320,17 @@ backend/app/
   webhooks.py  record events → signed POSTs to user URLs
   ical.py      record <-> VTODO/VEVENT conversion, CalDAV system fields
   recur.py     repeat rules: validation, next occurrence for repeating tasks
-  carddav.py   small CardDAV client (address book discovery, multiget, put/delete)
+  carddav.py   CardDAV address book discovery and creation
   vcard.py     record <-> vCard conversion that keeps unmanaged properties
   migrate.py   runs migrations/ (numbered .sql / .py files, each once; recorded in schema_migrations)
+  migrations/  0001 baseline schema, data fixes, jobs + sync state, table/row versions, live changes
 radicale/      bundled Radicale image: htpasswd auth, owner-only rights
 frontend/src/
   App.tsx                    shell + hash routing
+  data.ts                    in-memory dataset cache, incremental refresh (/changes), live event stream
   components/DatasetPage.tsx one database / combined database: views, toolbar, record ops
-  components/*View.tsx       grid, kanban, calendar, gallery
+  components/*View.tsx       grid, kanban, calendar, timeline, list, gallery, chart (each loaded on first use)
+tests/         api/ (pytest), ui/ (Playwright), bench/ (timings); run with scripts/test.sh
 ```
 
 Records are stored as JSONB keyed by field id. A combined database stores only its source list and a field mapping, so there is no duplicated data.
