@@ -25,10 +25,9 @@ The pictures are made by `scripts/test.sh screens` from demo data on the test st
 
 On top of that, Probyte has these extras:
 
-1. **CalDAV task & event databases.** A database can be bound to a calendar collection and sync both ways with any CalDAV server (Nextcloud, Radicale, Baïkal, iCloud, Fastmail…). There are three kinds:
-   - *tasks* syncs `VTODO`s
-   - *events* syncs `VEVENT`s
-   - *tasks & events* syncs a calendar that holds both. Each record has a **Type** field (Task / Event).
+1. **CalDAV task & event databases.** A database can be bound to a calendar collection and sync both ways with any CalDAV server (Nextcloud, Radicale, Baïkal, iCloud, Fastmail…). A **Tasks & events** table syncs a calendar's tasks (`VTODO`) and events (`VEVENT`) together; each record has a **Type** field (Task / Event), and the record panel shows only the fields that apply to that type. Pick a calendar that holds only events (as iCloud's do) or only tasks, and the table holds just those. (Tables made earlier as tasks-only or events-only keep working.)
+
+   **Reminders.** Tasks and events have a **Reminder** field (at the time, 5 / 15 / 30 minutes, 1 / 2 hours, 1 / 2 days or a week before). It syncs as a standard calendar alert, so your phone notifies you: before an event's start, or before a task's due date (for an all-day task, 09:00 that day). Alerts set on a phone show up in the field, and an event's alerts are only rewritten when you change its Reminder.
 
    Each user can connect as many CalDAV accounts as they like.
 
@@ -68,6 +67,14 @@ Every database and combined database can have any number of Notion-style views, 
 **Board options.** The **Board** button on a Board view shows or hides the "No *Status*" column (cards with no value), hides empty columns, and hides empty cards (no title and no other values).
 
 **Combining tables from a table.** A table's **⋯ → Combine with other tables…** starts a combined database with that table already picked; a combined database's **⋯ → Add tables…** adds more sources. Both can also add a table **from another Probyte** by pasting its public link (on this server or any other). A combined database shows its own tables at once; sources from links load next to them (a spinner next to the title shows they're on their way).
+
+**Keyboard, copy and paste (Table view).** Click a cell to select it; move with the arrow keys and Tab; start typing to replace its value, or press Enter / F2 (or double-click) to edit it; Delete clears it, Space ticks a checkbox, Escape leaves the cell. In the grid, Enter saves long text too (Shift+Enter for a new line). Ctrl/⌘ C copies the cell, or the ticked rows as a block; Ctrl/⌘ V pastes a block copied from Excel, Google Sheets or Numbers starting at the selected cell, converting each value to its field's type and adding rows if the block runs past the end.
+
+**Search everything.** Ctrl/⌘ K (or the 🔍 in the sidebar) finds records in every table, by title or any other field, and opens the one you pick.
+
+**Undo and the trash.** Deleting a record, deleting or editing several at once, or deleting a table shows **Undo** for a few seconds. Deleted records and tables also stay in the **Trash** (sidebar, bottom) for 30 days, where you can restore them or delete them for good. A deleted table's calendar on the server is only removed when the trash is emptied, so restoring a table brings back everything, phones included.
+
+**History.** The record panel's **History** lists who changed what and when: you, an API key (by name), a connected AI assistant, a public link, or your phone through calendar sync, with each field's old and new value. Kept for 180 days.
 
 **Selecting rows.** In a Table view, tick rows (shift-click selects a range, a group's box selects the group, the header box selects everything in the view), then **Edit** to set one field on all of them or **Delete** them.
 
@@ -234,6 +241,9 @@ The device password is separate from the Probyte login password, and you can reg
 | `MCP_BEARER_SCOPE`  | `write` | `read` limits the fixed token to the read tools |
 | `PUBLIC_URL`        | –       | Public address of Probyte (e.g. `https://probyte.example.com`), used for OAuth/MCP discovery and the OpenAPI spec; defaults to what the proxy forwards |
 | `COOKIE_SECURE`     | `auto`  | `auto` = Secure cookie when the request came in over HTTPS; `true` / `false` to force it |
+| `BACKUP_INTERVAL`   | `24`    | Hours between automatic backups (`0` = off) |
+| `BACKUP_KEEP`       | `14`    | How many backups to keep |
+| `PROBYTE_SECRET_KEY` | –      | Key that encrypts stored account passwords; empty = a key file made on the `keys` volume on first start |
 
 ## How sync works
 
@@ -317,6 +327,31 @@ Tests run against a separate copy of the stack (Compose project `probyte-test`, 
 
 What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
 
+### Backups
+
+The worker backs up the database, the calendars and contacts, and uploaded files every `BACKUP_INTERVAL` hours into the `backups` volume (one folder per backup, the newest `BACKUP_KEEP` kept). The admin account sees them under **Settings → Backups**, with **Back up now** and a **Download** for each. Keep copies somewhere else too: download one now and then, or replace the `backups` volume in docker-compose.yml with a folder on another disk (`- /mnt/usb/probyte-backups:/backups`).
+
+```bash
+docker compose exec worker python -m app.admin backup        # one now
+docker compose exec worker python -m app.admin backups       # list them
+```
+
+To restore one (it replaces everything with the backup):
+
+```bash
+docker compose stop app worker radicale
+docker compose run --rm worker python -m app.admin restore probyte-20261011-030000
+docker compose up -d
+```
+
+**Keep the encryption key with your `.env`.** Passwords Probyte must reuse (calendar accounts, phone-sync passwords, webhook secrets) are stored encrypted, with a key that is deliberately *not* in the backups. It's `PROBYTE_SECRET_KEY` if you set one, otherwise the file `probyte.key` on the `keys` volume. Copy it once:
+
+```bash
+docker compose exec app cat /keys/probyte.key
+```
+
+Without it, a restored backup still has all your data, but external calendar accounts need their passwords entered again and phones need a new sync password.
+
 ### Forgotten password
 
 Passwords are stored only as hashes, so they can't be looked up. Whoever runs the server can set a new one:
@@ -325,7 +360,7 @@ Passwords are stored only as hashes, so they can't be looked up. Whoever runs th
 docker compose exec app python -m app.admin reset-password <username>
 ```
 
-It prints a new random password and signs that user out everywhere; change it afterwards in **Settings → Account**.
+It prints a new random password and signs that user out everywhere; change it afterwards in **Settings → Account**. `python -m app.admin create-user <name> [--admin]` adds an account when sign-up is off.
 
 ### Database changes
 
@@ -364,14 +399,21 @@ backend/app/
   carddav.py   CardDAV address book discovery and creation
   vcard.py     record <-> vCard conversion that keeps unmanaged properties
   migrate.py   runs migrations/ (numbered .sql / .py files, each once; recorded in schema_migrations)
-  migrations/  0001 baseline schema, data fixes, jobs + sync state, table/row versions, live changes
+  migrations/  0001 baseline schema, data fixes, jobs + sync state, table/row versions, live changes, settings,
+               encrypted secrets, trash, record history, view settings cleanup
+  backup.py    backups (pg_dump + calendars + files) and restoring them
+  secretbox.py encryption of stored passwords (key outside the database)
+  ratelimit.py slowing down password guessing
+  audit.py     record history (who changed what)
+  admin.py     command line: reset-password, create-user, backup, backups, restore
 radicale/      bundled Radicale image: htpasswd auth, owner-only rights
 frontend/src/
   App.tsx                    shell + hash routing
   data.ts                    in-memory dataset cache, incremental refresh (/changes), live event stream
   components/DatasetPage.tsx one database / combined database: views, toolbar, record ops
   components/*View.tsx       grid, kanban, calendar, timeline, list, gallery, chart (each loaded on first use)
-tests/         api/ (pytest), ui/ (Playwright), bench/ (timings); run with scripts/test.sh
+tests/         api/ (pytest), ui/ (Playwright), bench/ (timings), screens/ (README pictures),
+               filter_cases.json (filter/sort cases the browser and the server must agree on); run with scripts/test.sh
 ```
 
 Records are stored as JSONB keyed by field id. A combined database stores only its source list and a field mapping, so there is no duplicated data.
@@ -380,7 +422,6 @@ Records are stored as JSONB keyed by field id. A combined database stores only i
 
 - Signed-in users can't share bases with each other yet; use public links to let others in. There is no admin user-management screen; set `ALLOW_SIGNUP=false` once everyone has signed up.
 - Dragging calendar items is a mouse/trackpad feature. On phones, tap a day to list its items, and open a record to change its date. Board cards have a **Move to** button on touch screens.
-- There is no rate limiting on Probyte's login. Radicale delays failed logins, and your reverse proxy can rate-limit `/api/auth/login`.
-- CalDAV passwords for external accounts, and the generated device passwords, are stored in plain text in Postgres, because Probyte needs them to connect. Probyte login passwords are hashed.
+- Password guessing is slowed down: after 5 wrong passwords an account (or a password-protected public link) is locked for 15 minutes, and one address gets 20 tries in that time, across sign-in, the AI-assistant consent page and password changes. Radicale also delays failed phone logins.
+- Probyte login passwords are hashed; passwords it must reuse are encrypted (see Backups for the key).
 - Don't change `RADICALE_URL` (the internal address) after creating databases on the built-in account. Their calendar URLs are stored with it.
-- Recurring events are shown once, on their first occurrence. Their recurrence rules are kept on the server.

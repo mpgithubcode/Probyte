@@ -40,7 +40,11 @@ def _empty(v):
 def _matches(eng, f, v, flt) -> bool:
     op = flt.get("op", "contains")
     text = display_text(eng, f, v).lower()
-    val = str(flt.get("value") or "").lower()
+    raw = flt.get("value")
+    val = ("" if raw is None else str(raw)).lower()  # (False and 0 are values too)
+    if f["type"] == "checkbox" and op in ("is", "is_not"):  # ticked or not, whatever way the value is written
+        hit = bool(v) == (val in ("true", "1", "yes", "checked"))
+        return hit if op == "is" else not hit
     if op == "empty":
         return _empty(v)
     if op == "not_empty":
@@ -97,7 +101,7 @@ def _test(eng, by_id, r, node) -> bool:
     f = by_id.get(str(node.get("field")))
     if not f:
         return True  # a condition on a deleted field doesn't filter anything
-    if node.get("op", "contains") not in ("empty", "not_empty") and str(node.get("value") or "") == "" and f["type"] != "checkbox":
+    if node.get("op", "contains") not in ("empty", "not_empty") and node.get("value") in (None, "") and f["type"] != "checkbox":
         return True  # nor does one still waiting for its value
     return _matches(eng, f, r["data"].get(str(f["id"])), node)
 

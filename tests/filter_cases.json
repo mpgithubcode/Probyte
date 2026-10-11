@@ -1,0 +1,45 @@
+{
+  "_about": "Filter and sort cases that the browser (frontend/src/util.ts applyView) and the server (backend/app/viewfilter.py apply_view) must agree on. Field names stand for field ids. tests/ui/test_filter_parity.py runs them through both.",
+  "fields": [
+    {"name": "Amount", "type": "number"},
+    {"name": "Stage", "type": "single_select", "options": {"choices": [{"name": "New"}, {"name": "Active"}, {"name": "Done"}]}},
+    {"name": "Tags", "type": "multi_select", "options": {"choices": [{"name": "hot"}, {"name": "cold"}, {"name": "vip"}]}},
+    {"name": "Due", "type": "date"},
+    {"name": "Paid", "type": "checkbox"}
+  ],
+  "records": [
+    {"Name": "Apple",   "Notes": "red fruit",  "Amount": 10,   "Stage": "New",    "Tags": ["hot"],         "Due": "2026-10-01", "Paid": true},
+    {"Name": "Banana",  "Notes": "",           "Amount": 250,  "Stage": "Active", "Tags": ["cold", "vip"], "Due": "2026-11-15", "Paid": false},
+    {"Name": "cherry",  "Notes": "Red, small", "Amount": -5,   "Stage": "Done",   "Tags": [],              "Due": null,         "Paid": false},
+    {"Name": "Date",    "Notes": null,         "Amount": null, "Stage": null,     "Tags": ["vip"],         "Due": "2026-10-01", "Paid": true},
+    {"Name": "Elder",   "Notes": "dark RED",   "Amount": 99.5, "Stage": "Active", "Tags": ["hot", "cold"], "Due": "2027-01-01", "Paid": false}
+  ],
+  "cases": [
+    {"name": "text contains ignores case", "filter": [{"field": "Notes", "op": "contains", "value": "red"}], "expect": ["Apple", "cherry", "Elder"]},
+    {"name": "text does not contain (empty counts as not containing)", "filter": [{"field": "Notes", "op": "not_contains", "value": "red"}], "expect": ["Banana", "Date"]},
+    {"name": "is empty", "filter": [{"field": "Notes", "op": "empty"}], "expect": ["Banana", "Date"]},
+    {"name": "is not empty", "filter": [{"field": "Stage", "op": "not_empty"}], "expect": ["Apple", "Banana", "cherry", "Elder"]},
+    {"name": "select is", "filter": [{"field": "Stage", "op": "is", "value": "Active"}], "expect": ["Banana", "Elder"]},
+    {"name": "select is not (empty included)", "filter": [{"field": "Stage", "op": "is_not", "value": "Active"}], "expect": ["Apple", "cherry", "Date"]},
+    {"name": "multi-select contains", "filter": [{"field": "Tags", "op": "contains", "value": "vip"}], "expect": ["Banana", "Date"]},
+    {"name": "number greater than", "filter": [{"field": "Amount", "op": "gt", "value": "10"}], "expect": ["Banana", "Elder"]},
+    {"name": "number at most (empty excluded)", "filter": [{"field": "Amount", "op": "lte", "value": "10"}], "expect": ["Apple", "cherry"]},
+    {"name": "date is", "filter": [{"field": "Due", "op": "is", "value": "2026-10-01"}], "expect": ["Apple", "Date"]},
+    {"name": "date before", "filter": [{"field": "Due", "op": "lt", "value": "2026-11-01"}], "expect": ["Apple", "Date"]},
+    {"name": "date on or after", "filter": [{"field": "Due", "op": "gte", "value": "2026-11-15"}], "expect": ["Banana", "Elder"]},
+    {"name": "checkbox is ticked", "filter": [{"field": "Paid", "op": "is", "value": true}], "expect": ["Apple", "Date"]},
+    {"name": "a condition without a value is ignored", "filter": [{"field": "Notes", "op": "contains", "value": ""}], "expect": ["Apple", "Banana", "cherry", "Date", "Elder"]},
+    {"name": "or with a nested and group",
+     "filter": {"conjunction": "or", "items": [{"field": "Stage", "op": "is", "value": "Done"},
+               {"conjunction": "and", "items": [{"field": "Tags", "op": "contains", "value": "hot"}, {"field": "Amount", "op": "gt", "value": "50"}]}]},
+     "expect": ["cherry", "Elder"]},
+    {"name": "sort by number, descending, empty last", "sorts": [{"field": "Amount", "dir": "desc"}], "expect": ["Banana", "Elder", "Apple", "cherry", "Date"]},
+    {"name": "sort by number, ascending, empty last", "sorts": [{"field": "Amount", "dir": "asc"}], "expect": ["cherry", "Apple", "Elder", "Banana", "Date"]},
+    {"name": "sort by text ignores case", "sorts": [{"field": "Name", "dir": "asc"}], "expect": ["Apple", "Banana", "cherry", "Date", "Elder"]},
+    {"name": "sort by select follows option order", "sorts": [{"field": "Stage", "dir": "asc"}, {"field": "Name", "dir": "desc"}], "expect": ["Apple", "Elder", "Banana", "cherry", "Date"]},
+    {"name": "sort by date, then name", "sorts": [{"field": "Due", "dir": "asc"}, {"field": "Name", "dir": "asc"}], "expect": ["Apple", "Date", "Banana", "Elder", "cherry"]},
+    {"name": "checkbox is unticked (never ticked counts too)", "filter": [{"field": "Paid", "op": "is", "value": false}], "expect": ["Banana", "cherry", "Elder"]},
+    {"name": "number compared with zero", "filter": [{"field": "Amount", "op": "lt", "value": 0}], "expect": ["cherry"]},
+    {"name": "filter and sort together", "filter": [{"field": "Paid", "op": "is", "value": false}], "sorts": [{"field": "Due", "dir": "desc"}], "expect": ["Elder", "Banana", "cherry"]}
+  ]
+}
