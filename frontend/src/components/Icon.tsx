@@ -71,5 +71,5 @@ export function FieldIcon({ type }: { type: string }) {
 }
 
 export function tableIcon(kind: string) {
-  return kind === "tasks" ? "tasks" : kind === "events" ? "calendar" : kind === "mixed" ? "calendar-check" : kind === "contacts" ? "contacts" : kind === "remote" ? "link" : "table";
+  return kind === "tasks" ? "tasks" : kind === "events" ? "calendar" : kind === "mixed" ? "calendar-check" : kind === "contacts" ? "contacts" : kind === "remote" ? "link" : kind === "files" ? "folder" : "table";
 }

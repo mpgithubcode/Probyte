@@ -94,6 +94,20 @@ from .vcard import CONTACT_FIELDS  # noqa: E402
 
 SYSTEM_FIELDS["contacts"] = CONTACT_FIELDS
 
+# Files tables (files.py): the file's own fields, filled from the storage. Name and Folder rename / move the file.
+FILE_KINDS = ["Image", "Video", "Audio", "PDF", "Document", "Spreadsheet", "Presentation", "Text", "Code", "Archive", "Other"]
+SYSTEM_FIELDS["files"] = [
+    ("name", "Name", "text", {}, True),
+    ("file", "File", "attachment", {}, False),
+    ("folder", "Folder", "text", {}, False),
+    ("kind", "Kind", "single_select", {"choices": _choices(FILE_KINDS, ["#3b82f6", "#a855f7", "#ec4899", "#ef4444", "#2563eb", "#22c55e",
+                                                                        "#f59e0b", "#64748b", "#14b8a6", "#84cc16", "#94a3b8"])}, False),
+    ("size", "Size", "number", {"numberFormat": "bytes"}, False),
+    ("modified", "Modified", "date", {"includeTime": True}, False),
+    ("mime", "Type", "text", {}, False),
+    ("text", "Text", "long_text", {}, False),
+]
+
 STARTED_PROP = "X-PROBYTE-STARTED"  # no standard iCalendar property for "work started"
 
 

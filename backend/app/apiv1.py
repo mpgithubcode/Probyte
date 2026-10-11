@@ -151,7 +151,83 @@ def table_schema(conn, user, ref, base=None) -> dict:
         out["note"] = "A combined database shows records of several tables; write to the source tables instead."
     elif row["kind"] in ("tasks", "events", "mixed", "contacts"):
         out["synced_with"] = "CardDAV address book" if row["kind"] == "contacts" else "CalDAV calendar"
+    elif row["kind"] == "files":
+        out["synced_with"] = "file storage (S3 / WebDAV): each record is a file; Name and Folder rename / move it"
     return out
+
+
+def _json_type(f) -> dict:
+    """A field's values (as the API reads and writes them, cell_format=json) as a JSON Schema."""
+    o, t = f.get("options") or {}, f["type"]
+    if t in ("lookup", "conditional_lookup"):
+        inner = (o.get("_inner") or {})
+        return {"type": "array", "items": _json_type({"type": inner.get("type", "text"), "options": inner.get("options") or {}}) if inner else {}}
+    if t in ("formula", "rollup", "conditional_rollup"):
+        t = {"number": "number", "boolean": "checkbox", "date": "date"}.get(o.get("resultType"), "text")
+    choices = [c["name"] for c in o.get("choices") or []]
+    strict = o.get("allowNew") is False
+    if t in ("text", "long_text", "phone", "recurrence"):
+        return {"type": "string"} | ({"description": "iCalendar RRULE, e.g. FREQ=WEEKLY;BYDAY=MO"} if t == "recurrence" else {})
+    if t == "email":
+        return {"type": "string", "format": "email"}
+    if t == "url":
+        return {"type": "string", "format": "uri"}
+    if t == "number":
+        return {"type": "number"}
+    if t in ("rating", "autonumber"):
+        return {"type": "integer", "minimum": 0} | ({"maximum": o.get("max", 5)} if t == "rating" else {})
+    if t == "checkbox":
+        return {"type": "boolean"}
+    if t == "single_select":
+        return {"type": "string", **({"enum": choices} if strict else {"examples": choices})}
+    if t == "multi_select":
+        return {"type": "array", "items": {"type": "string", **({"enum": choices} if strict else {"examples": choices})}, "uniqueItems": True}
+    if t in ("date", "created_time", "last_modified_time"):
+        return {"type": "string", "format": "date-time" if o.get("includeTime") or t != "date" else "date"}
+    if t == "link":
+        out = {"type": "array", "items": {"type": "string", "format": "uuid"}, "description": "Ids of linked records (titles work when writing)",
+               "x-probyte-linked-table": o.get("foreignTableId")}
+        return out | ({"maxItems": 1} if o.get("relationship") == "one" else {})
+    if t == "user":
+        return {"type": "array", "items": {"type": "string"}, "description": "User ids (usernames work when writing)"} | \
+            ({} if o.get("multiple") else {"maxItems": 1})
+    if t in ("created_by", "last_modified_by"):
+        return {"type": "string"}
+    if t == "attachment":
+        return {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": "string"},
+                "mime": {"type": "string"}, "size": {"type": "integer"}}, "required": ["id", "name"]}}
+    return {}
+
+
+def json_schema(conn, user, ref, base=None, field_key="name") -> dict:
+    """A JSON Schema (draft 2020-12) of a table's records: one property per field, keyed by name or id."""
+    kind, row = resolve(conn, user, ref, base)
+    fields = _fields(conn, kind, row, Engine(conn))
+    props, required = {}, []
+    for f in fields:
+        if f["type"] in HIDDEN_TYPES or f["id"] == "__id":
+            continue
+        key = f["name"] if field_key == "name" else str(f["id"])
+        p = _json_type(f)
+        if p.get("type") and not f.get("required"):
+            p["type"] = [p["type"], "null"]
+        p = {"title": f["name"], **p, "x-probyte-field-id": str(f["id"]), "x-probyte-type": f["type"]}
+        if f.get("description"):
+            p["description"] = f["description"] + (f" ({p['description']})" if p.get("description") else "")
+        if kind == "combo" or f.get("computed") or f["type"] in COMPUTED_TYPES or f.get("readonly"):
+            p["readOnly"] = True
+        if f.get("default_value") is not None and f["default_value"] not in ("today", "now", ["me"]):
+            p["default"] = f["default_value"]
+        if f.get("unique_values"):
+            p["x-probyte-unique"] = True
+        if f.get("is_primary"):
+            p["x-probyte-primary"] = True
+        if f.get("required"):
+            required.append(key)
+        props[key] = p
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": f"urn:probyte:{kind}:{row['id']}",
+            "title": row["name"], "description": f"A record of {row['name']} (fields keyed by {field_key})",
+            "type": "object", "properties": props, "required": required, "additionalProperties": False}
 
 
 # ---------------------------------------------------------------- reading
@@ -508,6 +584,6 @@ def sync_table(user, ref, base=None) -> dict:
     from .db import connection
     with connection() as conn:
         t = _writable_table(conn, user, ref, base)
-    if t["kind"] not in store.DAV_KINDS:
-        bad(f"{t['name']} isn't synced with a calendar or address book")
+    if t["kind"] not in store.DAV_KINDS and t["kind"] != "files":
+        bad(f"{t['name']} isn't synced with a calendar, address book or file storage")
     return sync.sync_table(t["id"])

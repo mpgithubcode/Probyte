@@ -86,8 +86,11 @@ class RelinkIn(BaseModel):
 class TableIn(BaseModel):
     base_id: str | None = None
     name: str
-    kind: Literal["generic", "tasks", "events", "mixed", "contacts", "remote"] = "generic"
+    kind: Literal["generic", "tasks", "events", "mixed", "contacts", "remote", "files"] = "generic"
     account_id: str | None = None
+    storage_id: str | None = None          # files: a saved storage connection…
+    storage: dict[str, Any] | None = None  # …or a new one (see files.StorageIn)
+    storage_prefix: str | None = None      # files: the folder inside the bucket / WebDAV folder ('' = all of it)
     calendar_url: str | None = None
     new_calendar_name: str | None = None
     remote: RemoteIn | None = None

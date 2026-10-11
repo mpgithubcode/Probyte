@@ -272,7 +272,7 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
     if (type === "date" && typeof dv === "string" && dv !== "today" && dv !== "now" && !/^\d{4}-\d{2}-\d{2}/.test(dv)) return setError("Pick the default date");
     const options: FieldOptions = { ...o };
     let def = dv;
-    delete options._inner; delete options._error; delete options.displayExpression; delete options.resultType;
+    delete options._inner; delete options._error; delete options._filesTable; delete options.displayExpression; delete options.resultType;
     if (type === "single_select" || type === "multi_select") {
       const kept = (o.choices ?? []).filter((c) => c.name.trim());
       // renamed options: records holding the old name get the new one

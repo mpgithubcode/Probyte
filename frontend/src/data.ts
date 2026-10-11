@@ -20,7 +20,7 @@ export async function loadDataset(kind: "table" | "combo", id: string): Promise<
   if (kind === "table") {
     const r = await api.get(`/tables/${id}`);
     return { kind, id, name: r.table.name, table: r.table, fields: r.fields, views: r.views, records: r.records, refs: r.refs,
-      linkSources: r.link_sources, dav: r.dav, token: r.token, loadedAt };
+      linkSources: r.link_sources, dav: r.dav, storage: r.storage, token: r.token, loadedAt };
   }
   // sources that are linked tables (another server, maybe slow) come separately: see loadComboSource
   const r = await api.get(`/combos/${id}?defer_remote=true`);

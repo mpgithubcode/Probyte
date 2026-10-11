@@ -431,7 +431,7 @@ textarea.cell-input { position: absolute; top: 0; left: 0; height: auto; min-hei
 .gallery { grid-auto-rows: max-content; }
 .gallery-card { overflow: hidden; }
 .gallery-card > * { flex-shrink: 0; }
-.gallery-cover { margin: -10px -12px 4px; height: 140px; background: var(--bg-soft); border-bottom: 1px solid var(--border); }
+.gallery-cover { margin: -10px -12px 4px; height: 140px; background: var(--bg-soft); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
 .gallery-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* ---------------------------------------------------------------- chart */
@@ -1114,3 +1114,32 @@ button.cal-day { font: inherit; color: inherit; text-align: left; background: va
 .chip-toggle.on { background: color-mix(in srgb, var(--chip) 22%, var(--bg)); border-color: var(--chip); }
 .field-desc { color: var(--text-soft); font-size: 12px; font-weight: 400; }
 .req-mark { color: var(--danger, #ef4444); font-weight: 600; }
+
+/* ---------------------------------------------------------------- files tables: previews, uploads */
+.ok { color: var(--success); }
+.file-view { display: flex; align-items: center; justify-content: center; background: var(--bg-soft, var(--hover)); border-radius: 8px; overflow: hidden; }
+.file-view.image img { max-width: 100%; max-height: 70vh; object-fit: contain; display: block; }
+.file-view.pdf iframe { width: 100%; height: 70vh; border: 0; background: #fff; }
+.file-view.media video { width: 100%; max-height: 70vh; background: #000; }
+.file-view.audio { padding: 24px; }
+.file-view.audio audio { width: 100%; }
+.file-view.text { flex-direction: column; align-items: stretch; background: transparent; gap: 8px; }
+.file-text { margin: 0; padding: 12px; max-height: 60vh; overflow: auto; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-soft, var(--hover)); border: 1px solid var(--border); border-radius: 8px; }
+textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing: border-box; color: var(--text); }
+.file-view.none { flex-direction: column; gap: 10px; padding: 28px 16px; }
+.file-cover { max-width: 240px; max-height: 240px; border-radius: 6px; }
+.file-ext.big { font-size: 22px; font-weight: 700; text-transform: uppercase; padding: 18px 22px; border: 2px solid var(--border-strong); border-radius: 10px; color: var(--text-soft); }
+.file-preview-title { min-width: 0; gap: 8px; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.record-file { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.record-file .file-view.pdf iframe { height: 50vh; }
+.record-file .file-view.image img, .record-file .file-view.media video { max-height: 45vh; }
+.page { position: relative; }
+.page.dropping .drop-overlay { display: flex; }
+.drop-overlay { position: absolute; inset: 8px; z-index: 40; display: none; align-items: center; justify-content: center; gap: 10px;
+  border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--accent) 10%, var(--bg)); color: var(--accent);
+  font-weight: 600; pointer-events: none; }
+.storage-badge { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-upload { margin-top: 6px; width: 100%; justify-content: center; }
+.storage-form { gap: 10px; }

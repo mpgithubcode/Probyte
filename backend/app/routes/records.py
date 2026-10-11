@@ -96,13 +96,13 @@ def create_record(table_id: str, body: RecordIn, field_key: Literal["id", "name"
 def update_record(record_id: str, body: RecordIn, field_key: Literal["id", "name"] = "id", user=User):
     with connection() as conn:
         data = body.data
+        row = conn.execute("SELECT table_id FROM records WHERE id = %s AND NOT deleted", (record_id,)).fetchone() or store.not_found("Record not found")
         if field_key == "name":
-            row = conn.execute("SELECT table_id FROM records WHERE id = %s", (record_id,)).fetchone() or store.not_found("Record not found")
             data = _from_names(store.get_fields(conn, row["table_id"]), data)
-        r, table = store.update_record(conn, record_id, data, user["id"])
-        out = store.computed_record(conn, record_id, r["table_id"])
+        recordops.update(conn, str(row["table_id"]), record_id, data, user["id"])  # files tables: renames / moves the file
+        out = store.computed_record(conn, record_id, row["table_id"])
         if field_key == "name":
-            out = {**out, "data": _by_name(store.get_fields(conn, r["table_id"]), out["data"])}
+            out = {**out, "data": _by_name(store.get_fields(conn, row["table_id"]), out["data"])}
     return out
 
 

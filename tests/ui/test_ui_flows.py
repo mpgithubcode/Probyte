@@ -981,3 +981,79 @@ def test_view_names_footer_icon_and_calendar_link(browser, table_user):
     pg.click(".modal button:has-text('Create link')")
     expect(pg.locator(".modal .feed-url")).to_contain_text("/ics/")
     assert not pg.errors, pg.errors
+
+
+# ---------------------------------------------------------------- files tables (S3 / WebDAV test servers)
+
+PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg=="
+
+
+def test_files_table_new_upload_preview_and_edit(browser):
+    import base64
+    u = Client()
+    pg = new_page(browser)
+    sign_in(pg, u)
+    # a new files table on a WebDAV folder, from the New table dialog
+    pg.click(".side-add >> nth=0")
+    pg.click(".kind:has-text('Files')")
+    pg.fill(".modal label:has-text('Name') input >> nth=0", "Shared docs")
+    pg.click(".storage-form .segmented button:has-text('WebDAV')")
+    pg.fill(".storage-form label:has-text('Folder address') input", "http://webdav:8080/shared/")
+    pg.fill(".storage-form label:has-text('Username') input", "dav")
+    pg.fill(".storage-form input[type=password]", "davpass1234")
+    pg.fill(".modal input[placeholder^='All of it']", f"ui{uuid.uuid4().hex[:6]}")
+    pg.click(".modal button:has-text('Test connection')")
+    pg.wait_for_selector(".modal .ok, .modal .error")
+    assert not pg.locator(".modal .error").count(), (pg.locator(".modal .error").inner_text(),
+        pg.evaluate("() => [...document.querySelectorAll('.modal input')].map(i => (i.closest('label')?.firstChild?.textContent || '') + '=' + i.value)"))
+    expect(pg.locator(".modal .ok")).to_contain_text("Connected")
+    pg.click(".modal-foot button:has-text('Create')")
+    expect(pg.locator(".page-head h1")).to_have_text("Shared docs")
+    expect(pg.locator(".storage-badge")).to_contain_text("webdav:8080/shared/ui")
+    # upload two files
+    pg.set_input_files(".page-head input[type=file]", [
+        {"name": "readme.md", "mimeType": "text/markdown", "buffer": b"# Hello\nfrom the test"},
+        {"name": "dot.png", "mimeType": "image/png", "buffer": base64.b64decode(PNG_B64)}])
+    expect(rows(pg)).to_have_count(2)
+    expect(pg.locator(".grid tbody")).to_contain_text("readme.md")
+    # the image gets a preview; clicking it opens the viewer
+    expect(pg.locator(".grid tbody .thumb img")).to_have_count(1, timeout=15000)
+    pg.locator(".grid tbody .thumb img").first.click()
+    expect(pg.locator(".modal .file-view.image img")).to_be_visible()
+    pg.keyboard.press("Escape")
+    # the text file: preview, edit and save from the record panel
+    t = next(x for x in u.workspace()["tables"] if x["name"] == "Shared docs")
+    F = u.fields(t["id"])
+    rid = next(r["id"] for r in u.records(t["id"]) if r["data"][F["name"]] == "readme.md")
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rid}")
+    expect(pg.locator(".record-file .file-text")).to_contain_text("from the test")
+    pg.click(".record-file button:has-text('Edit')")
+    pg.fill(".record-file textarea", "# Hello\nedited in the browser")
+    pg.click(".record-file button:has-text('Save')")
+    expect(pg.locator(".record-file pre.file-text")).to_contain_text("edited in the browser")
+    assert u.get(API + f"/files/{rid}/content").text == "# Hello\nedited in the browser"
+    # the gallery shows the preview as a cover
+    pg.keyboard.press("Escape")
+    pg.click(".view-tab:has-text('Gallery')")
+    expect(pg.locator(".gallery-cover img")).to_have_count(1)
+    assert not pg.errors, pg.errors
+
+
+def test_upload_from_a_link_field(browser):
+    u = Client()
+    files = u.table("files", "Attachments store", storage={"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket",
+                    "username": "testkey", "secret": "testsecret12345"}, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    t = u.table(name="Jobs")
+    F = u.fields(t["id"])
+    link = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Docs", "type": "link", "options": {"foreignTableId": files["id"]}})
+    r = u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Kitchen"}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={r['id']}")
+    pg.locator(".modal .form-row", has_text="Docs").locator(".choice-field").click()
+    pg.set_input_files(".popover input[type=file]", [{"name": "quote.txt", "mimeType": "text/plain", "buffer": b"1000 EUR"}])
+    expect(pg.locator(".modal .form-row", has_text="Docs")).to_contain_text("quote.txt")
+    eventually(lambda: u.record(t["id"], r["id"])["data"].get(link["id"]))
+    FF = u.fields(files["id"])
+    assert [x["data"][FF["name"]] for x in u.records(files["id"])] == ["quote.txt"]
+    assert not pg.errors, pg.errors

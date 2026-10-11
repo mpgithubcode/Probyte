@@ -15,7 +15,11 @@ def create(conn, table_id, data: dict, user_id, anonymous=False, link_table_id=N
     t = _table(conn, table_id, user_id)
     if t["kind"] == "remote":
         return remote.create(conn, t, data, link_table_id)["id"], t
-    r, t = store.create_record(conn, table_id, data, user_id)
+    if t["kind"] == "files":
+        from . import files
+        r, t = files.create(conn, t, data, user_id)
+    else:
+        r, t = store.create_record(conn, table_id, data, user_id)
     if anonymous:
         conn.execute("UPDATE records SET created_by = NULL, updated_by = NULL WHERE id = %s", (r["id"],))
     return r["id"], t
@@ -28,7 +32,11 @@ def update(conn, table_id, record_id, data: dict, user_id, anonymous=False):
         return t
     if not conn.execute("SELECT 1 FROM records WHERE id = %s AND table_id = %s", (record_id, table_id)).fetchone():
         store.not_found("Record not found")
-    store.update_record(conn, record_id, data, user_id)
+    if t["kind"] == "files":
+        from . import files
+        files.update(conn, t, record_id, data, user_id)
+    else:
+        store.update_record(conn, record_id, data, user_id)
     if anonymous:
         conn.execute("UPDATE records SET updated_by = NULL WHERE id = %s", (record_id,))
     return t

@@ -9,6 +9,8 @@ import { Icon } from "./Icon";
 import { Popover } from "./Overlay";
 import { RecurrenceEditor } from "./RecurrenceEditor";
 import { describe as describeRepeat } from "../recur";
+import { attachmentUrl, fileExt, thumbUrl, viewOf } from "../files";
+import { FilePreview } from "./FileViewer";
 
 /** Titles of linked records / usernames for the current dataset, plus who is logged in. */
 export const RefsContext = createContext<{ refs: Refs; addRefs: (r: Partial<Refs>) => void; me?: User }>({
@@ -28,22 +30,24 @@ function RefChip({ label, kind }: { label: string; kind: "record" | "user" }) {
   );
 }
 
-const isImage = (a: Attachment) => /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(a.mime);
-let attachmentBase = "/api/attachments";
-/** Public links serve files through their own endpoint. */
-export const setAttachmentBase = (base: string) => { attachmentBase = base; };
-export const attachmentUrl = (a: Attachment, download = false) =>
-  `${a.url ?? `${attachmentBase}/${a.id}`}${download ? "?download=1" : ""}`;  // linked tables carry their own proxy URL
+export { attachmentUrl, setAttachmentBase } from "../files";
 
-function AttachmentThumbs({ items, size = 24 }: { items: Attachment[]; size?: number }) {
+/** Small previews; a click opens the file in the preview (images, PDFs, video, audio, text) or downloads it. */
+export function AttachmentThumbs({ items, size = 24 }: { items: Attachment[]; size?: number }) {
+  const [open, setOpen] = useState<number | null>(null);
   return (
     <span className="thumbs">
-      {items.map((a) => (
-        <a key={a.id} href={attachmentUrl(a, !isImage(a))} target="_blank" rel="noreferrer" title={a.name}
-          onClick={(e) => e.stopPropagation()} className="thumb" style={{ width: size, height: size }}>
-          {isImage(a) ? <img src={attachmentUrl(a)} alt={a.name} loading="lazy" /> : <span className="file-ext">{(a.name.split(".").pop() ?? "").slice(0, 4)}</span>}
-        </a>
-      ))}
+      {items.map((a, i) => {
+        const src = thumbUrl(a);
+        return (
+          <a key={a.id} href={attachmentUrl(a, !viewOf(a))} target="_blank" rel="noreferrer" title={a.name}
+            onClick={(e) => { e.stopPropagation(); if (viewOf(a)) { e.preventDefault(); setOpen(i); } }}
+            className="thumb" style={{ width: size, height: size }}>
+            {src ? <img src={src} alt={a.name} loading="lazy" /> : <span className="file-ext">{fileExt(a.name)}</span>}
+          </a>
+        );
+      })}
+      {open !== null && <FilePreview items={items} index={open} onClose={() => setOpen(null)} />}
     </span>
   );
 }
@@ -326,6 +330,28 @@ function LinkInput({ field, value, onCommit, onDone, inline }: InputProps) {
     onCommit(ids.includes(o.id) ? ids.filter((x) => x !== o.id) : [...ids, o.id]);
   };
   const shown = (options ?? []).filter((o) => o.title.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 200);
+  // linked to a files table: upload files into it and link them
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [upErr, setUpErr] = useState("");
+  const uploadAndLink = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setUploading(true); setUpErr("");
+    const added: string[] = [];
+    for (const f of Array.from(list).slice(0, single ? 1 : undefined)) {
+      const body = new FormData();
+      body.append("files", f);
+      try {
+        const r = await api.upload<{ records: { id: string }[] }>(`/tables/${tid}/files`, body);
+        r.records.forEach((x) => { added.push(x.id); addRefs({ records: { [x.id]: f.name } }); });
+      } catch (e) { setUpErr(`${f.name}: ${(e as Error).message}`); }
+    }
+    titleCache.set(tid, api.get(`/tables/${tid}/titles`));
+    titleCache.get(tid)!.then(setOptions).catch(() => undefined);
+    if (added.length) onCommit(single ? added.slice(0, 1) : [...ids, ...added]);
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
 
   return (
     <div ref={shell.setAnchorEl} className={inline ? "choice-inline" : "choice-field input"} onClick={() => !inline && shell.setOpen(true)}>
@@ -347,6 +373,15 @@ function LinkInput({ field, value, onCommit, onDone, inline }: InputProps) {
             ))}
             {options !== null && !shown.length && <div className="muted pad">No matching records</div>}
           </div>
+          {field.options._filesTable && !field.readonly && (
+            <>
+              <input ref={fileRef} type="file" multiple={!single} hidden onChange={(e) => uploadAndLink(e.target.files)} />
+              <button className="btn sm link-upload" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                <Icon name="upload" size={14} /> {uploading ? "Uploading…" : single ? "Upload a file…" : "Upload files…"}
+              </button>
+              {upErr && <div className="error small">{upErr}</div>}
+            </>
+          )}
         </Popover>
       )}
     </div>
@@ -438,7 +473,7 @@ function AttachmentInput({ value, onCommit, onDone, inline }: InputProps) {
       {items.map((a) => (
         <div key={a.id} className="attach-row">
           <AttachmentThumbs items={[a]} size={32} />
-          <a className="attach-name" href={attachmentUrl(a, !isImage(a))} target="_blank" rel="noreferrer">{a.name}</a>
+          <a className="attach-name" href={attachmentUrl(a, !viewOf(a))} target="_blank" rel="noreferrer">{a.name}</a>
           <span className="muted small">{a.size > 1048576 ? `${(a.size / 1048576).toFixed(1)} MB` : `${Math.ceil(a.size / 1024)} KB`}</span>
           <button className="icon-btn" title="Remove" onClick={() => onCommit(items.filter((x) => x.id !== a.id))}><Icon name="x" size={14} /></button>
         </div>

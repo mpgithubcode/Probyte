@@ -382,6 +382,28 @@ def core_attachment(token: str, attachment_id: str, cookie: str | None, download
         return attachments.serve(conn, s["user_id"], attachment_id, download)
 
 
+def core_file(token: str, record_id: str, cookie: str | None):
+    """A file of a files table that this link shows: (table, record, field keys)."""
+    from . import files
+    with connection() as conn:
+        s = _load(conn, token)
+        _require(s, cookie)
+        table_ids = []
+        for it in _items(conn, s):
+            if it["kind"] == "table":
+                table_ids.append(it["id"])
+            else:
+                table_ids += [x["table_id"] for x in store.get_combo(conn, it["id"], s["user_id"])["sources"]]
+        rec = conn.execute("SELECT * FROM records WHERE id = %s AND table_id = ANY(%s::uuid[]) AND NOT deleted",
+                           (record_id, table_ids)).fetchone()
+        if not rec:
+            raise HTTPException(404, "File not found")
+        table = store.get_table(conn, rec["table_id"])
+        if table["kind"] != "files":
+            raise HTTPException(404, "File not found")
+        return table, rec, files._keys(store.get_fields(conn, table["id"]))
+
+
 # ---------------------------------------------------------------- HTTP endpoints for visitors
 
 def _cookie(request: Request, token: str) -> str | None:
@@ -440,6 +462,20 @@ def share_delete(token: str, view_id: str, record_id: str, request: Request):
 @router.get("/api/public/{token}/attachments/{attachment_id}")
 def share_attachment(token: str, attachment_id: str, request: Request, download: bool = False):
     return core_attachment(token, attachment_id, _cookie(request, token), download)
+
+
+@router.get("/api/public/{token}/files/{record_id}/content")
+def share_file(token: str, record_id: str, request: Request, download: bool = False, text: bool = False):
+    from . import files
+    table, rec, keys = core_file(token, record_id, _cookie(request, token))
+    return files.stream(table, rec, keys, download=download, as_text=text, rng=request.headers.get("range"))
+
+
+@router.get("/api/public/{token}/files/{record_id}/thumb")
+def share_file_thumb(token: str, record_id: str, request: Request):
+    from . import files
+    core_file(token, record_id, _cookie(request, token))
+    return files.thumb_response(record_id)
 
 
 # ======================================================================== PWA: manifest, icons, page

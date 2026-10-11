@@ -8,7 +8,18 @@ export type ValueType = "number" | "text" | "boolean" | "date" | "array" | "any"
 
 export interface FilterCond { field: string; op: string; value?: unknown; valueField?: string }
 
-export interface Attachment { id: string; name: string; mime: string; size: number; url?: string }
+export interface Attachment {
+  id: string; name: string; mime: string; size: number; url?: string;
+  file?: boolean;   // a file of a files table (S3 / WebDAV): id is its record's id
+  thumb?: boolean;  // it has a small preview image
+  view?: "image" | "pdf" | "video" | "audio" | "text" | null;  // how the browser can show it
+}
+
+/** A saved S3 / WebDAV connection for files tables. */
+export interface Storage {
+  id: string; name: string; kind: "s3" | "webdav"; endpoint: string; region: string; bucket: string; username: string;
+  path_style: boolean; has_secret: boolean; tables?: number;
+}
 
 export interface Refs { records: Record<string, string>; users: Record<string, string> }
 
@@ -22,11 +33,12 @@ export interface FieldOptions {
   timeFormat?: "12" | "24";
   max?: number;
   // number
-  numberFormat?: "decimal" | "percent" | "currency";
+  numberFormat?: "decimal" | "percent" | "currency" | "bytes";
   currency?: string;
   separators?: boolean;
   // single / multi select: false = only the listed options can be chosen
   allowNew?: boolean;
+  _filesTable?: boolean;  // link: the linked table is a files table (sent by the server)
   // link
   foreignTableId?: string;
   relationship?: "one" | "many";
@@ -134,7 +146,7 @@ export interface ChartConfig {
 
 export interface View { id: string; name: string; type: ViewType; config: ViewConfig }
 
-export type TableKind = "generic" | "tasks" | "events" | "mixed" | "contacts" | "remote";
+export type TableKind = "generic" | "tasks" | "events" | "mixed" | "contacts" | "remote" | "files";
 
 /** Where a linked table's data comes from (a Probyte public link, on this or another server). */
 export interface RemoteInfo {
@@ -213,6 +225,7 @@ export interface Dataset {
   comboFields?: { id: string; name: string; mapping: Record<string, string> }[];
   linkSources?: LinkSource[] | null;  // linked table pointing at a combined database: its tables
   dav?: { account: string | null; builtin: boolean; shared: boolean; items: number; collection: "calendar" | "address book" } | null;
+  storage?: { name: string | null; kind: "s3" | "webdav" | null; location: string | null } | null;  // files tables
   baseId?: string;
   fields: Field[];
   views: View[];

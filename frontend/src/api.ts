@@ -23,5 +23,12 @@ export const api = {
   get: <T = any>(p: string) => request<T>("GET", p),
   post: <T = any>(p: string, b: unknown = {}) => request<T>("POST", p, b),
   patch: <T = any>(p: string, b: unknown) => request<T>("PATCH", p, b),
+  put: <T = any>(p: string, b: unknown) => request<T>("PUT", p, b),
   del: <T = any>(p: string) => request<T>("DELETE", p),
+  /** Send files (multipart form); the error message comes from the server's answer. */
+  upload: async <T = any>(p: string, body: FormData, method = "POST"): Promise<T> => {
+    const res = await fetch(`/api${p}`, { method, body });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({ detail: res.statusText }))).detail ?? res.statusText);
+    return res.json();
+  },
 };

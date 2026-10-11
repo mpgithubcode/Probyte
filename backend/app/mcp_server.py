@@ -59,6 +59,9 @@ TOOLS = [
     _tool("list_bases", "List bases and tables", "All bases you can access, with their tables and combined databases.", {}, read_only=True),
     _tool("describe_table", "Describe a table", "A table's fields (name, type, select options, link targets, which are read-only) and views.",
           {"table": TABLE, "base": BASE}, ["table"], read_only=True),
+    _tool("get_json_schema", "Get a table's JSON Schema",
+          "A JSON Schema (draft 2020-12) of a table's records: each field's JSON type, format, options, and which are required or read-only.",
+          {"table": TABLE, "base": BASE, "field_key": FIELD_KEY}, ["table"], read_only=True),
     _tool("list_records", "List records",
           "Records of a table or combined database, as field name → value (values as shown in Probyte). "
           "Supports filters, text search, sorting and paging; returns total and next_offset.",
@@ -114,6 +117,8 @@ def _call(user: dict, name: str, a: dict):
     if name == "describe_table":
         return run(apiv1.table_schema, a["table"], a.get("base"))
     fk = "id" if a.get("field_key") == "id" else "name"  # key fields by name (default) or by id, as in Teable
+    if name == "get_json_schema":
+        return run(apiv1.json_schema, a["table"], a.get("base"), fk)
     if name == "list_records":
         return run(apiv1.query_records, a["table"], base=a.get("base"), view=a.get("view"), filters=a.get("filters"),
                    search=a.get("search"), sort=a.get("sort"), fields=a.get("fields"), limit=min(int(a.get("limit") or 25), 200),

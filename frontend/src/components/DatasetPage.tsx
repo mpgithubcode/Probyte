@@ -48,6 +48,9 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [comboEdit, setComboEdit] = useState(false);
   const [combineNew, setCombineNew] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const [dropping, setDropping] = useState(false);
+  const uploadRef = useRef<HTMLInputElement>(null);
   const [linkEdit, setLinkEdit] = useState(false);
   const [transfer, setTransfer] = useState<"import" | "export" | null>(null);
   const [feedsOpen, setFeedsOpen] = useState(false);
@@ -329,6 +332,25 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     reload();
   };
 
+  /** Files tables: add files (each becomes a record). */
+  const uploadFiles = async (files: FileList | File[] | null) => {
+    if (!ds?.table || !files || !files.length) return;
+    const list = Array.from(files);
+    setUploading(list.length);
+    const failed: string[] = [];
+    for (const f of list) {
+      const body = new FormData();
+      body.append("files", f);
+      try { await api.upload(`/tables/${ds.id}/files`, body); }
+      catch (e) { failed.push(`${f.name}: ${(e as Error).message}`); }
+      setUploading((n) => n - 1);
+    }
+    if (uploadRef.current) uploadRef.current.value = "";
+    if (failed.length) onError(failed.join("\n"));
+    else showToast(`Uploaded ${list.length} file${list.length === 1 ? "" : "s"}`);
+    reload();
+  };
+
   const renameDataset = async (name: string) => {
     if (!ds || !name || name === ds.name) return;
     await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { name });
@@ -380,12 +402,17 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const rec = openRec ? ds.records.find((r) => r.id === openRec) : undefined;
   const props = { ds, view, fields: vfields, visible, records, allRecords, ops, setConfig };
   const t = ds.table;
-  const isCaldav = t && ["tasks", "events", "mixed", "contacts"].includes(t.kind);
+  const isFiles = t?.kind === "files";
+  const isCaldav = t && ["tasks", "events", "mixed", "contacts", "files"].includes(t.kind);
   const link = t?.kind === "remote" ? t.remote : null;
 
   return (
     <RefsContext.Provider value={{ refs: ds.refs, addRefs, me }}>
-    <div className="page">
+    <div className={`page ${dropping ? "dropping" : ""}`}
+      onDragOver={isFiles ? (e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } } : undefined}
+      onDragLeave={isFiles ? (e) => { if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) setDropping(false); } : undefined}
+      onDrop={isFiles ? (e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropping(false); uploadFiles(e.dataTransfer.files); } } : undefined}>
+      {dropping && <div className="drop-overlay"><Icon name="upload" size={28} /> Drop files to upload them to {ds.storage?.location ?? ds.name}</div>}
       <header className="page-head">
         <div className="title-row">
           <button className="icon-btn menu-btn" onClick={onMenu} aria-label="Menu"><Icon name="menu" size={20} /></button>
@@ -418,7 +445,8 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
           </>)}
           <span className="spacer" />
           {isCaldav && (
-            <div className={`sync-status ${t.last_sync_error ? "err" : ""}`} title={t.last_sync_error ?? t.calendar_url ?? ""}>
+            <div className={`sync-status ${t.last_sync_error ? "err" : ""}`} title={t.last_sync_error ?? (isFiles ? ds.storage?.location : t.calendar_url) ?? ""}>
+              {isFiles && ds.storage && <span className="remote-badge storage-badge"><Icon name="folder" size={12} /> {ds.storage.location ?? "No storage"}</span>}
               <span className="sync-text">{t.last_sync_error ? "Sync error" : `Synced ${timeAgo(t.last_synced_at)}`}</span>
               <button className="btn sm" disabled={syncing} onClick={syncNow}>
                 <Icon name="sync" size={14} className={syncing ? "spin" : ""} /> <span className="btn-label">{syncing ? "Syncing" : "Sync"}</span>
@@ -435,6 +463,12 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
               </button>
             </div>
           )}
+          {isFiles && (<>
+            <input ref={uploadRef} type="file" multiple hidden onChange={(e) => uploadFiles(e.target.files)} />
+            <button className="btn sm primary" disabled={!!uploading} onClick={() => uploadRef.current?.click()} title="Upload files (or drop them on the page)">
+              <Icon name="upload" size={14} className={uploading ? "spin" : ""} /> <span className="btn-label">{uploading ? `Uploading ${uploading}…` : "Upload"}</span>
+            </button>
+          </>)}
           {ds.kind === "combo" && <button className="btn sm" title="Sources & mapping" onClick={() => setComboEdit(true)}><Icon name="settings" size={14} /> <span className="btn-label">Sources & mapping</span></button>}
           {ds.kind === "table" && !link && <button className="btn sm" title="Add field" onClick={() => setFieldEdit(null)}><Icon name="plus" size={14} /> <span className="btn-label">Field</span></button>}
           <button className="icon-btn" onClick={more.open} aria-label="More"><Icon name="more" /></button>
@@ -479,6 +513,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
                     <Icon name="trash" size={14} /> {ds.kind === "combo" ? "Delete combined database" : "Move to trash"}
                   </button>
                 )}
+                {confirmDelete && isFiles && <div className="muted pad small">The files stay in {ds.storage?.location ?? "the storage"}; only the table is deleted.</div>}
                 {confirmDelete && ds.dav && (ds.dav.shared ? (
                   <div className="muted pad small">The {ds.dav.collection} on the server is kept: another table uses it too.</div>
                 ) : (

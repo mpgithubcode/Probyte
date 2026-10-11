@@ -1,0 +1,8 @@
+# Test-only storage servers for files tables (scripts/test.sh adds this file): rclone serves a folder as S3 and WebDAV.
+services:
+  s3:
+    image: rclone/rclone:1.68.2
+    entrypoint: ["sh", "-c", "mkdir -p /data/test-bucket && exec rclone serve s3 /data --addr :9000 --auth-key testkey,testsecret12345"]
+  webdav:
+    image: rclone/rclone:1.68.2
+    entrypoint: ["sh", "-c", "mkdir -p /data/shared && exec rclone serve webdav /data --addr :8080 --user dav --pass davpass1234"]

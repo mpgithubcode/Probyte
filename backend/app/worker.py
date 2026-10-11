@@ -9,7 +9,7 @@ import os
 import signal
 import threading
 
-from . import attachments, audit, backup, jobs, sync, webhooks  # noqa: F401  (importing registers the job handlers)
+from . import attachments, audit, backup, files, jobs, sync, webhooks  # noqa: F401  (importing registers the job handlers)
 from .db import connection, init_db
 from .routes.tables import purge_expired
 

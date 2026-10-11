@@ -26,6 +26,12 @@ def create_table(body: TableIn, user=User):
                 raise HTTPException(400, "Paste the public link to add")
             r = body.remote
             return _table_out(remote.create_table(conn, store, user["id"], base["id"], body.name, r.url, r.password, r.item_id, r.view_id))
+        if body.kind == "files":
+            from .. import files
+            t = files.create_table(conn, user["id"], base["id"], body)
+    if body.kind == "files":
+        store.schedule_sync(t["id"], 0)
+        return _table_out(t)
     calendar_url = body.calendar_url
     if body.kind != "generic":
         if not body.account_id:
@@ -62,7 +68,7 @@ def get_table(table_id: str, user=User):
         return FastJSON({"table": _table_out(t), "fields": eng.describe(table_id), "views": store.get_views(conn, table_id=table_id),
                          "records": records, "refs": refs,
                          "link_sources": remote.sources(conn, t) if t["kind"] == "remote" else None,
-                         "dav": _dav_info(conn, t), "token": token})
+                         "dav": _dav_info(conn, t), "storage": _storage_info(conn, t), "token": token})
 
 
 @router.get("/api/tables/{table_id}/changes")
@@ -178,6 +184,17 @@ def _dav_info(conn, t):
             "collection": "address book" if t["kind"] == "contacts" else "calendar"}
 
 
+def _storage_info(conn, t):
+    """For a files table: where its files are."""
+    if t["kind"] != "files":
+        return None
+    s = conn.execute("SELECT name, kind, endpoint, bucket FROM storages WHERE id = %s", (t["storage_id"],)).fetchone() if t["storage_id"] else None
+    place = (s["bucket"] if s["kind"] == "s3" else s["endpoint"].rstrip("/")) if s else None
+    prefix = (t["storage_prefix"] or "").strip("/")
+    return {"name": s["name"] if s else None, "kind": s["kind"] if s else None,
+            "location": f"{place}/{prefix}" if place and prefix else place}
+
+
 def _delete_on_server(conn, t) -> str:
     """Remove a table's data from its DAV server: the whole collection on Probyte's own server, else each item."""
     info = _dav_info(conn, t)
@@ -274,6 +291,8 @@ def purge_records(body: Ids, user=User):
     with connection() as conn:
         n = conn.execute("DELETE FROM record_trash r USING tables t WHERE r.table_id = t.id AND t.user_id = %s AND r.id = ANY(%s::uuid[])",
                          (user["id"], body.ids)).rowcount
+    from .. import files
+    files.purge_deleted()  # files of files tables: deleted from the storage now
     return {"deleted": n}
 
 
@@ -282,7 +301,8 @@ def restore_table(table_id: str, user=User):
     with connection() as conn:
         store.get_table(conn, table_id, user["id"], trashed=True)
         conn.execute("UPDATE tables SET trashed_at = NULL, trash_delete_on_server = false WHERE id = %s", (table_id,))
-        if store.is_synced(store.get_table(conn, table_id)):
+        t = store.get_table(conn, table_id)
+        if store.is_synced(t) or (t["kind"] == "files" and t["storage_id"]):
             store.schedule_sync(table_id, 0, conn=conn)  # catch up with what changed on the server meanwhile
     return {"ok": True}
 
@@ -308,6 +328,8 @@ def purge_expired(days: int = 30):
             except Exception as e:  # e.g. the calendar server is down: try again next time
                 log.warning("couldn't purge table %s: %s", t["id"], e)
         conn.execute("DELETE FROM record_trash WHERE deleted_at < now() - make_interval(days => %s)", (days,))
+    from .. import files
+    files.purge_deleted()
 
 
 @router.post("/api/tables/{table_id}/sync")

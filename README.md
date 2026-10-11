@@ -108,6 +108,20 @@ Visitors receive **only the fields visible in the shared views** and **only reco
 
 The main app installs the same way, as "Probyte", and works on phones: the sidebar becomes a menu drawer and dialogs open full screen.
 
+## Files tables (S3 and WebDAV)
+
+A **Files** table (New table → **Files**) shows the files in an **S3 bucket** (Amazon S3, MinIO, Cloudflare R2, Backblaze B2, Wasabi…) or a **WebDAV folder** (Nextcloud, ownCloud, a NAS…) as records, optionally only one folder of it. The files stay in your storage: Probyte doesn't keep copies.
+
+- **Fixed fields**, like a calendar table's: **Name**, **File**, **Folder**, **Kind** (Image, Video, Audio, PDF, Document, Spreadsheet, Presentation, Text, Code, Archive, Other), **Size**, **Modified**, **Type** (the MIME type) and **Text**. Add your own fields next to them (tags, status, notes, links…); those are kept in Probyte.
+- **Upload** with the button, or drop files on the page. A name that's taken gets a number (`report (2).pdf`). **New** makes an empty file with the name you give it (e.g. `notes.md`).
+- **Rename and move**: editing **Name** renames the file in the storage, editing **Folder** moves it (folders are made as needed). **Replace file…** in the record panel uploads new contents and keeps the record, its fields and its links.
+- **Previews**: images, PDFs (first page) and OpenDocument / Office files with a built-in thumbnail get a small preview image, used in the grid and as the Gallery cover. In the browser, images, PDFs, video, audio and text / code files open in a viewer (arrow keys go through them); text files can be **edited and saved** right there. Everything else downloads. Text files (and .docx) put their first 20,000 characters in **Text**, so search finds words inside them.
+- **Link files to other tables**: a link field pointing at a files table gets **Upload files…** in its picker, which uploads into the files table and links the new records at once. A lookup of the **File** field shows the previews in the other table.
+- **Changes in the storage** (from other apps, phones, the Nextcloud client…) arrive with the next sync: every `SYNC_INTERVAL`, on **Sync**, and right after the table is created. Up to 100,000 files per table.
+- **Deleting**: a deleted record goes to the trash; its file is deleted from the storage when the trash is emptied (or after 30 days), and restoring the record keeps everything. Deleting the **table** never deletes the files.
+- Connections are saved under **Settings → File storage** (secret keys and passwords encrypted) and can be shared by several tables. Uploads are limited to `FILES_MAX_UPLOAD_MB` (default 2048) per file; your reverse proxy may have its own limit.
+- Public links that show a files table serve its files too (read-only).
+
 ## Linked tables (from any Probyte server)
 
 Any Probyte public link, whether it's from this server or another Probyte server, can be added to one of your bases as a **linked table**. Choose **+ New table → From a link**, paste the link, enter its password if it has one, and pick which shared table and view to show.
@@ -134,7 +148,8 @@ A stable API for scripts and automation tools (n8n, Make, Zapier, Home Assistant
 - Values written as **plain text**: `"2026-10-12"` / `"2026-10-12T15:30:00Z"` for dates, option names for selects, lists or `"a, b"` for multiple selects, record **titles** or ids for links, usernames for user fields. Unknown fields and unreadable values give a clear `400`.
 - `GET …/records` supports `filter` (`{"Status": "Done"}` or `[{"field": "Due", "op": "lt", "value": "2026-11-01"}]`; ops `is, is_not, contains, not_contains, gt, gte, lt, lte, empty, not_empty`), `search`, `sort=-Due,Name`, `view`, `fields`, `limit` (≤ 1000) / `offset` with `next_offset`, and `cell_format=text` for values as shown in the app.
 - Batch create / update / delete (up to 1000, all-or-nothing) and **upsert** (`match_on: ["Email"]`).
-- Schema: list bases, describe a table, create tables and fields; trigger a CalDAV sync; search all tables.
+- Schema: list bases, describe a table, create tables and fields; trigger a CalDAV / files sync; search all tables.
+- **JSON Schema** of any table or combined database: `GET /api/v1/tables/{table}/schema` returns a draft 2020-12 JSON Schema of a record's `fields` (each field's JSON type and format, select options as `enum` when only listed options are allowed, `required`, `readOnly`, `default`, descriptions), keyed by name or, with `fieldKeyType=id`, by field id. The MCP tool `get_json_schema` returns the same.
 
 ```bash
 curl -G -H "Authorization: Bearer $KEY" https://your-probyte/api/v1/tables/Tasks/records \
@@ -241,10 +256,11 @@ The device password is separate from the Probyte login password, and you can reg
 | `ALLOW_SIGNUP`      | `true`  | Let anyone who can reach the site create an account. The first account can always be created. |
 | `POSTGRES_PASSWORD` | `probyte` | Database password |
 | `DEFAULT_TZ`        | `UTC`   | Timezone used for floating CalDAV times and all-day dates. Set this to your own timezone, e.g. `Europe/Berlin`. |
-| `SYNC_INTERVAL`     | `300`   | Seconds between background syncs of every CalDAV database (`0` = off) |
+| `SYNC_INTERVAL`     | `300`   | Seconds between background syncs of every CalDAV and files database (`0` = off) |
 | `AUTO_PUSH_DELAY`   | `2`     | Seconds after a local edit before it is pushed to the server (`-1` = only push on sync) |
 | `WORKER_THREADS`    | `4`     | Jobs the worker runs at once |
 | `RUN_WORKER`        | –       | `embedded` runs the worker inside the web app (single-container setups without the `worker` service) |
+| `FILES_MAX_UPLOAD_MB` | `2048` | Largest file that can be uploaded to a files table (S3 / WebDAV) |
 | `ATTACHMENT_GC_INTERVAL` | `3600` | Seconds between cleanups of uploaded files no record uses any more |
 | `COMPUTE_CACHE_ROWS` | `300000` | Records kept computed in memory between requests (`0` = off) |
 | `SESSION_DAYS`      | `30`    | How long a login lasts |
@@ -337,9 +353,9 @@ scripts/test.sh screens    # refresh the README's screenshots and GIFs (docs/scr
 KEEP_STACK=1 scripts/test.sh ...   # leave the test stack running afterwards to inspect it
 ```
 
-Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
+Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale, plus throwaway S3 and WebDAV servers from `tests/docker-compose.storage.yml`), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
 
-What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
+What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); files tables on S3 and WebDAV (uploads, previews, renames, outside changes, the trash); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
 
 ### Backups
 
@@ -416,6 +432,8 @@ backend/app/
   migrations/  0001 baseline schema, data fixes, jobs + sync state, table/row versions, live changes, settings,
                encrypted secrets, trash, record history, view settings cleanup, icons + calendar feeds, field rules
   feeds.py     calendar subscription links (/ics/<token>.ics)
+  files.py     files tables: sync with the storage, uploads, renames / moves, previews, streaming, storage connections
+  filestore.py the S3 and WebDAV drivers behind files tables
   backup.py    backups (pg_dump + calendars + files) and restoring them
   secretbox.py encryption of stored passwords (key outside the database)
   ratelimit.py slowing down password guessing

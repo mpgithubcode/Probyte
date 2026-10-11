@@ -1,18 +1,22 @@
 import { useContext, useState } from "react";
 import type { Attachment, Rec } from "../types";
 import { buildGroups, viewGroups, type GroupNode } from "../util";
-import { attachmentUrl, Chip, RefsContext } from "./Cells";
+import { Chip, RefsContext } from "./Cells";
+import { fileExt, thumbUrl } from "../files";
 import { Icon } from "./Icon";
 import { CardBody } from "./KanbanView";
 import type { ViewProps } from "./viewTypes";
 
 const looksLikeImage = (v: unknown): v is string => typeof v === "string" && /^(https?:|data:image\/)/i.test(v.trim());
 
-/** Cover image URL: the first image attachment, or a URL/text value. */
+/** Cover image URL: the first attachment / file with a preview image, or a URL/text value. */
 function coverSrc(v: unknown): string | null {
   if (Array.isArray(v)) {
-    const img = (v as Attachment[]).find((a) => a && /^image\//.test(a.mime));
-    return img ? attachmentUrl(img) : null;
+    for (const a of v as Attachment[]) {
+      const src = a && typeof a === "object" ? thumbUrl(a) : null;
+      if (src) return src;
+    }
+    return null;
   }
   return looksLikeImage(v) ? v : null;
 }
@@ -34,7 +38,9 @@ export function GalleryView({ fields, visible, records, view, ops }: ViewProps) 
       <div key={r.id} className="card gallery-card" style={{ borderTopColor: ops.colorFor(r) ?? "transparent" }} onClick={() => ops.open(r)}>
         {cover && (
           <div className="gallery-cover">
-            {src && <img src={src} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
+            {src ? <img src={src} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+              : Array.isArray(r.data[cover.id]) && r.data[cover.id][0]?.name
+                ? <span className="file-ext big">{fileExt(r.data[cover.id][0].name)}</span> : null}
           </div>
         )}
         <CardBody rec={r} fields={visible} skip={cover ? [cover.id] : undefined} />

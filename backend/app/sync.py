@@ -118,6 +118,9 @@ def _sync(table_id: str, full: bool) -> dict:
 
     with connection() as conn:
         table = get_table(conn, table_id)
+        if table["kind"] == "files":
+            from . import files
+            return files.sync(table, stats, full)
         if table["kind"] not in DAV_KINDS:
             return stats
         if not table["account_id"] or not table["calendar_url"]:
@@ -263,18 +266,24 @@ def _sync(table_id: str, full: bool) -> dict:
 @jobs.handler("sync_table")
 def _job_sync(payload):
     with connection() as conn:
-        t = conn.execute("SELECT kind, account_id, calendar_url FROM tables WHERE id = %s AND trashed_at IS NULL", (payload["table_id"],)).fetchone()
-    if not t or t["kind"] not in DAV_KINDS or not t["account_id"] or not t["calendar_url"]:
+        t = conn.execute("SELECT kind, account_id, calendar_url, storage_id FROM tables WHERE id = %s AND trashed_at IS NULL", (payload["table_id"],)).fetchone()
+    if t and t["kind"] == "files" and t["storage_id"]:
+        pass
+    elif not t or t["kind"] not in DAV_KINDS or not t["account_id"] or not t["calendar_url"]:
         return  # deleted or unlinked since it was queued: nothing to do
     try:
         sync_table(payload["table_id"], bool(payload.get("full")))
     except ValueError:
         pass  # the account went away meanwhile: nothing to retry
+    except Exception as e:
+        if e.__class__.__name__ == "StorageError":
+            return  # recorded on the table (last_sync_error); tried again at the next interval
+        raise
 
 
 def schedule_all():
     """Queue a sync of every synced table (the worker runs this every SYNC_INTERVAL)."""
     with connection() as conn:
-        for t in conn.execute("SELECT id FROM tables WHERE kind = ANY(%s) AND account_id IS NOT NULL AND calendar_url IS NOT NULL AND trashed_at IS NULL",
-                              (list(DAV_KINDS),)).fetchall():
+        for t in conn.execute("SELECT id FROM tables WHERE trashed_at IS NULL AND ((kind = ANY(%s) AND account_id IS NOT NULL AND calendar_url IS NOT NULL) "
+                              "OR (kind = 'files' AND storage_id IS NOT NULL))", (list(DAV_KINDS),)).fetchall():
             jobs.enqueue(conn, "sync_table", {"table_id": str(t["id"])}, key=f"sync:{t['id']}", max_attempts=2)

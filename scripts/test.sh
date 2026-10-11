@@ -8,7 +8,7 @@
 #   scripts/test.sh screens    README screenshots and GIFs (tests/screens/capture.py -> docs/screenshots)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080} RADICALE_PORT=${TEST_RADICALE_PORT:-15232}
+export COMPOSE_FILE=docker-compose.yml:tests/docker-compose.storage.yml COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080} RADICALE_PORT=${TEST_RADICALE_PORT:-15232}
 export POSTGRES_PASSWORD=probyte-test WEBHOOK_ALLOW_PRIVATE=true REMOTE_ALLOW_PRIVATE=true ALLOW_SIGNUP=true PUBLIC_URL= RADICALE_PUBLIC_URL= MCP_BEARER_TOKEN=
 PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-jammy
 

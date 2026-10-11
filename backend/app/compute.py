@@ -20,6 +20,8 @@ STORED_TYPES = {"text", "long_text", "number", "checkbox", "single_select", "mul
 COMPUTED_TYPES = {"formula", "lookup", "rollup", "conditional_lookup", "conditional_rollup", "autonumber", "record_id",
                   "created_time", "last_modified_time", "created_by", "last_modified_by", "button"}
 FIELD_TYPES = STORED_TYPES | COMPUTED_TYPES
+# Files tables: the file's own fields that come from the storage (Name and Folder can be edited: rename / move)
+FILE_READONLY = {"file", "kind", "size", "modified", "mime", "text"}
 LIST_TYPES = {"multi_select", "link", "user", "attachment", "lookup", "conditional_lookup"}
 FILTER_OPS = {"is", "is_not", "contains", "not_contains", "gt", "gte", "lt", "lte", "empty", "not_empty"}
 CACHE_ROWS = int(os.environ.get("COMPUTE_CACHE_ROWS", "300000"))  # records kept computed in memory; 0 disables
@@ -218,10 +220,15 @@ class Engine:
                 out.append({**f, "options": o, "computed": f["type"] in COMPUTED_TYPES,
                             "readonly": bool(f["options"].get("_readonly")) or not perms.get("edit")})
             return out
+        files = (self.table(table_id) or {}).get("kind") == "files"
         for f in self.fields(table_id):
             d = dict(f)
             o = dict(f["options"])
             d["computed"] = f["type"] in COMPUTED_TYPES
+            if files and f.get("system_key") in FILE_READONLY:
+                d["readonly"] = True  # filled from the file in the storage
+            if f["type"] == "link" and (self.table(o.get("foreignTableId")) or {}).get("kind") == "files":
+                o["_filesTable"] = True  # the link editor can upload files into it
             err = self.config_error(f)
             if err:
                 o["_error"] = err

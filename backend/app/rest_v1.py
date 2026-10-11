@@ -157,12 +157,20 @@ def table(table: str, base: str | None = None, user=User):
     return _run(apiv1.table_schema, user, table, base)
 
 
+@v1.get("/tables/{table}/schema", tags=["Schema"], summary="A table's records as a JSON Schema",
+        description="A JSON Schema (draft 2020-12) describing a record's `fields` object: one property per field with its JSON "
+                    "type, format, select options, read-only fields, required fields and defaults. Keyed by field name, or by "
+                    "id with `fieldKeyType=id`. Works for tables and combined databases.")
+def json_schema(table: str, base: str | None = None, field_key: str = Key, user=User):
+    return _run(apiv1.json_schema, user, table, base, field_key)
+
+
 @v1.post("/tables/{table}/fields", tags=["Schema"], status_code=201, summary="Add a field")
 def add_field(table: str, body: FieldIn, base: str | None = None, user=User):
     return _run(apiv1.add_field, user, table, body.name, body.type, body.options, base)
 
 
-@v1.post("/tables/{table}/sync", tags=["Schema"], summary="Sync a CalDAV / CardDAV table now")
+@v1.post("/tables/{table}/sync", tags=["Schema"], summary="Sync a CalDAV / CardDAV / files table now")
 def sync_now(table: str, base: str | None = None, user=User):
     return apiv1.sync_table(user, table, base)
 

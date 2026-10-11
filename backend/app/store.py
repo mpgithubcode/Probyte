@@ -143,6 +143,12 @@ def create_table(conn, user_id, base_id, name, kind="generic", account_id=None, 
             create_view(conn, table_id=tid, name="Board", type="kanban", config={"groupBy": str(by_key["status"]["id"])})
             create_view(conn, table_id=tid, name="Calendar", type="calendar",
                         config={"dateField": str(by_key["due"]["id"]), "colorField": str(by_key["status"]["id"])})
+        elif kind == "files":
+            conn.execute("UPDATE views SET config = %s WHERE table_id = %s",
+                         (Jsonb({"hidden": [str(by_key["text"]["id"]), str(by_key["mime"]["id"])]}), tid))
+            create_view(conn, table_id=tid, name="Gallery", type="gallery",
+                        config={"coverField": str(by_key["file"]["id"]), "hidden": [str(by_key["text"]["id"]), str(by_key["mime"]["id"])]})
+            create_view(conn, table_id=tid, name="By kind", type="kanban", config={"groupBy": str(by_key["kind"]["id"])})
         elif kind == "mixed":
             create_view(conn, table_id=tid, name="Calendar", type="calendar",
                         config={"dateField": str(by_key["dtstart"]["id"]), "endField": str(by_key["dtend"]["id"]),
@@ -624,12 +630,13 @@ def _changed(conn, table, event, record_id):
         schedule_sync(table["id"], conn=conn)
 
 
-def insert_record(conn, table_id, data, *, user_id=None, caldav_uid=None, caldav_href=None, caldav_raw=None, sync_status="synced"):
+def insert_record(conn, table_id, data, *, user_id=None, caldav_uid=None, caldav_href=None, caldav_raw=None, sync_status="synced",
+                  record_id=None):
     conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (str(table_id),))  # serialise auto numbers
     return conn.execute(
-        "INSERT INTO records (table_id, data, caldav_uid, caldav_href, caldav_raw, sync_status, seq, created_by, updated_by) "
-        "VALUES (%s,%s,%s,%s,%s,%s,(SELECT COALESCE(MAX(seq), 0) + 1 FROM records WHERE table_id = %s),%s,%s) RETURNING *",
-        (table_id, Jsonb(data), caldav_uid, caldav_href, caldav_raw, sync_status, table_id, user_id, user_id),
+        "INSERT INTO records (id, table_id, data, caldav_uid, caldav_href, caldav_raw, sync_status, seq, created_by, updated_by) "
+        "VALUES (COALESCE(%s, gen_random_uuid()),%s,%s,%s,%s,%s,%s,(SELECT COALESCE(MAX(seq), 0) + 1 FROM records WHERE table_id = %s),%s,%s) RETURNING *",
+        (record_id, table_id, Jsonb(data), caldav_uid, caldav_href, caldav_raw, sync_status, table_id, user_id, user_id),
     ).fetchone()
 
 
@@ -653,7 +660,7 @@ def create_record(conn, table_id, data: dict, user_id=None):
         apply_task_auto(table, fields, {keys["status"]: "To Do"}, data, data)
         sync_done(table, keys, data)
     apply_event_defaults(table, fields, data, data)
-    if table["kind"] != "generic":
+    if table["kind"] in DAV_KINDS:
         r = insert_record(conn, table_id, data, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
     else:
         r = insert_record(conn, table_id, data, user_id=user_id)
@@ -682,7 +689,7 @@ def update_record(conn, record_id, patch: dict, user_id=None):
     caldav_ids = {str(f["id"]) for f in fields if f["system_key"] and f["system_key"] not in LOCAL_KEYS}
     changed = {k for k in data if data.get(k) != old.get(k)}
     status = r["sync_status"]
-    if table["kind"] != "generic" and changed & caldav_ids:
+    if table["kind"] in DAV_KINDS and changed & caldav_ids:
         status = "dirty"
     r = conn.execute(
         "UPDATE records SET data = %s, sync_status = %s, updated_at = now(), updated_by = COALESCE(%s, updated_by) "
@@ -795,7 +802,8 @@ def restore_record(conn, record_id, user_id=None):
     fields = get_fields(conn, t["table_id"])
     live = conn.execute("SELECT * FROM records WHERE id = %s", (record_id,)).fetchone()
     if live:  # deleted here but not yet on the server: just un-delete it
-        conn.execute("UPDATE records SET deleted = false, sync_status = 'dirty', updated_at = now() WHERE id = %s", (record_id,))
+        conn.execute("UPDATE records SET deleted = false, sync_status = %s, updated_at = now() WHERE id = %s",
+                     ("dirty" if table["kind"] in DAV_KINDS else "synced", record_id))
     else:
         known = {str(f["id"]) for f in fields}
         data = {k: v for k, v in t["data"].items() if k in known}

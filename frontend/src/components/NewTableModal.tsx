@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Account, Base, CalendarInfo, TableInfo, TableKind } from "../types";
+import type { Account, Base, CalendarInfo, Storage, TableInfo, TableKind } from "../types";
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
+import { StorageForm, emptyStorage, storageBody, type StorageDraft } from "./StorageForm";
 
 const KINDS: { kind: TableKind; title: string; desc: string; icon: string }[] = [
   { kind: "generic", title: "Blank database", desc: "Your own fields, stored in Probyte", icon: "table" },
   // One calendar type: tasks and events together (existing tasks-only / events-only tables keep working)
   { kind: "mixed", title: "Tasks & events", desc: "Synced with a calendar: your phone's Reminders and Calendar apps", icon: "calendar-check" },
   { kind: "contacts", title: "Contacts", desc: "vCards synced with a CardDAV address book", icon: "contacts" },
+  { kind: "files", title: "Files", desc: "The files in an S3 bucket or WebDAV folder: preview, search, upload and link them", icon: "folder" },
   { kind: "remote", title: "From a link", desc: "Show a table shared with a Probyte public link — from any server", icon: "link" },
 ];
 
@@ -49,6 +51,29 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
   const [meta, setMeta] = useState<LinkMeta | null>(null);
   const [pick, setPick] = useState<{ item: string; view: string } | null>(null);
   const book = kind === "contacts";
+  // files table: a saved storage connection or a new one, and the folder in it
+  const [storages, setStorages] = useState<Storage[] | null>(null);
+  const [storageId, setStorageId] = useState("");
+  const [draft, setDraft] = useState<StorageDraft>(emptyStorage);
+  const [prefix, setPrefix] = useState("");
+  const [tested, setTested] = useState("");
+  useEffect(() => {
+    if (kind !== "files" || storages) return;
+    api.get<Storage[]>("/storages").then((l) => { setStorages(l); setStorageId(l[0]?.id ?? "__new"); })
+      .catch((e) => { setStorages([]); setStorageId("__new"); setError(e.message); });
+  }, [kind]);
+  const testStorage = async () => {
+    setBusy(true); setError(""); setTested("");
+    try {
+      if (storageId === "__new") await api.post("/storages/test", { ...storageBody(draft), prefix });
+      else {
+        const s = storages!.find((x) => x.id === storageId)!;
+        await api.post(`/storages/test?storage_id=${s.id}`, { ...s, secret: undefined, prefix });
+      }
+      setTested("Connected ✓");
+    } catch (e) { setError((e as Error).message); }
+    setBusy(false);
+  };
 
   const checkLink = async () => {
     setBusy(true);
@@ -68,7 +93,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
   };
 
   useEffect(() => {
-    if (kind === "generic" || kind === "remote" || !accountId) return;
+    if (kind === "generic" || kind === "remote" || kind === "files" || !accountId) return;
     setCalendars(null);
     setCalendarUrl("");  // never keep another kind's calendar (a contacts table on a calendar) while loading
     setError("");
@@ -88,7 +113,11 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
     setError("");
     try {
       const body: Record<string, unknown> = { name: name.trim(), kind: calendarUrl === "__new" ? kind : kindFor(calendars?.find((c) => c.url === calendarUrl), kind), base_id: base };
-      if (kind === "remote") {
+      if (kind === "files") {
+        body.storage_prefix = prefix.trim();
+        if (storageId === "__new") body.storage = storageBody(draft);
+        else body.storage_id = storageId;
+      } else if (kind === "remote") {
         body.remote = { url, password: linkPw || undefined, item_id: pick!.item, view_id: pick!.view };
       } else if (kind !== "generic") {
         body.account_id = accountId;
@@ -103,8 +132,9 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
     }
   };
 
-  const needsAccount = kind !== "generic" && kind !== "remote" && !accounts.length;
-  const loadingCalendars = kind !== "generic" && kind !== "remote" && !needsAccount && (calendars === null || !calendarUrl);
+  const dav = kind !== "generic" && kind !== "remote" && kind !== "files";
+  const needsAccount = dav && !accounts.length;
+  const loadingCalendars = dav && !needsAccount && (calendars === null || !calendarUrl);
   const coll = book ? "address book" : "calendar";
 
   return (
@@ -135,7 +165,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
         )}
         <label className="stack">Name
           <input className="input" autoFocus value={name}
-            placeholder={kind === "tasks" ? "My Tasks" : kind === "events" ? "My Events" : kind === "mixed" ? "Personal" : book ? "Contacts" : kind === "remote" ? "Name in your base" : "Projects"}
+            placeholder={kind === "tasks" ? "My Tasks" : kind === "events" ? "My Events" : kind === "mixed" ? "Personal" : book ? "Contacts" : kind === "remote" ? "Name in your base" : kind === "files" ? "Documents" : "Projects"}
             onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
         </label>
 
@@ -190,7 +220,30 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
           </>
         )}
 
-        {kind !== "generic" && kind !== "remote" && !needsAccount && (
+        {kind === "files" && (
+          <>
+            <label className="stack">Where the files are
+              <select className="input" value={storageId} disabled={!storages} onChange={(e) => { setStorageId(e.target.value); setTested(""); }}>
+                {!storages && <option>Loading…</option>}
+                {storages?.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.kind === "s3" ? "S3" : "WebDAV"})</option>)}
+                {storages && <option value="__new">+ New connection…</option>}
+              </select>
+            </label>
+            {storageId === "__new" && <StorageForm value={draft} onChange={(d) => { setDraft(d); setTested(""); }} />}
+            <label className="stack">Folder
+              <input className="input" value={prefix} placeholder="All of it — or e.g. documents/2026" onChange={(e) => { setPrefix(e.target.value); setTested(""); }} />
+              <span className="hint">Only the files in this folder (and its subfolders) are in the table. A new WebDAV folder is created.</span>
+            </label>
+            <div className="row">
+              <button className="btn sm" disabled={busy || !storageId} onClick={testStorage}>Test connection</button>
+              {tested && <span className="ok small">{tested}</span>}
+            </div>
+            <p className="hint">Every file becomes a record you can preview, search, rename, move and link to other tables; add your own fields
+              (tags, status…) next to the file's. Changes made in the storage itself show up at the next sync. Deleting the table never deletes the files.</p>
+          </>
+        )}
+
+        {dav && !needsAccount && (
           <>
             <label className="stack">{book ? "Account" : "CalDAV account"}
               <select className="input" value={accountId} onChange={(e) => setAccountId(e.target.value)}>

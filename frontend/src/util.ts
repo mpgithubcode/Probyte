@@ -170,6 +170,14 @@ export function recordTitle(fields: Field[], r: Rec) {
   return v ? String(v) : "Untitled";
 }
 
+export function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toLocaleString(undefined, { maximumFractionDigits: v < 10 ? 1 : 0 })} ${units[i]}`;
+}
+
 /** A number as text; o: the field's precision, or its number format (decimal / percent / currency, separators). */
 export function formatNumber(v: unknown, o?: number | Pick<FieldOptions, "precision" | "numberFormat" | "currency" | "separators">) {
   const n = Number(v);
@@ -177,6 +185,7 @@ export function formatNumber(v: unknown, o?: number | Pick<FieldOptions, "precis
   const opts = typeof o === "number" ? { precision: o } : o ?? {};
   const p = opts.precision;
   const fixed = p !== undefined && p !== null;
+  if (opts.numberFormat === "bytes") return formatBytes(n);
   const x = opts.numberFormat === "percent" ? n * 100 : n;
   let s = x.toLocaleString(undefined, {
     minimumFractionDigits: fixed ? p : opts.numberFormat === "currency" ? 2 : 0,
