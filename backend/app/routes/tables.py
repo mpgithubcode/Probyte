@@ -51,6 +51,7 @@ def get_table(table_id: str, user=User):
     with connection() as conn:
         t = store.get_table(conn, table_id, user["id"])
         eng = Engine(conn)
+        token = eng.token(table_id) if t["kind"] != "remote" else None  # before the records: see Engine.changes
         records = store.list_records(conn, table_id, eng)
         refs = eng.refs(table_id, eng.records(table_id))
         if t["kind"] == "remote":
@@ -58,7 +59,18 @@ def get_table(table_id: str, user=User):
         return FastJSON({"table": _table_out(t), "fields": eng.describe(table_id), "views": store.get_views(conn, table_id=table_id),
                          "records": records, "refs": refs,
                          "link_sources": remote.sources(conn, t) if t["kind"] == "remote" else None,
-                         "dav": _dav_info(conn, t)})
+                         "dav": _dav_info(conn, t), "token": token})
+
+
+@router.get("/api/tables/{table_id}/changes")
+def table_changes(table_id: str, since: str = "", user=User):
+    """Records written or deleted since a token from GET /api/tables/{id} (or the previous call)."""
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"])
+        out = Engine(conn).changes(table_id, since)
+    if "records" in out:
+        out["records"] = [store.clean_record(r) for r in out["records"]]
+    return FastJSON(out)
 
 
 # ======================================================================== linked tables (from a public link)

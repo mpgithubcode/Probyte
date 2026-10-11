@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { ComboModal } from "./components/ComboModal";
 import { DatasetPage } from "./components/DatasetPage";
 import { Icon } from "./components/Icon";
 import { LoginPage } from "./components/LoginPage";
-import { NewTableModal } from "./components/NewTableModal";
-import { SettingsModal, type Tab as SettingsTab } from "./components/SettingsModal";
+import type { Tab as SettingsTab } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import type { User, Workspace } from "./types";
+
+const ComboModal = lazy(() => import("./components/ComboModal").then((m) => ({ default: m.ComboModal })));
+const NewTableModal = lazy(() => import("./components/NewTableModal").then((m) => ({ default: m.NewTableModal })));
+const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
 
 interface Route { kind: "table" | "combo"; id: string; viewId?: string }
 
@@ -105,6 +107,7 @@ function WorkspaceShell({ user, onLogout }: { user: User; onLogout: () => void }
         </div>
       )}
 
+      <Suspense fallback={null}>
       {modal === "table" && (
         <NewTableModal accounts={ws.accounts} bases={ws.bases} baseId={modalBase} onClose={() => setModal(null)} onManageAccounts={() => openSettings("accounts")}
           onCreated={(t) => { setModal(null); loadWs(); go({ kind: "table", id: t.id }); }} />
@@ -114,6 +117,7 @@ function WorkspaceShell({ user, onLogout }: { user: User; onLogout: () => void }
           onSaved={(id) => { loadWs(); go({ kind: "combo", id }); }} />
       )}
       {modal === "settings" && <SettingsModal user={user} ws={ws} initialTab={settingsTab} onClose={() => setModal(null)} onAccountsChanged={loadWs} />}
+      </Suspense>
 
       {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
     </div>

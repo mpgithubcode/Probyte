@@ -5,6 +5,7 @@ One Engine per request; it caches computed tables so lookups across linked table
 are also kept between requests (_shared), keyed by the data_version of the table and every table its values
 depend on (bumped by database triggers on any record or field change), so an unchanged table isn't recomputed.
 """
+import hashlib
 import os
 import re
 import threading
@@ -310,6 +311,43 @@ class Engine:
         if total != len(out):
             return None  # rows were deleted outright: start over
         return out, max((r["row_version"] for r in rows), default=entry["row_version"])
+
+    # ------------------------------------------------------------ following changes (live updates)
+
+    def token(self, table_id) -> str | None:
+        """Where a copy of the table stands: "newest row version.fingerprint". The fingerprint covers the fields
+        and every other table the values depend on; while it stays the same, the rows written since the
+        version are all that changed. None for tables that can't be followed this way (linked tables)."""
+        tid = str(table_id)
+        key = self.version(tid)
+        if key is None:
+            return None
+        rv = self.conn.execute(
+            "SELECT GREATEST((SELECT max(row_version) FROM records WHERE table_id = %s),"
+            " (SELECT max(row_version) FROM record_tombstones WHERE table_id = %s), 0) AS v", (tid, tid)).fetchone()["v"]
+        others = key if self._self_dependent(tid) else tuple(k for k in key if not (isinstance(k, tuple) and k[0] == tid))
+        fp = hashlib.sha1(repr((others, self._fields_sig(tid))).encode()).hexdigest()[:16]
+        return f"{rv}.{fp}"
+
+    def changes(self, table_id, since: str) -> dict:
+        """What changed since a token: {"token", "records", "deleted", "refs"}, or {"reload": True} when the
+        client should load the table again (fields or tables it depends on changed)."""
+        tid = str(table_id)
+        now = self.token(tid)  # first: anything committed later shows up again next time, never goes missing
+        try:
+            rv, fp = since.split(".")
+            rv = int(rv)
+        except (AttributeError, ValueError):
+            return {"reload": True, "token": now}
+        if now is None or fp != now.split(".")[1]:
+            return {"reload": True, "token": now}
+        if rv >= int(now.split(".")[0]):
+            return {"token": now, "records": [], "deleted": [], "refs": {"records": {}, "users": {}}}
+        changed = [r for r in self.records(tid) if (r.get("row_version") or 0) > rv]
+        deleted = [str(r["id"]) for r in self.conn.execute(
+            "SELECT id FROM records WHERE table_id = %s AND deleted AND row_version > %s "
+            "UNION SELECT record_id FROM record_tombstones WHERE table_id = %s AND row_version > %s", (tid, rv, tid, rv)).fetchall()]
+        return {"token": now, "records": changed, "deleted": deleted, "refs": self.refs(tid, changed)}
 
     def _fields_sig(self, tid):
         return tuple((str(f["id"]), f["type"], f["is_primary"], repr(sorted(f["options"].items()))) for f in self.fields(tid))

@@ -127,3 +127,23 @@ def test_settings_tabs(browser, seeded):
         pg.wait_for_timeout(150)
         assert pg.evaluate(NO_SIDEWAYS), tab
     assert not errors
+
+
+def test_changes_appear_live_and_tables_reopen_from_memory(browser, seeded):
+    pg, errors = open_page(browser, seeded, False)
+    u, t = seeded
+    F = u.fields(t["id"])
+    if pg.locator(".view-tab:has-text('Grid')").count():
+        pg.click(".view-tab:has-text('Grid')")
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Added from a phone", F["component"]: "Task"}})
+    pg.wait_for_selector("text=Added from a phone", timeout=8000)   # no reload: pushed over /api/events
+    other = u.table(name="Other")
+    pg.goto(f"{BASE}/#/table/{other['id']}")
+    pg.wait_for_selector("h1:has-text('Other')")
+    loads = []
+    pg.on("request", lambda r: loads.append(r.url) if r.url.endswith(f"/api/tables/{t['id']}") else None)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.wait_for_selector("text=Added from a phone", timeout=3000)
+    pg.wait_for_timeout(500)
+    assert not loads, "reopening a table should use the copy in memory plus /changes"
+    assert not errors, errors

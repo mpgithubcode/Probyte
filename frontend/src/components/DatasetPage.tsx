@@ -1,45 +1,39 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
 import { applyView, choiceColor, debounce, hiddenIds, timeAgo } from "../util";
 import { RefsContext, invalidateTitles } from "./Cells";
-import { CalendarView } from "./CalendarView";
-import { ChartView } from "./ChartView";
-import { ComboModal } from "./ComboModal";
-import { FieldModal } from "./FieldModal";
-import { GalleryView } from "./GalleryView";
-import { GridView } from "./GridView";
 import { Icon, tableIcon } from "./Icon";
-import { KanbanView } from "./KanbanView";
-import { ListView } from "./ListView";
-import { TimelineView } from "./TimelineView";
 import { Popover, usePopover } from "./Overlay";
-import { LinkSettings } from "./LinkSettings";
-import { ExportModal, ImportModal } from "./ImportExport";
 import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
 import { VIEW_TYPES, ViewOptions, ViewTabs } from "./Toolbar";
 import { CAN_ALL, type Ops } from "./viewTypes";
 import { buttonAction } from "../buttonAction";
+import { cached, loadDataset, onTableChange, refreshDataset, remember } from "../data";
 
-const REFRESH_MS = 15000;
-// Fields whose values depend on other records: refresh the whole dataset after edits.
-const CROSS_RECORD = new Set(["link", "lookup", "rollup", "conditional_lookup", "conditional_rollup"]);
+// Each view and the larger dialogs load on first use, keeping the initial download small.
+const GridView = lazy(() => import("./GridView").then((m) => ({ default: m.GridView })));
+const KanbanView = lazy(() => import("./KanbanView").then((m) => ({ default: m.KanbanView })));
+const TimelineView = lazy(() => import("./TimelineView").then((m) => ({ default: m.TimelineView })));
+const CalendarView = lazy(() => import("./CalendarView").then((m) => ({ default: m.CalendarView })));
+const ListView = lazy(() => import("./ListView").then((m) => ({ default: m.ListView })));
+const GalleryView = lazy(() => import("./GalleryView").then((m) => ({ default: m.GalleryView })));
+const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.ChartView })));
+const FieldModal = lazy(() => import("./FieldModal").then((m) => ({ default: m.FieldModal })));
+const ComboModal = lazy(() => import("./ComboModal").then((m) => ({ default: m.ComboModal })));
+const LinkSettings = lazy(() => import("./LinkSettings").then((m) => ({ default: m.LinkSettings })));
+const ImportModal = lazy(() => import("./ImportExport").then((m) => ({ default: m.ImportModal })));
+const ExportModal = lazy(() => import("./ImportExport").then((m) => ({ default: m.ExportModal })));
 
-async function loadDataset(kind: "table" | "combo", id: string): Promise<Dataset> {
-  if (kind === "table") {
-    const r = await api.get(`/tables/${id}`);
-    return { kind, id, name: r.table.name, table: r.table, fields: r.fields, views: r.views, records: r.records, refs: r.refs, linkSources: r.link_sources, dav: r.dav };
-  }
-  const r = await api.get(`/combos/${id}`);
-  const comboFields = r.fields.filter((f: Field) => f.id !== "__source").map((f: Field) => ({ id: f.id, name: f.name, mapping: f.mapping ?? {} }));
-  return { kind, id, name: r.combo.name, baseId: r.combo.base_id, sources: r.sources, comboFields, fields: r.fields, views: r.views, records: r.records, refs: r.refs };
-}
+// Changes arrive live (onTableChange); polling is the fallback. Linked tables have no live updates: poll them more often.
+const POLL_MS = 60000;
+const POLL_LINKED_MS = 15000;
 
 export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNavigate, onWorkspaceChanged, onError }: {
   kind: "table" | "combo"; id: string; viewId?: string; tables: TableInfo[]; me: User; bases: Base[]; onMenu: () => void;
   onNavigate: (viewId?: string) => void; onWorkspaceChanged: (goHome?: boolean) => void; onError: (msg: string) => void;
 }) {
-  const [ds, setDs] = useState<Dataset | null>(null);
+  const [ds, setDs] = useState<Dataset | null>(() => cached(kind, id) ?? null);
   const [search, setSearch] = useState("");
   const [openRec, setOpenRec] = useState<string | null>(null);
   const [openOcc, setOpenOcc] = useState<string | null>(null);  // a later repeat that was clicked
@@ -55,20 +49,52 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
   const more = usePopover();
   const inflight = useRef(0);
 
+  const dsRef = useRef(ds);
+  dsRef.current = ds;
+  const current = (d: Dataset | null): d is Dataset => !!d && d.kind === kind && d.id === id;
+
+  /** Load the whole dataset again (after changes to its structure: fields, views, links, sources). */
   const reload = useCallback(async () => {
     try {
       const d = await loadDataset(kind, id);
       // Skip background refreshes that would race with an in-flight edit.
-      if (inflight.current === 0) setDs(d);
+      if (inflight.current === 0) setDs((prev) => (prev && !current(prev) ? prev : d));
     } catch (e) { onError((e as Error).message); }
   }, [kind, id, onError]);
 
-  useEffect(() => { setDs(null); setSearch(""); setOpenRec(null); reload(); }, [reload]);
+  /** Fetch just what changed since the last load (falls back to reload when it has to). */
+  const refresh = useCallback(async () => {
+    const cur = dsRef.current;
+    if (!current(cur)) return reload();
+    try {
+      const update = await refreshDataset(cur);
+      if (inflight.current === 0) setDs((prev) => (current(prev) ? update(prev) : prev));
+    } catch (e) { onError((e as Error).message); }
+  }, [kind, id, reload, onError]);
+  const refreshSoon = useMemo(() => debounce(() => refresh(), 300), [refresh]);
 
   useEffect(() => {
-    const t = setInterval(() => { if (document.visibilityState === "visible") reload(); }, REFRESH_MS);
-    return () => clearInterval(t);
-  }, [reload]);
+    const hit = cached(kind, id);
+    setDs(hit ?? null); setSearch(""); setOpenRec(null);
+    if (hit) refresh(); else reload();
+  }, [kind, id]);
+
+  useEffect(() => { if (ds) remember(ds); }, [ds]);
+
+  // Live: refresh when this table (or a source of this combined database) changes anywhere.
+  const sourceIds = ds?.kind === "combo" ? (ds.sources ?? []).map((s) => s.table_id).join(",") : id;
+  useEffect(() => {
+    const mine = new Set(sourceIds.split(","));
+    return onTableChange((tid) => { if (mine.has(tid)) refreshSoon(); });
+  }, [sourceIds, refreshSoon]);
+
+  const linked = ds?.table?.kind === "remote";
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, linked ? POLL_LINKED_MS : POLL_MS);
+    const onShow = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onShow);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onShow); };
+  }, [refresh, linked]);
 
   const view: View | undefined = ds?.views.find((v) => v.id === viewId) ?? ds?.views[0];
 
@@ -115,12 +141,10 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
         : api.post(`/combos/${ds.id}/records`, { table_id: target?.tableId, link_table_id: target?.linkTableId, data }));
       setDs((d) => d && { ...d, records: [...d.records, rec] });
       if (openAfter) { setOpenRec(rec.id); setOpenOcc(null); }
-      reload(); // picks up server-side defaults and newly registered select options
+      refreshSoon(); // picks up server-side defaults and newly registered select options
     } catch (e) { onError((e as Error).message); }
   };
 
-  const reloadSoon = useMemo(() => debounce(() => reload(), 300), [reload]);
-  const crossRecord = !!ds?.fields.some((f) => CROSS_RECORD.has(f.type));
   const addRefs = useCallback((r: Partial<Refs>) => setDs((d) => d && {
     ...d, refs: { records: { ...d.refs.records, ...r.records }, users: { ...d.refs.users, ...r.users } },
   }), []);
@@ -144,19 +168,16 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
       track(api.patch<Rec>(url, { data: patch, table_id: rec.table_id }))
         .then((saved) => {
           patchLocal(rec.id, () => saved);
-          // New select options are registered server-side; refresh field metadata.
-          const fields = ds.fields.filter((f) => patch[f.id] !== undefined && (f.type === "single_select" || f.type === "multi_select"));
-          const vals = fields.flatMap((f) => [patch[f.id]].flat());
-          if (crossRecord || fields.some((f) => vals.some((v) => v && !f.options.choices?.some((c) => c.name === v)))) reloadSoon();
+          refreshSoon();  // other records it affects (links, lookups) and new select options
         })
-        .catch((e) => { onError(e.message); reload(); });
+        .catch((e) => { onError(e.message); refresh(); });
     },
     remove(rec) {
       patchLocal(rec.id, () => null);
       setOpenRec(null);
       track(api.del(`/tables/${rec.table_id}/records/${rec.id}`))
-        .then(() => { invalidateTitles(); if (crossRecord) reloadSoon(); })
-        .catch((e) => { onError(e.message); reload(); });
+        .then(() => { invalidateTitles(); refreshSoon(); })
+        .catch((e) => { onError(e.message); refresh(); });
     },
     bulk(action, recs, patch = {}) {
       if (!ds || !recs.length) return;
@@ -170,9 +191,9 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
         .then((res) => {
           if (res.errors.length) onError(`${res.errors.length} of ${recs.length} couldn't be ${action === "delete" ? "deleted" : "changed"}: ${res.errors[0].error}`);
           invalidateTitles();
-          reload();
+          refresh();
         })
-        .catch((e) => { onError(e.message); reload(); });
+        .catch((e) => { onError(e.message); refresh(); });
     },
     runButton(rec, field) {
       if (!ds) return;
@@ -384,6 +405,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
       </header>
 
       <main className="page-body">
+        <Suspense fallback={<div className="loading">Loading…</div>}>
         {view.type === "grid" && <GridView {...props} />}
         {view.type === "kanban" && <KanbanView {...props} />}
         {view.type === "timeline" && <TimelineView {...props} />}
@@ -391,7 +413,10 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
         {view.type === "list" && <ListView {...props} />}
         {view.type === "gallery" && <GalleryView {...props} />}
         {view.type === "chart" && <ChartView {...props} />}
+        </Suspense>
       </main>
+
+      <Suspense fallback={null}>
 
       {rec && (
         <RecordModal ds={ds} rec={rec} fields={ds.fields} onClose={() => setOpenRec(null)} occurrence={openOcc}
@@ -399,7 +424,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
         />
       )}
       {transfer === "import" && ds.kind === "table" && (
-        <ImportModal ds={ds} onClose={() => setTransfer(null)} onDone={(msg) => { setTransfer(null); onError(msg); reload(); onWorkspaceChanged(); }} />
+        <ImportModal ds={ds} onClose={() => setTransfer(null)} onDone={(msg) => { setTransfer(null); onError(msg); refresh(); onWorkspaceChanged(); }} />
       )}
       {transfer === "export" && <ExportModal ds={ds} view={view} search={search} onClose={() => setTransfer(null)} />}
       {linkEdit && link && (
@@ -425,6 +450,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
           onSaved={() => { reload(); onWorkspaceChanged(); }}
           onDeleted={() => onWorkspaceChanged(true)} />
       )}
+      </Suspense>
     </div>
     </RefsContext.Provider>
   );

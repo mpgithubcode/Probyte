@@ -195,4 +195,6 @@ export interface Dataset {
   views: View[];
   records: Rec[];
   refs: Refs;
+  token?: string | null;  // where these records stand, for fetching just the changes (tables only)
+  loadedAt?: number;      // when it was last loaded in full
 }
