@@ -5,6 +5,7 @@ import { BoardOptions, FilterEditor, GroupEditorList, ListOptions, SortEditor } 
 import { listLayout } from "./ListView";
 import { FieldIcon, Icon } from "./Icon";
 import { Popover, usePopover } from "./Overlay";
+import { PAGE_SIZES, PAGED_VIEWS } from "./Pager";
 
 export const VIEW_TYPES: { type: ViewType; label: string; icon: string; desc: string }[] = [
   { type: "grid", label: "Table", icon: "grid", desc: "Rows and columns" },
@@ -199,6 +200,14 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
         <label className="tool-label" title="Cover image"><Icon name="gallery" size={14} />
           <FieldSelect fields={fields.filter((f) => f.type === "attachment" || f.type === "url" || f.type === "text")} value={config.coverField}
             onChange={(id) => setConfig({ coverField: id })} placeholder="No cover" allowNone />
+        </label>
+      )}
+      {PAGED_VIEWS.has(view.type) && (
+        <label className="tool-label" title="Rows per page"><Icon name="list" size={14} />
+          <select className="input sm" value={config.pageSize ?? 0} onChange={(e) => setConfig({ pageSize: Number(e.target.value) || undefined })}>
+            <option value={0}>All rows</option>
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} per page</option>)}
+          </select>
         </label>
       )}
       {(view.type === "calendar" || view.type === "timeline" || view.type === "kanban" || view.type === "gallery" || view.type === "list") && (

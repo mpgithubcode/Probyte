@@ -69,15 +69,19 @@ def delete_view(view_id: str, user=User):
 
 # ======================================================================== combined databases
 
-def _combo_payload(conn, combo):
+def _combo_payload(conn, combo, defer_remote=False):
+    """A combined database with its records. defer_remote: leave out the sources that are linked tables (they
+    load from another server, maybe slowly); they're listed in "pending" and fetched one by one (combo_source)."""
     eng = Engine(conn)
     sources, fields = store.resolve_combo(conn, combo, eng)
+    pending = [str(s["table_id"]) for s in sources if s["kind"] == "remote"] if defer_remote else []
     for s in sources:  # a source that is a linked combined database: where its new records can go
-        if s["kind"] == "remote":
+        if s["kind"] == "remote" and str(s["table_id"]) not in pending:
             s["link_sources"] = remote.sources(conn, store.get_table(conn, s["table_id"]))
+    now = {str(s["table_id"]) for s in sources} - set(pending)
     return {"combo": {"id": combo["id"], "name": combo["name"], "base_id": combo["base_id"]}, "sources": sources, "fields": fields,
-            "views": store.get_views(conn, combo_id=combo["id"]), "records": store.combo_records(conn, combo, eng),
-            "refs": store.combo_refs(conn, combo, eng)}
+            "views": store.get_views(conn, combo_id=combo["id"]), "records": store.combo_records(conn, combo, eng, only=now),
+            "refs": store.combo_refs(conn, combo, eng, only=now), "pending": pending}
 
 
 def _sources_json(conn, sources: list[ComboSource], user):
@@ -109,9 +113,24 @@ def create_combo(body: ComboIn, user=User):
 
 
 @router.get("/api/combos/{combo_id}")
-def get_combo(combo_id: str, user=User):
+def get_combo(combo_id: str, defer_remote: bool = False, user=User):
     with connection() as conn:
-        return FastJSON(_combo_payload(conn, store.get_combo(conn, combo_id, user["id"])))
+        return FastJSON(_combo_payload(conn, store.get_combo(conn, combo_id, user["id"]), defer_remote))
+
+
+@router.get("/api/combos/{combo_id}/sources/{table_id}")
+def combo_source(combo_id: str, table_id: str, user=User):
+    """One source's records of a combined database (for sources left out with defer_remote)."""
+    with connection() as conn:
+        combo = store.get_combo(conn, combo_id, user["id"])
+        if table_id not in {str(s["table_id"]) for s in combo["sources"]}:
+            store.not_found("Not a source of this combined database")
+        eng = Engine(conn)
+        t = store.get_table(conn, table_id)
+        return FastJSON({"table_id": table_id, "records": store.combo_records(conn, combo, eng, only={table_id}),
+                         "refs": store.combo_refs(conn, combo, eng, only={table_id}),
+                         "link_sources": remote.sources(conn, t) if t["kind"] == "remote" else None,
+                         "error": ((t["remote"] or {}).get("error") if t["kind"] == "remote" else None)})
 
 
 @router.patch("/api/combos/{combo_id}")
@@ -121,6 +140,8 @@ def update_combo(combo_id: str, body: ComboPatch, user=User):
         if body.base_id:
             store.get_base(conn, body.base_id, user["id"])
             conn.execute("UPDATE combos SET base_id = %s WHERE id = %s", (body.base_id, combo_id))
+        if body.hidden is not None:
+            conn.execute("UPDATE combos SET hidden = %s WHERE id = %s", (body.hidden, combo_id))
         name = body.name or c["name"]
         sources = _sources_json(conn, body.sources, user) if body.sources is not None else c["sources"]
         if body.remap:

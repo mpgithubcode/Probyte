@@ -3,7 +3,6 @@ import type { Field, Rec } from "../types";
 import { isDateOnly, keyOf, parseKey, recordTitle } from "../util";
 import type { Ops } from "./viewTypes";
 import { Icon } from "./Icon";
-import { holdToDrag } from "./touchDrag";
 
 const HOUR = 48;          // px per hour
 const SNAP = 15;          // minutes
@@ -138,8 +137,7 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
       dragRef.current = { key: b.key, mode, x0: x, y0: y, dMin: 0, dDay: 0, moved };
       setDrag(dragRef.current);
     };
-    // touch: a tap opens it, a swipe scrolls, holding it for 3 s picks it up
-    if (holdToDrag(e, { onTap: () => ops.open(b.rec), onStart: (x, y) => (canEdit ? begin(x, y, true) : ops.open(b.rec)) })) return;
+    if (e.pointerType === "touch") return;  // touch: no dragging; a tap opens it (onClick), a swipe scrolls
     if (!canEdit) { ops.open(b.rec); return; }
     e.preventDefault();
     begin(e.clientX, e.clientY, false);
@@ -213,7 +211,8 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
                 <div key={`${b.key}:${b.col}`} className={`tgrid-block ${d ? "dragging" : ""}`} title={recordTitle(fields, b.rec)}
                   style={{ top, height: h - 2, left: `calc(${col} * 100% / var(--days) + ${b.lane} * (100% / var(--days)) / ${b.lanes} + 2px)`,
                     width: `calc((100% / var(--days)) / ${b.lanes} - 4px)`, background: `color-mix(in srgb, ${c} 18%, var(--bg))`, borderLeftColor: c }}
-                  onPointerDown={(e) => startDrag(e, b, "move")}>
+                  onPointerDown={(e) => startDrag(e, b, "move")}
+                  onClick={(e) => { if ((e.nativeEvent as PointerEvent).pointerType === "touch") ops.open(b.rec); }}>
                   <span className="tgrid-title">{recordTitle(fields, b.rec)}</span>
                   {h > 30 && <span className="tgrid-time">{fmt(b.start)}{b.hasEnd ? ` – ${fmt(b.end)}` : ""}</span>}
                   {b.rec.occurrence && <Icon name="repeat" size={10} className="cal-repeat" />}

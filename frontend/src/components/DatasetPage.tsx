@@ -1,15 +1,16 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
-import { applyView, choiceColor, debounce, hiddenIds, timeAgo } from "../util";
+import { applyView, choiceColor, debounce, hiddenIds, orderFields, timeAgo } from "../util";
 import { RefsContext, invalidateTitles } from "./Cells";
 import { Icon, tableIcon } from "./Icon";
 import { Popover, usePopover } from "./Overlay";
+import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
 import { VIEW_TYPES, ViewOptions, ViewTabs } from "./Toolbar";
 import { CAN_ALL, type Ops } from "./viewTypes";
 import { buttonAction } from "../buttonAction";
-import { cached, loadDataset, onTableChange, refreshDataset, remember } from "../data";
+import { cached, loadComboSource, loadDataset, onTableChange, refreshDataset, remember } from "../data";
 
 // Each view and the larger dialogs load on first use, keeping the initial download small.
 const GridView = lazy(() => import("./GridView").then((m) => ({ default: m.GridView })));
@@ -29,7 +30,8 @@ const ExportModal = lazy(() => import("./ImportExport").then((m) => ({ default: 
 const POLL_MS = 60000;
 const POLL_LINKED_MS = 15000;
 
-export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNavigate, onWorkspaceChanged, onError }: {
+export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSidebar, onMenu, onNavigate, onWorkspaceChanged, onError }: {
+  hiddenInSidebar?: boolean;
   kind: "table" | "combo"; id: string; viewId?: string; tables: TableInfo[]; me: User; bases: Base[]; onMenu: () => void;
   onNavigate: (viewId?: string) => void; onWorkspaceChanged: (goHome?: boolean) => void; onError: (msg: string) => void;
 }) {
@@ -80,6 +82,24 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
   }, [kind, id]);
 
   useEffect(() => { if (ds) remember(ds); }, [ds]);
+
+  // A combined database shows its own tables at once; sources that are linked tables arrive one by one.
+  const fetching = useRef(new Set<string>());
+  const pendingKey = ds?.pending?.join(",") ?? "";
+  useEffect(() => {
+    const cur = dsRef.current;
+    if (!cur?.pending?.length) return;
+    for (const tid of cur.pending) {
+      const key = `${cur.id}:${cur.loadedAt}:${tid}`;
+      if (fetching.current.has(key)) continue;
+      fetching.current.add(key);
+      loadComboSource(cur, tid)
+        .then((update) => setDs((prev) => (prev && prev.loadedAt === cur.loadedAt ? update(prev) : prev)))
+        .catch((e) => { onError(`Couldn't load a linked source: ${(e as Error).message}`);
+          setDs((prev) => prev && prev.loadedAt === cur.loadedAt ? { ...prev, pending: prev.pending?.filter((t) => t !== tid) } : prev); })
+        .finally(() => fetching.current.delete(key));
+    }
+  }, [pendingKey, ds?.loadedAt]);
 
   // Live: refresh when this table (or a source of this combined database) changes anywhere.
   const sourceIds = ds?.kind === "combo" ? (ds.sources ?? []).map((s) => s.table_id).join(",") : id;
@@ -286,11 +306,17 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
     } catch (e) { onError((e as Error).message); }
   };
 
+  // the records this view shows, and the page of them on screen (table / list / gallery can be paged)
+  const allRecords = useMemo(() => (ds && view ? applyView(ds.records, ds.fields, view.config, search, ds.refs) : []), [ds, view, search]);
+  const paging = usePaged(allRecords, view && PAGED_VIEWS.has(view.type) ? view.config.pageSize : undefined,
+    `${view?.id}|${search}|${JSON.stringify(view?.config.filter ?? view?.config.filters ?? null)}|${JSON.stringify(view?.config.sorts ?? null)}`);
+
   if (!ds || !view) return <div className="page loading">Loading…</div>;
 
   const hidden = hiddenIds(ds.fields, view.config);
-  const visible = ds.fields.filter((f) => !hidden.has(f.id));
-  const records = applyView(ds.records, ds.fields, view.config, search, ds.refs);
+  const visible = orderFields(ds.fields, view.config.fieldOrder).filter((f) => !hidden.has(f.id));
+  const pg = paging;
+  const records = PAGED_VIEWS.has(view.type) ? pg.items : allRecords;
   const rec = openRec ? ds.records.find((r) => r.id === openRec) : undefined;
   const props = { ds, view, fields: ds.fields, visible, records, ops, setConfig };
   const t = ds.table;
@@ -311,11 +337,16 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
           ) : (
             <h1 onDoubleClick={() => setRenaming(true)}>{ds.name}</h1>
           )}
-          {ds.kind === "combo" && (
+          {ds.kind === "combo" && (<>
+            {!!ds.pending?.length && (
+              <span className="sources-loading" title="Loading the linked tables in this combined database">
+                <Icon name="sync" size={13} className="spin" /> Loading {ds.pending.length} linked {ds.pending.length === 1 ? "table" : "tables"}…
+              </span>
+            )}
             <div className="source-badges">
               {ds.sources?.map((s) => <span key={s.table_id} className="source-badge"><span className="swatch" style={{ background: s.color }} />{s.name}</span>)}
             </div>
-          )}
+          </>)}
           <span className="spacer" />
           {isCaldav && (
             <div className={`sync-status ${t.last_sync_error ? "err" : ""}`} title={t.last_sync_error ?? t.calendar_url ?? ""}>
@@ -351,6 +382,13 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
                 ) : (
                   <button className="menu-item" onClick={() => { setComboEdit(true); more.close(); }}><Icon name="layers" size={14} /> Add tables…</button>
                 )}
+                <button className="menu-item" onClick={async () => {
+                  more.close();
+                  try {
+                    await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { hidden: !hiddenInSidebar });
+                    onWorkspaceChanged();
+                  } catch (e) { onError((e as Error).message); }
+                }}><Icon name="eye" size={14} /> {hiddenInSidebar ? "Show in sidebar" : "Hide from sidebar"}</button>
                 <button className="menu-item" title={ds.id} onClick={() => {
                   navigator.clipboard?.writeText(ds.id).then(() => onError(`Copied ID ${ds.id}`), () => onError(ds.id));
                   more.close();
@@ -414,6 +452,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
         {view.type === "gallery" && <GalleryView {...props} />}
         {view.type === "chart" && <ChartView {...props} />}
         </Suspense>
+        {PAGED_VIEWS.has(view.type) && <Pager {...pg} />}
       </main>
 
       <Suspense fallback={null}>
@@ -444,7 +483,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, onMenu, onNav
           onSaved={(id) => { onWorkspaceChanged(); location.hash = `/combo/${id}`; }} />
       )}
       {comboEdit && ds.kind === "combo" && (
-        <ComboModal tables={tables}
+        <ComboModal tables={tables} baseId={currentBase}
           combo={{ id: ds.id, name: ds.name, sources: (ds.sources ?? []).map((s) => ({ table_id: s.table_id, color: s.color, name: s.name })), fields: ds.comboFields ?? [] }}
           onClose={() => setComboEdit(false)}
           onSaved={() => { reload(); onWorkspaceChanged(); }}

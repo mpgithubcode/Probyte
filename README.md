@@ -22,11 +22,11 @@ Every database and combined database can have any number of Notion-style views, 
 
 | View | What it shows |
 |---|---|
-| **Table** | Spreadsheet grid; click a cell to edit it |
+| **Table** | Spreadsheet grid; click a cell to edit it. Drag a column header to move the column (the order is saved with the view; the title column stays first) |
 | **Board** | Kanban columns grouped by a single-select field; drag cards between columns |
 | **Timeline** | Records as bars between a start and end date. Drag a bar to move it, or drag its edges to change the start or end. Day, week and month scales. Click an empty row to give an undated record dates. |
 | **Calendar** | **Month**, **Week** and **Day**. Month: drag items to another day. Week/Day: a time grid with an all-day row (on phones the week scrolls sideways and opens on today); click a slot to add, drag a block to move it (15-minute steps, across days in Week), drag its bottom edge to change the end |
-| **List** | One line per record: the title, then properties shown as *name value*. **Properties** sets their order and puts each on the left, center or right, and can hide the names. Every row uses the same columns, so values line up straight; long values end in "…" and empty ones leave their spot blank |
+| **List** | One line per record: the title, then properties shown as *name value*, with yes/no fields (like **Completed**) as checkboxes you can tick right there; Completed sits at the far right. **Properties** sets their order and puts each on the left, center or right, and can hide the names. Every row uses the same columns, so values line up straight; when the list is narrow, properties that don't fit are left out (from the end) instead of being squeezed or cut off. Rows are indented under their group headers |
 | **Gallery** | Cards, with an optional cover image taken from a URL or text field |
 | **Chart** | Bar, line or donut chart. Group by any field (dates by day, week or month) and show a count, sum or average of a number field. A **Data** toggle shows the underlying table. |
 
@@ -36,11 +36,17 @@ Every database and combined database can have any number of Notion-style views, 
 
 **Adding records.** Every view has a **New** button left of the search box (also on public links that allow adding).
 
-**Dragging on touch screens.** On phones and tablets an item is picked up only after holding it still for **3 seconds** (it vibrates, then follows your finger), so swiping over it scrolls normally and a tap opens it. This applies to Week/Day calendar blocks, Timeline bars, Board cards and Month calendar items. Board cards also have a **Move to** button.
+**Touch screens.** Dragging is a mouse/trackpad feature; on phones and tablets a tap opens an item and a swipe scrolls. Board cards have a **Move to** button, and dates are changed in the record panel.
+
+**Pages.** Table, List and Gallery views can show their records in pages: pick **All rows** or 10, 25, 50, 100, 500 or 1000 per page in the view's toolbar.
+
+**Hiding tables.** A table's (or combined database's) **⋯ → Hide from sidebar** keeps it out of the sidebar; **Show N hidden** under a base lists them again, and **⋯ → Show in sidebar** brings one back.
+
+**First day of the week.** **Settings → Account → First day of the week** (Sunday, Monday…) is used by the calendar, timeline and weekly charts.
 
 **Board options.** The **Board** button on a Board view shows or hides the "No *Status*" column (cards with no value), hides empty columns, and hides empty cards (no title and no other values).
 
-**Combining tables from a table.** A table's **⋯ → Combine with other tables…** starts a combined database with that table already picked; a combined database's **⋯ → Add tables…** adds more sources.
+**Combining tables from a table.** A table's **⋯ → Combine with other tables…** starts a combined database with that table already picked; a combined database's **⋯ → Add tables…** adds more sources. Both can also add a table **from another Probyte** by pasting its public link (on this server or any other). A combined database shows its own tables at once; sources from links load next to them (a spinner next to the title shows they're on their way).
 
 **Selecting rows.** In a Table view, tick rows (shift-click selects a range, a group's box selects the group, the header box selects everything in the view), then **Edit** to set one field on all of them or **Delete** them.
 
@@ -341,7 +347,7 @@ Records are stored as JSONB keyed by field id. A combined database stores only i
 ## Notes and limitations
 
 - Signed-in users can't share bases with each other yet; use public links to let others in. There is no admin user-management screen; set `ALLOW_SIGNUP=false` once everyone has signed up.
-- Dragging calendar items is a mouse/trackpad feature. On phones, tap a day to list its items, and open a record to change its date. Board cards have a **Move to** button on touch screens. Timeline bars can be dragged with touch.
+- Dragging calendar items is a mouse/trackpad feature. On phones, tap a day to list its items, and open a record to change its date. Board cards have a **Move to** button on touch screens.
 - There is no rate limiting on Probyte's login. Radicale delays failed logins, and your reverse proxy can rate-limit `/api/auth/login`.
 - CalDAV passwords for external accounts, and the generated device passwords, are stored in plain text in Postgres, because Probyte needs them to connect. Probyte login passwords are hashed.
 - Don't change `RADICALE_URL` (the internal address) after creating databases on the built-in account. Their calendar URLs are stored with it.

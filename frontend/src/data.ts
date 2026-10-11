@@ -22,10 +22,26 @@ export async function loadDataset(kind: "table" | "combo", id: string): Promise<
     return { kind, id, name: r.table.name, table: r.table, fields: r.fields, views: r.views, records: r.records, refs: r.refs,
       linkSources: r.link_sources, dav: r.dav, token: r.token, loadedAt };
   }
-  const r = await api.get(`/combos/${id}`);
+  // sources that are linked tables (another server, maybe slow) come separately: see loadComboSource
+  const r = await api.get(`/combos/${id}?defer_remote=true`);
   const comboFields = r.fields.filter((f: Field) => f.id !== "__source").map((f: Field) => ({ id: f.id, name: f.name, mapping: f.mapping ?? {} }));
   return { kind, id, name: r.combo.name, baseId: r.combo.base_id, sources: r.sources, comboFields, fields: r.fields, views: r.views,
-    records: r.records, refs: r.refs, loadedAt };
+    records: r.records, refs: r.refs, loadedAt, pending: r.pending ?? [] };
+}
+
+/** One pending source of a combined database; returns an updater that merges its records in. */
+export async function loadComboSource(ds: Dataset, tableId: string): Promise<(prev: Dataset) => Dataset> {
+  const r = await api.get<{ records: Rec[]; refs: Refs; link_sources: Dataset["linkSources"] }>(`/combos/${ds.id}/sources/${tableId}`);
+  return (prev) => {
+    if (prev.id !== ds.id || !prev.pending?.includes(tableId)) return prev;  // reloaded meanwhile
+    const records = [...prev.records.filter((x) => x.table_id !== tableId), ...r.records]
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    return {
+      ...prev, records, pending: prev.pending.filter((t) => t !== tableId),
+      sources: prev.sources?.map((s) => (s.table_id === tableId ? { ...s, link_sources: r.link_sources ?? undefined } : s)),
+      refs: { records: { ...prev.refs.records, ...r.refs.records }, users: { ...prev.refs.users, ...r.refs.users } },
+    };
+  };
 }
 
 /**
@@ -35,7 +51,9 @@ export async function loadDataset(kind: "table" | "combo", id: string): Promise<
 export async function refreshDataset(ds: Dataset): Promise<(prev: Dataset) => Dataset> {
   if (ds.kind !== "table" || !ds.token || Date.now() - (ds.loadedAt ?? 0) > FULL_RELOAD_MS) {
     const fresh = await loadDataset(ds.kind, ds.id);
-    return () => fresh;
+    // linked sources of a combined database reload separately: keep showing what they had until then
+    return (prev) => (fresh.pending?.length && prev.id === fresh.id
+      ? { ...fresh, records: [...fresh.records, ...prev.records.filter((r) => fresh.pending!.includes(r.table_id))] } : fresh);
   }
   const ch = await api.get<{ reload?: boolean; token: string; records: Rec[]; deleted: string[]; refs: Refs }>(
     `/tables/${ds.id}/changes?since=${encodeURIComponent(ds.token)}`);

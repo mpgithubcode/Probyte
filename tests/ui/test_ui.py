@@ -103,19 +103,19 @@ def test_phone_week_scrolls_sideways(browser, seeded):
     assert sw > cw * 1.5
 
 
-def test_phone_drag_needs_a_hold(browser, seeded):
+def test_touch_never_drags_and_a_tap_opens(browser, seeded):
     pg, _ = open_page(browser, seeded, True)
     pg.click(".view-tab:has-text('Board')")
     card = pg.locator(".kanban-col .card").filter(has_text="Read 3 books")
     card.scroll_into_view_if_needed()
     b = card.bounding_box()
     x, y = b["x"] + b["width"] / 2, b["y"] + 20
-    pg.evaluate(TOUCH, [x, y, "pointerdown"]); pg.wait_for_timeout(300)
-    pg.evaluate(TOUCH, [x + 60, y, "pointermove"]); pg.evaluate(TOUCH, [x + 60, y, "pointerup"])
-    assert pg.locator(".touch-ghost").count() == 0
-    pg.evaluate(TOUCH, [x, y, "pointerdown"]); pg.wait_for_timeout(3200)
-    assert pg.locator(".touch-ghost").count() == 1
-    pg.evaluate(TOUCH, [x, y, "pointerup"])
+    pg.evaluate(TOUCH, [x, y, "pointerdown"]); pg.wait_for_timeout(3500)       # even a long hold picks nothing up
+    pg.evaluate(TOUCH, [x + 80, y, "pointermove"]); pg.evaluate(TOUCH, [x + 80, y, "pointerup"])
+    assert pg.locator(".touch-ghost, .card.dragging").count() == 0
+    card.tap()
+    pg.wait_for_selector(".modal")
+    assert pg.locator(".card-move").count() > 0                                 # moving cards on a phone: the Move to button
 
 
 def test_settings_tabs(browser, seeded):

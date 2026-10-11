@@ -328,3 +328,38 @@ def test_new_views_get_what_they_need_to_show_something(user):
     assert cal["config"]["dateField"] == F["dtstart"] and cal["config"]["endField"] == F["dtend"]
     mine = user.j("POST", f"/tables/{t['id']}/views", json={"name": "T", "type": "timeline", "config": {"dateField": F["dtend"]}})
     assert mine["config"]["dateField"] == F["dtend"]                     # an explicit choice stays
+
+
+def test_preferences_and_hidden_tables(user):
+    assert user.j("GET", "/auth/me")["prefs"] == {}
+    assert user.j("PATCH", "/auth/prefs", json={"week_start": 0}) == {"week_start": 0}
+    assert user.j("GET", "/auth/me")["prefs"]["week_start"] == 0
+    assert user.patch(API + "/auth/prefs", json={"week_start": 9}).status_code == 400
+    t = user.table(name="Tucked away")
+    user.j("PATCH", f"/tables/{t['id']}", json={"hidden": True})
+    assert next(x for x in user.workspace()["tables"] if x["id"] == t["id"])["hidden"] is True
+    user.j("PATCH", f"/tables/{t['id']}", json={"name": "Renamed"})          # other changes leave it hidden
+    assert next(x for x in user.workspace()["tables"] if x["id"] == t["id"])["hidden"] is True
+    c = user.j("POST", "/combos", json={"name": "C", "base_id": user.base_id, "sources": [{"table_id": t["id"]}]})
+    user.j("PATCH", f"/combos/{c['id']}", json={"hidden": True})
+    assert next(x for x in user.workspace()["combos"] if x["id"] == c["id"])["hidden"] is True
+
+
+def test_combined_database_loads_linked_sources_separately(user, other_user):
+    src = other_user.table(name="Their list")
+    O = other_user.fields(src["id"])
+    other_user.j("POST", f"/tables/{src['id']}/records", json={"data": {O["Name"]: "From afar"}})
+    s = other_user.j("POST", "/shares", json={"name": "L", "base_id": other_user.base_id, "items": [{"kind": "table", "id": src["id"]}]})
+    linked = user.j("POST", "/tables", json={"name": "Linked", "kind": "remote", "base_id": user.base_id, "remote": {"url": f"{BASE}/s/{s['token']}"}})
+    mine = user.table(name="Mine")
+    M = user.fields(mine["id"])
+    user.j("POST", f"/tables/{mine['id']}/records", json={"data": {M["Name"]: "Close by"}})
+    c = user.j("POST", "/combos", json={"name": "Both", "base_id": user.base_id, "sources": [{"table_id": mine["id"]}, {"table_id": linked["id"]}]})
+    fast = user.j("GET", f"/combos/{c['id']}", params={"defer_remote": "true"})
+    assert fast["pending"] == [linked["id"]] and {r["table_id"] for r in fast["records"]} == {mine["id"]}
+    part = user.j("GET", f"/combos/{c['id']}/sources/{linked['id']}")
+    name_f = next(f["id"] for f in fast["fields"] if f["name"] == "Name")
+    assert [r["data"][name_f] for r in part["records"]] == ["From afar"]
+    full = user.j("GET", f"/combos/{c['id']}")                                   # without defer: everything at once
+    assert full["pending"] == [] and len(full["records"]) == 2
+    assert user.get(API + f"/combos/{c['id']}/sources/{src['id']}").status_code == 404   # not a source

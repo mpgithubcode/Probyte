@@ -401,3 +401,22 @@ export function fitField(f: Field, kind: "Task" | "Event" | null, current?: unkn
   const allowed = kind === "Task" ? TASK_STATUSES : EVENT_STATUSES;
   return { ...f, options: { ...f.options, choices: f.options.choices.filter((c) => allowed.has(c.name) || c.name === current) } };
 }
+
+// ------------------------------------------------------------ first day of the week (a user setting)
+
+let weekStartDay = 1;  // 0 = Sunday, 1 = Monday … 6 = Saturday
+export const setWeekStart = (d: number | undefined) => { weekStartDay = d !== undefined && d >= 0 && d <= 6 ? d : 1; };
+export const weekStartsOn = () => weekStartDay;
+/** How many days a date is into its week (0 = the first day of the week). */
+export const dayOfWeek = (d: Date) => (d.getDay() - weekStartDay + 7) % 7;
+/** Short weekday names in week order. */
+export const weekdayNames = () => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].slice(weekStartDay)
+  .concat(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].slice(0, weekStartDay));
+
+/** Fields in a view's own column order (dragged in the table view); the title field stays first, new fields go last. */
+export function orderFields(fields: Field[], order?: string[]): Field[] {
+  if (!order?.length) return fields;
+  const pos = new Map(order.map((id, i) => [id, i]));
+  return [...fields].sort((a, b) => (a.is_primary ? -1 : b.is_primary ? 1 : 0)
+    || (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity) || fields.indexOf(a) - fields.indexOf(b));
+}

@@ -579,3 +579,142 @@ def test_embedded_public_link(browser, table_user):
     expect(frame.locator("body")).to_contain_text("Chair")
     expect(frame.locator(".share-foot")).to_have_count(0)            # no page chrome when embedded
     assert not pg.errors, pg.errors
+
+
+def test_list_view_layout(browser):
+    u = Client()
+    t = u.table("mixed", "Agenda")
+    F = u.fields(t["id"])
+    for title, kind, status in (("Water plants", "Task", "To Do"), ("A really quite long task title that goes on and on", "Task", "Completed"),
+                                ("Dentist", "Event", "Confirmed")):
+        u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: title, F["component"]: kind, F["status"]: status,
+                                                                 F["dtend"]: "2026-10-20", F["location"]: "Somewhere far away"}})
+    u.j("POST", f"/tables/{t['id']}/views", json={"name": "Agenda list", "type": "list", "config": {"groups": [{"field": F["component"], "dir": "asc"}]}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".view-tab:has-text('Agenda list')")
+    pg.wait_for_selector(".list-row")
+    row = pg.locator(".list-row").filter(has_text="Water plants")
+    # true/false fields are checkboxes; the Completed box is the last thing on the row
+    assert row.locator("input[type=checkbox]").count() >= 1
+    assert row.locator(".list-zone.right .list-prop").last.locator("input[type=checkbox]").count() == 1
+    # rows sit indented under their group header; no lines between rows, only under headers
+    head_left = pg.locator(".list-group").first.bounding_box()["x"] + 8
+    dot_left = row.locator(".list-dot").bounding_box()["x"]
+    assert dot_left > head_left + 10
+    assert row.evaluate("e => getComputedStyle(e).borderBottomWidth") in ("0px", "")
+    assert pg.locator(".list-group").first.evaluate("e => getComputedStyle(e).borderBottomWidth") != "0px"
+    # ticking the box here saves it
+    row.locator(".list-zone.right .list-prop").last.locator("input").check()
+    eventually(lambda: next(r for r in u.records(t["id"]) if r["data"][F["summary"]] == "Water plants")["data"][F["done"]] is True or None)
+    # nothing runs off the row at any width
+    for w in (1280, 1100, 960, 860, 761, 700, 520, 390):
+        pg.set_viewport_size({"width": w, "height": 800})
+        pg.wait_for_timeout(150)
+        bad = pg.evaluate("""() => [...document.querySelectorAll('.list-row')].flatMap(r => { const b = r.getBoundingClientRect();
+          return [...r.querySelectorAll('.list-prop, .list-title, .list-dot')].filter(p => p.offsetWidth).filter(p => { const q = p.getBoundingClientRect();
+            return q.left < b.left - 1 || q.right > b.right + 1 || q.right > innerWidth; }).map(p => p.className + ' ' + p.textContent) })""")
+        assert not bad, (w, bad)
+        assert pg.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1"), w
+    assert not pg.errors, pg.errors
+
+
+def test_hiding_a_table(browser, table_user):
+    u, t, F = table_user
+    other = u.table(name="Visible table")
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".page-head [aria-label=More]")
+    pg.click(".menu-item:has-text('Hide from sidebar')")
+    expect(pg.locator(".sidebar .side-item.is-hidden", has_text="Inventory")).to_be_visible()   # still listed while open
+    pg.click(".sidebar .side-name:has-text('Visible table')")
+    expect(pg.locator(".sidebar .side-name", has_text="Inventory")).to_have_count(0)
+    pg.click(".sidebar .side-add:has-text('Show 1 hidden')")
+    pg.click(".sidebar .side-name:has-text('Inventory')")
+    pg.click(".page-head [aria-label=More]")
+    pg.click(".menu-item:has-text('Show in sidebar')")
+    pg.click(".sidebar .side-name:has-text('Visible table')")
+    expect(pg.locator(".sidebar .side-item:not(.is-hidden)", has_text="Inventory")).to_be_visible()
+    assert not pg.errors, pg.errors
+
+
+def test_first_day_of_the_week(browser):
+    u = Client()
+    t = u.table("events", "Week")
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.click(".side-user .side-item")
+    pg.locator(".settings-section select").first.select_option(label="Sunday")
+    pg.keyboard.press("Escape")
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    if pg.locator(".view-tab:has-text('Calendar')").count():
+        pg.click(".view-tab:has-text('Calendar')")
+    pg.wait_for_selector(".cal-weekday")
+    assert pg.locator(".cal-weekday").first.text_content() == "Sun"
+    assert u.j("GET", "/auth/me")["prefs"]["week_start"] == 0
+    pg.reload()                                                       # remembered
+    pg.wait_for_selector(".cal-weekday")
+    assert pg.locator(".cal-weekday").first.text_content() == "Sun"
+    assert not pg.errors, pg.errors
+
+
+def test_dragging_columns(browser, table_user):
+    u, t, F = table_user
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    heads = lambda: [x.strip() for x in pg.locator("thead th .th-name").all_text_contents()]
+    assert heads()[:3] == ["Name", "Notes", "Status"]
+    pg.locator("thead th").filter(has_text="Status").drag_to(pg.locator("thead th").filter(has_text="Notes"))
+    expect(pg.locator("thead th .th-name").nth(1)).to_have_text("Status")
+    pg.wait_for_timeout(800)
+    pg.reload()
+    expect(pg.locator("thead th .th-name").nth(1)).to_have_text("Status")   # saved with the view
+    assert heads()[0] == "Name"                                            # the title column stays first
+    assert not pg.errors, pg.errors
+
+
+def test_pagination(browser):
+    u = Client()
+    t = u.table(name="Many")
+    F = u.fields(t["id"])
+    u.j("POST", f"/tables/{t['id']}/import", json={"columns": [{"target": F["Name"]}], "rows": [[f"Row {i:02d}"] for i in range(30)]})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    expect(rows(pg)).to_have_count(30)
+    pg.locator(".view-options label[title='Rows per page'] select").select_option("10")
+    expect(rows(pg)).to_have_count(10)
+    expect(pg.locator(".pager-text")).to_have_text("1–10 of 30")
+    pg.click(".pager [aria-label='Next page']")
+    expect(pg.locator(".pager-text")).to_have_text("11–20 of 30")
+    expect(rows(pg).first).to_contain_text("Row 10")
+    pg.fill(".view-options input[placeholder=Search]", "Row 2")             # searching goes back to page 1
+    expect(rows(pg)).to_have_count(10)
+    expect(rows(pg).first).to_contain_text("Row 20")
+    assert not pg.errors, pg.errors
+
+
+def test_combine_with_a_table_from_a_link(browser, table_user):
+    u, t, F = table_user
+    them = Client()
+    theirs = them.table(name="Partner stock")
+    TF = them.fields(theirs["id"])
+    them.j("POST", f"/tables/{theirs['id']}/records", json={"data": {TF["Name"]: "Partner chair"}})
+    s = them.j("POST", "/shares", json={"name": "Stock", "base_id": them.base_id, "items": [{"kind": "table", "id": theirs["id"]}]})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".page-head [aria-label=More]")
+    pg.click(".menu-item:has-text('Combine with other tables')")
+    pg.fill(".combo-link input.input", f"{BASE}/s/{s['token']}")
+    pg.click(".combo-link button:has-text('Add')")
+    expect(pg.locator(".source-row.active", has_text="Partner stock")).to_be_visible()
+    pg.click(".modal-foot button.primary")
+    pg.wait_for_url("**/#/combo/*", timeout=10000)
+    expect(pg.locator(".grid tbody")).to_contain_text("Partner chair", timeout=15000)   # arrives after the local rows
+    expect(pg.locator(".grid tbody")).to_contain_text("Chair")
+    expect(pg.locator(".sources-loading")).to_have_count(0)
+    assert not pg.errors, pg.errors

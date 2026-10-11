@@ -29,6 +29,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
   const [menu, setMenu] = useState<{ base: Base; anchor: HTMLElement } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showHidden, setShowHidden] = useState<Set<string>>(new Set());  // bases whose hidden tables are shown
   const is = (kind: string, id: string) => active?.kind === kind && active.id === id;
 
   const toggle = (id: string) => setCollapsed((c) => {
@@ -70,8 +71,13 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
 
         <div className="side-scroll">
           {ws.bases.map((b) => {
-            const tables = ws.tables.filter((t) => t.base_id === b.id);
-            const combos = ws.combos.filter((c) => c.base_id === b.id);
+            // hidden tables stay out of the list (unless open, or the base's hidden ones are shown)
+            const reveal = showHidden.has(b.id);
+            const allTables = ws.tables.filter((t) => t.base_id === b.id);
+            const allCombos = ws.combos.filter((c) => c.base_id === b.id);
+            const tables = allTables.filter((t) => !t.hidden || reveal || is("table", t.id));
+            const combos = allCombos.filter((c) => !c.hidden || reveal || is("combo", c.id));
+            const nHidden = allTables.filter((t) => t.hidden).length + allCombos.filter((c) => c.hidden).length;
             const isCollapsed = collapsed.has(b.id);
             return (
               <div key={b.id} className="base">
@@ -93,7 +99,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                 {!isCollapsed && (
                   <div className="base-items">
                     {tables.map((t) => (
-                      <button key={t.id} className={`side-item ${is("table", t.id) ? "active" : ""}`} onClick={() => onOpen("table", t.id)}>
+                      <button key={t.id} className={`side-item ${is("table", t.id) ? "active" : ""} ${t.hidden ? "is-hidden" : ""}`} onClick={() => onOpen("table", t.id)}>
                         <Icon name={tableIcon(t.kind)} size={15} />
                         <span className="side-name">{t.name}</span>
                         {t.kind === "remote"
@@ -102,13 +108,18 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                       </button>
                     ))}
                     {combos.map((c) => (
-                      <button key={c.id} className={`side-item ${is("combo", c.id) ? "active" : ""}`} onClick={() => onOpen("combo", c.id)}>
+                      <button key={c.id} className={`side-item ${is("combo", c.id) ? "active" : ""} ${c.hidden ? "is-hidden" : ""}`} onClick={() => onOpen("combo", c.id)}>
                         <Icon name="layers" size={15} />
                         <span className="side-name">{c.name}</span>
                         <span className="side-swatches">{c.sources.map((s) => <span key={s.table_id} style={{ background: s.color }} />)}</span>
                       </button>
                     ))}
-                    {!tables.length && !combos.length && <div className="muted small side-empty-note">No tables yet</div>}
+                    {!allTables.length && !allCombos.length && <div className="muted small side-empty-note">No tables yet</div>}
+                    {nHidden > 0 && (
+                      <button className="side-add" onClick={() => setShowHidden((s) => { const n = new Set(s); if (reveal) n.delete(b.id); else n.add(b.id); return n; })}>
+                        <Icon name="eye" size={13} /> {reveal ? "Hide hidden" : `Show ${nHidden} hidden`}
+                      </button>
+                    )}
                     <button className="side-add" onClick={() => onNewTable(b.id)}><Icon name="plus" size={13} /> New table</button>
                   </div>
                 )}

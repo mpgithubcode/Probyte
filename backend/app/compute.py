@@ -245,7 +245,7 @@ class Engine:
         if tid not in self._raw:
             rows = self.conn.execute(
                 "SELECT id, table_id, data, sync_status, created_at, updated_at, seq, created_by, updated_by, row_version "
-                "FROM records WHERE table_id = %s AND NOT deleted ORDER BY created_at, id", (tid,)).fetchall()
+                "FROM records WHERE table_id = %s AND NOT deleted ORDER BY created_at, seq, id", (tid,)).fetchall()  # seq: rows added together keep their order
             self._raw[tid] = [{**r, "data": dict(r["data"])} for r in rows]
         return self._raw[tid]
 
@@ -306,7 +306,7 @@ class Engine:
         out = [fresh_by_id.pop(str(r["id"]), r) for r in entry["recs"] if str(r["id"]) not in changed or str(r["id"]) in fresh_by_id]
         if fresh_by_id:  # new records
             out.extend(fresh_by_id.values())
-            out.sort(key=lambda r: (r["created_at"], str(r["id"])))
+            out.sort(key=lambda r: (r["created_at"], r.get("seq") or 0, str(r["id"])))
         total = self.conn.execute("SELECT count(*) AS n FROM records WHERE table_id = %s AND NOT deleted", (tid,)).fetchone()["n"]
         if total != len(out):
             return None  # rows were deleted outright: start over

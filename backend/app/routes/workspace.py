@@ -21,10 +21,10 @@ def workspace(user=User):
                                          (user["id"],)).fetchall() if store.base_allowed(b["id"])]
         allowed = {str(b["id"]) for b in bases}
         tables = [_table_out(t) for t in conn.execute(
-            "SELECT id, base_id, name, kind, account_id, calendar_url, last_synced_at, last_sync_error, remote FROM tables "
+            "SELECT id, base_id, name, kind, account_id, calendar_url, last_synced_at, last_sync_error, remote, hidden FROM tables "
             "WHERE user_id = %s ORDER BY created_at", (user["id"],)
         ).fetchall() if str(t["base_id"]) in allowed]
-        combos = [c for c in conn.execute("SELECT id, base_id, name, sources FROM combos WHERE user_id = %s ORDER BY created_at",
+        combos = [c for c in conn.execute("SELECT id, base_id, name, sources, hidden FROM combos WHERE user_id = %s ORDER BY created_at",
                                           (user["id"],)).fetchall() if str(c["base_id"]) in allowed]
         accounts = [] if user.get("api_key") else conn.execute(
             "SELECT * FROM caldav_accounts WHERE user_id = %s ORDER BY is_builtin DESC, created_at", (user["id"],)

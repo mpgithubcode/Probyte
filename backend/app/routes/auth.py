@@ -67,7 +67,24 @@ def logout(request: Request, response: Response):
 
 @router.get("/api/auth/me")
 def me(user=User):
-    return auth.public_user(user)
+    with connection() as conn:
+        row = conn.execute("SELECT prefs FROM users WHERE id = %s", (user["id"],)).fetchone()
+    return auth.public_user(user) | {"prefs": (row or {}).get("prefs") or {}}
+
+
+class PrefsIn(BaseModel):
+    week_start: int | None = None   # first day of the week: 0 = Sunday, 1 = Monday … 6 = Saturday
+
+
+@router.patch("/api/auth/prefs")
+def update_prefs(body: PrefsIn, user=User):
+    """Your own settings; only the ones you send change."""
+    patch = body.model_dump(exclude_none=True)
+    if "week_start" in patch and not 0 <= patch["week_start"] <= 6:
+        raise HTTPException(400, "week_start is 0 (Sunday) to 6 (Saturday)")
+    with connection() as conn:
+        row = conn.execute("UPDATE users SET prefs = prefs || %s WHERE id = %s RETURNING prefs", (Jsonb(patch), user["id"])).fetchone()
+    return row["prefs"]
 
 
 @router.post("/api/auth/password")

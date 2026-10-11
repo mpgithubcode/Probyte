@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { buttonAction } from "../buttonAction";
 import type { Dataset, Field, Rec, Refs, Source, View, ViewConfig } from "../types";
-import { applyView, choiceColor, hiddenIds } from "../util";
+import { applyView, choiceColor, hiddenIds, orderFields } from "../util";
 import { CalendarView } from "./CalendarView";
 import { RefsContext, setAttachmentBase } from "./Cells";
 import { ChartView } from "./ChartView";
@@ -12,6 +12,7 @@ import { Icon } from "./Icon";
 import { KanbanView } from "./KanbanView";
 import { ListView } from "./ListView";
 import { NewRecordForm, RecordModal, SourcePicker } from "./RecordModal";
+import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { TimelineView } from "./TimelineView";
 import { VIEW_TYPES, ViewOptions } from "./Toolbar";
 import type { Can, Ops } from "./viewTypes";
@@ -84,6 +85,11 @@ export function ShareApp({ token }: { token: string }) {
     sources: payload.sources ?? undefined, fields: payload.fields, views: payload.views, records: payload.records, refs: payload.refs,
   }, [payload]);
 
+  const viewType = payload?.view.type;
+  const allRecords = useMemo(() => (ds && payload ? applyView(ds.records, ds.fields, config, search, ds.refs) : []), [ds, payload, config, search]);
+  const paging = usePaged(allRecords, viewType && PAGED_VIEWS.has(viewType) ? config.pageSize : undefined,
+    `${viewId}|${search}|${JSON.stringify(config.filter ?? config.filters ?? null)}|${JSON.stringify(config.sorts ?? null)}`);
+
   if (meta === null) return <div className="boot">Loading…</div>;
   if (meta === "missing") return <div className="boot share-missing"><Icon name="lock" size={28} /><p>This link doesn't exist or is no longer available.</p></div>;
   if (meta.needs_password) return <PasswordGate meta={meta} base={base} onUnlocked={loadMeta} />;
@@ -152,9 +158,9 @@ export function ShareApp({ token }: { token: string }) {
     },
   };
 
-  const records = ds && view ? applyView(ds.records, ds.fields, config, search, ds.refs) : [];
+  const records = view && PAGED_VIEWS.has(view.type) ? paging.items : allRecords;
   const hidden = ds ? hiddenIds(ds.fields, config) : new Set<string>();
-  const visible = ds ? ds.fields.filter((f) => !hidden.has(f.id)) : [];
+  const visible = ds ? orderFields(ds.fields, config.fieldOrder).filter((f) => !hidden.has(f.id)) : [];
   const props = ds && view ? { ds, view, fields: ds.fields, visible, records, ops, setConfig: (p: Partial<ViewConfig>) => setLocalConfig((c) => ({ ...c, ...p })) } : null;
   const rec = openRec && ds ? ds.records.find((r) => r.id === openRec) : undefined;
   const current = meta.items.find((i) => i.views.some((v) => v.id === viewId));
@@ -199,6 +205,7 @@ export function ShareApp({ token }: { token: string }) {
           {props && view?.type === "list" && <ListView {...props} />}
           {props && view?.type === "gallery" && <GalleryView {...props} />}
           {props && view?.type === "chart" && <ChartView {...props} />}
+          {view && PAGED_VIEWS.has(view.type) && <Pager {...paging} />}
         </main>
         {!embed && <footer className="share-foot">Shared with <a href="/" target="_blank" rel="noreferrer">Probyte</a></footer>}
         {rec && ds && (

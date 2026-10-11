@@ -6,6 +6,7 @@ import { LoginPage } from "./components/LoginPage";
 import type { Tab as SettingsTab } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import type { User, Workspace } from "./types";
+import { setWeekStart } from "./util";
 
 const ComboModal = lazy(() => import("./components/ComboModal").then((m) => ({ default: m.ComboModal })));
 const NewTableModal = lazy(() => import("./components/NewTableModal").then((m) => ({ default: m.NewTableModal })));
@@ -34,11 +35,13 @@ export default function App() {
   }, []);
 
   if (user === undefined) return <div className="boot">Loading Probyte…</div>;
-  if (user === null) return <LoginPage onLogin={setUser} />;
-  return <WorkspaceShell key={user.id} user={user} onLogout={() => setUser(null)} />;
+  setWeekStart(user?.prefs?.week_start);
+  // after signing in, load the full profile (with settings such as the first day of the week)
+  if (user === null) return <LoginPage onLogin={(u) => { setUser(u); api.get<User>("/auth/me").then(setUser).catch(() => undefined); }} />;
+  return <WorkspaceShell key={user.id} user={user} onLogout={() => setUser(null)} onUserChanged={setUser} />;
 }
 
-function WorkspaceShell({ user, onLogout }: { user: User; onLogout: () => void }) {
+function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogout: () => void; onUserChanged: (u: User) => void }) {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [route, setRoute] = useState<Route | null>(parseHash);
   const [modal, setModal] = useState<"table" | "combo" | "settings" | null>(null);
@@ -91,6 +94,7 @@ function WorkspaceShell({ user, onLogout }: { user: User; onLogout: () => void }
 
       {route ? (
         <DatasetPage key={`${route.kind}:${route.id}`} kind={route.kind} id={route.id} viewId={route.viewId} tables={ws.tables} me={user}
+          hiddenInSidebar={!!(route.kind === "table" ? ws.tables : ws.combos).find((x) => x.id === route.id)?.hidden}
           bases={ws.bases} onMenu={() => setDrawer(true)}
           onNavigate={(viewId) => go({ ...route, viewId })}
           onWorkspaceChanged={(goHome) => { loadWs(); if (goHome) go(null); }}
@@ -116,7 +120,7 @@ function WorkspaceShell({ user, onLogout }: { user: User; onLogout: () => void }
         <ComboModal tables={ws.tables.filter((t) => t.base_id === modalBase)} baseId={modalBase} onClose={() => setModal(null)}
           onSaved={(id) => { loadWs(); go({ kind: "combo", id }); }} />
       )}
-      {modal === "settings" && <SettingsModal user={user} ws={ws} initialTab={settingsTab} onClose={() => setModal(null)} onAccountsChanged={loadWs} />}
+      {modal === "settings" && <SettingsModal user={user} ws={ws} initialTab={settingsTab} onClose={() => setModal(null)} onAccountsChanged={loadWs} onUserChanged={onUserChanged} />}
       </Suspense>
 
       {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}

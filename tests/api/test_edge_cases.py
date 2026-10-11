@@ -185,8 +185,13 @@ def test_webhook_retries_after_server_errors(user):
     new(user, t["id"], {F["Name"]: "again"})
     got = rx.wait(2, timeout=30)                                          # first answer 500, retried after ~5 s
     assert len(got) >= 2 and got[0]["id"] == got[1]["id"]                 # same delivery id
-    hooks = user.j("GET", "/v1/webhooks")["webhooks"]
-    assert next(x for x in hooks if x["id"] == h["id"])["last_status"] == 200
+    status = None
+    for _ in range(40):  # the receiver logs the request before answering; the result is saved just after
+        status = next(x for x in user.j("GET", "/v1/webhooks")["webhooks"] if x["id"] == h["id"])["last_status"]
+        if status == 200:
+            break
+        time.sleep(0.25)
+    assert status == 200
 
 
 def test_disabled_webhook_sends_nothing(user):

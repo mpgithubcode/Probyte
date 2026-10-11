@@ -156,6 +156,8 @@ def update_table(table_id: str, body: TablePatch, user=User):
         if body.base_id:
             store.get_base(conn, body.base_id, user["id"])
             conn.execute("UPDATE tables SET base_id = %s WHERE id = %s", (body.base_id, table_id))
+        if body.hidden is not None:
+            conn.execute("UPDATE tables SET hidden = %s WHERE id = %s", (body.hidden, table_id))
         return _table_out(store.get_table(conn, table_id))
 
 

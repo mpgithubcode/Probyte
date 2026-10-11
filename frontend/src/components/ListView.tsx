@@ -1,6 +1,6 @@
 import { useContext, useMemo, useState } from "react";
 import type { Field, Rec, ViewConfig } from "../types";
-import { buildGroups, recordTitle, viewGroups, type GroupNode } from "../util";
+import { buildGroups, isEditable, recordTitle, viewGroups, type GroupNode } from "../util";
 import { CellValue, Chip, RefsContext } from "./Cells";
 import { Icon } from "./Icon";
 import { useVirtualRows } from "./useVirtualRows";
@@ -22,47 +22,101 @@ export function listLayout(visible: Field[], config: ViewConfig): { field: Field
   const usable = visible.filter((f) => !f.is_primary && f.id !== "__source" && f.type !== "button");
   const placed = (config.listProps ?? []).flatMap((p) => { const f = usable.find((x) => x.id === p.field); return f ? [{ field: f, align: p.align }] : []; });
   const rest = usable.filter((f) => !placed.some((p) => p.field.id === f.id) && f.type !== "long_text").map((f) => ({ field: f, align: "right" as const }));
-  return [...placed, ...rest];
+  // the Completed box sits at the far right unless it was placed somewhere
+  const done = rest.filter((p) => p.field.system_key === "done");
+  return [...placed, ...rest.filter((p) => p.field.system_key !== "done"), ...done];
 }
 
 /** Minimal one-line-per-record layout: title on the left, a few properties on the right. */
-export function ListView({ fields, visible, records, view, ops }: ViewProps) {
-  const props = listLayout(visible, view.config);
-  const labels = view.config.listLabels !== false;
-  const zones = (["left", "center", "right"] as const).map((zone) => {
-    const items = props.filter((p) => p.align === zone);
-    // fixed column widths: the same on every row, so properties line up straight down the list
-    return { zone, items, cols: items.map((p) => `minmax(${Math.min(80, propWidth(p.field, labels))}px, ${propWidth(p.field, labels)}px)`).join(" ") };
-  });
-  // one zone of a row: fixed columns (the same on every row), so values line up straight down the list
-  const zone = (z: (typeof zones)[number], r: Rec) => (
-    <span className={`list-zone ${z.zone}`} style={{ gridTemplateColumns: z.cols || undefined }}>
-      {z.items.map(({ field: f }) => (
-        <span key={f.id} className="list-prop" title={isSet(r.data[f.id]) ? f.name : undefined}>
-          {isSet(r.data[f.id]) && <>
-            {labels && <span className="list-prop-name">{f.name}</span>}
-            <span className="list-prop-value"><CellValue field={f} value={r.data[f.id]} /></span>
-          </>}
-        </span>
-      ))}
-    </span>
-  );
+export function ListView({ ds, fields, visible, records, view, ops }: ViewProps) {
   const { refs } = useContext(RefsContext);
   const specs = viewGroups(view.config);
   const specKey = specs.map((g) => `${g.field}:${g.dir}:${g.hideTitle ? 1 : 0}${g.noArrow ? 1 : 0}`).join(",");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const rows = useMemo<({ g: GroupNode } | { r: Rec })[]>(() => {
-    if (!specs.length) return records.map((r) => ({ r }));
-    const out: ({ g: GroupNode } | { r: Rec })[] = [];
-    const walk = (nodes: GroupNode[]) => nodes.forEach((g) => {
+  // rows sit indented under their group headers (depth = how many headers are above them)
+  const rows = useMemo<({ g: GroupNode } | { r: Rec; depth: number })[]>(() => {
+    if (!specs.length) return records.map((r) => ({ r, depth: 0 }));
+    const out: ({ g: GroupNode } | { r: Rec; depth: number })[] = [];
+    const walk = (nodes: GroupNode[], depth: number) => nodes.forEach((g) => {
       if (!g.spec.hideTitle) out.push({ g });
       if (!g.spec.hideTitle && !g.spec.noArrow && collapsed.has(g.path)) return;
-      if (g.children) walk(g.children); else g.records.forEach((r) => out.push({ r }));
+      const inner = depth + (g.spec.hideTitle ? 0 : 1);
+      if (g.children) walk(g.children, inner); else g.records.forEach((r) => out.push({ r, depth: inner }));
     });
-    walk(buildGroups(records, specs, fields, refs));
+    walk(buildGroups(records, specs, fields, refs), 0);
     return out;
   }, [records, specKey, fields, refs, collapsed]);
   const win = useVirtualRows(rows.length, 42, 12);  // 42px rows (.list-row, .list-group), 12px top padding
+  const width = win.width;
+  const narrow = width > 0 && width < 760;
+  const labels = view.config.listLabels !== false && !narrow;
+  // Show the properties that fit at a readable width, in order (the Completed box first); the rest are left out
+  // whole rather than squeezing every column into a sliver. Room for the title is kept.
+  const all = listLayout(visible, view.config);
+  const props = useMemo(() => {
+    if (!width) return all;
+    const gap = narrow ? 6 : 12;
+    const need = (p: (typeof all)[number]) => propWidth(p.field, labels) + gap;
+    const indent = 22 * Math.max(0, ...rows.map((x) => ("r" in x ? x.depth : 0)));
+    const title = narrow ? 110 : 180;
+    const inner = width - 40 - 24 - indent;  // padding, dot + gaps, group indent
+    const keep = new Set<string>();
+    // each zone fills its own room, in order, the Completed box first; what doesn't fit is left out
+    const fill = (zone: "left" | "center" | "right", room: number) => {
+      const items = all.filter((p) => p.align === zone);
+      for (const p of [...items.filter((x) => x.field.system_key === "done"), ...items.filter((x) => x.field.system_key !== "done")]) {
+        if (need(p) > room) break;  // columns drop off from the end as the list gets narrower
+        keep.add(p.field.id);
+        room -= need(p);
+      }
+      return room;
+    };
+    if (all.some((p) => p.align === "center")) {
+      // the center sits in the middle: both sides get the same room
+      const before = keep.size;
+      fill("center", inner * 0.4);
+      const centerUsed = all.filter((p) => p.align === "center" && keep.has(p.field.id)).reduce((n, p) => n + need(p), 0) + (keep.size > before ? 28 : 0);
+      const side = (inner - centerUsed) / 2;
+      fill("left", side - title);
+      fill("right", side);
+    } else {
+      fill("right", fill("left", inner - title));  // left first, the right side takes what's left
+    }
+    return all.filter((p) => keep.has(p.field.id));
+  }, [all.map((p) => `${p.field.id}:${p.align}`).join(), width, labels, narrow, rows]);
+  const zones = (["left", "center", "right"] as const).map((zone) => {
+    const items = props.filter((p) => p.align === zone);
+    // the same column widths on every row, so properties line up straight down the list; they shrink together
+    // (never below zero) when the row is narrow, instead of running off the edge
+    return { zone, items, cols: items.map((p) => `minmax(0, ${propWidth(p.field, labels)}px)`).join(" ") };
+  });
+  // An event's Completed box is calculated (ticked once it's over), so it can't be clicked.
+  const componentF = fields.find((x) => x.system_key === "component");
+  const eventDone = (f: Field, r: Rec) => f.system_key === "done"
+    && (ds.table?.kind === "events" || (!!componentF && r.data[componentF.id] === "Event"));
+  const value = (f: Field, r: Rec) => {
+    if (f.type === "checkbox") {  // true/false fields are boxes, ticked or not, and can be ticked right here
+      const locked = !ops.can.edit || !isEditable(f) || eventDone(f, r);
+      return (
+        <span className="list-prop-value">
+          <input type="checkbox" className="checkbox" checked={!!r.data[f.id]} disabled={locked} aria-label={f.name}
+            onClick={(e) => e.stopPropagation()} onChange={(e) => ops.update(r, { [f.id]: e.target.checked })} />
+        </span>
+      );
+    }
+    return isSet(r.data[f.id]) ? <span className="list-prop-value"><CellValue field={f} value={r.data[f.id]} /></span> : null;
+  };
+  // one zone of a row: fixed columns (the same on every row), so values line up straight down the list
+  const zone = (z: (typeof zones)[number], r: Rec) => (
+    <span className={`list-zone ${z.zone}`} style={{ gridTemplateColumns: z.cols || undefined }}>
+      {z.items.map(({ field: f }) => (
+        <span key={f.id} className={`list-prop ${f.type === "checkbox" ? "check" : ""}`} title={f.name}>
+          {(isSet(r.data[f.id]) || f.type === "checkbox") && labels && <span className="list-prop-name">{f.name}</span>}
+          {value(f, r)}
+        </span>
+      ))}
+    </span>
+  );
   return (
     <div className="list-view" ref={win.ref}>
       {win.padTop > 0 && <div style={{ height: win.padTop, flexShrink: 0 }} />}
@@ -83,7 +137,8 @@ export function ListView({ fields, visible, records, view, ops }: ViewProps) {
         const r = row.r;
         const color = ops.colorFor(r, view.config.colorField);
         return (
-          <div key={r.id} className={`list-row ${zones[1].items.length ? "has-center" : ""}`} onClick={() => ops.open(r)}>
+          <div key={r.id} className={`list-row ${zones[1].items.length ? "has-center" : ""}`} onClick={() => ops.open(r)}
+            style={row.depth ? { paddingLeft: 10 + row.depth * 22 } : undefined}>
             <span className="list-start">
               <span className="list-dot" style={{ background: color ?? "var(--border-strong)" }} />
               <span className="list-title">{recordTitle(fields, r)}</span>

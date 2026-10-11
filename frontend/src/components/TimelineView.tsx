@@ -1,9 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent as RPointerEvent } from "react";
 import type { Field, Rec } from "../types";
-import { addDaysKey, dayKey, isDateField, isEditable, keyOf, parseKey, recordTitle, shiftValue } from "../util";
+import { addDaysKey, dayKey, isDateField, isEditable, keyOf, parseKey, recordTitle, shiftValue, weekStartsOn } from "../util";
 import { expandRecords } from "../recur";
 import { Icon } from "./Icon";
-import { holdToDrag } from "./touchDrag";
 import { useNarrow } from "./useNarrow";
 import { useVirtualRows } from "./useVirtualRows";
 import type { ViewProps } from "./viewTypes";
@@ -126,8 +125,7 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
     e.stopPropagation();
     const editable = canEdit(startField) || (!!endField && canEdit(endField));
     const begin = (x: number) => { dragRef.current = { id: rec.id, mode, x0: x, delta: 0 }; setDrag(dragRef.current); };
-    // touch: a tap opens it, a swipe scrolls, holding it for 3 s picks it up
-    if (holdToDrag(e, { onTap: () => ops.open(rec), onStart: (x) => (editable ? begin(x) : ops.open(rec)) })) return;
+    if (e.pointerType === "touch") return;  // touch: no dragging; a tap opens it (onClick below), a swipe scrolls
     e.preventDefault();
     if (!editable) { ops.open(rec); return; }
     begin(e.clientX);
@@ -170,7 +168,7 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
                 <div className="tl-days">
                   {days.map((d, i) => {
                     const dt = parseKey(d);
-                    const show = scale === "day" || dt.getDay() === 1;
+                    const show = scale === "day" || dt.getDay() === weekStartsOn();
                     return show ? (
                       <div key={d} className={`tl-daylabel ${d === today ? "today" : ""}`} style={{ left: i * S.px, width: scale === "day" ? S.px : S.px * 7 }}>
                         {scale === "day" ? `${dt.toLocaleDateString(undefined, { weekday: "narrow" })} ${dt.getDate()}` : dt.getDate()}
@@ -219,7 +217,8 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
                   <>
                     <div className={`tl-bar ${drag?.id === r.id ? "dragging" : ""}`}
                       style={{ left: left + 1, width: w, background: `color-mix(in srgb, ${color} 22%, var(--bg))`, borderColor: color }}
-                      onPointerDown={(e) => startDrag(e, r, "move")} title={recordTitle(fields, r)}>
+                      onPointerDown={(e) => startDrag(e, r, "move")} title={recordTitle(fields, r)}
+                      onClick={(e) => { if ((e.nativeEvent as PointerEvent).pointerType === "touch") ops.open(r); }}>
                       {canEdit(startField) && <span className="tl-handle l" onPointerDown={(e) => startDrag(e, r, "start")} />}
                       {inside && <span className="tl-bar-label">{recordTitle(fields, r)}</span>}
                       {endField && canEdit(endField) && <span className="tl-handle r" onPointerDown={(e) => startDrag(e, r, "end")} />}

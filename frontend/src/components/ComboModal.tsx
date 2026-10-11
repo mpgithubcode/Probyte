@@ -27,6 +27,35 @@ export function ComboModal({ tables, baseId, combo, initialTables, initialName, 
   const [tab, setTab] = useState<"sources" | "mapping">("sources");
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // a table from another Probyte's public link, added as a linked table and picked as a source
+  const [added, setAdded] = useState<TableInfo[]>([]);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkPw, setLinkPw] = useState("");
+  const [needsPw, setNeedsPw] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const allTables = [...tables, ...added.filter((a) => !tables.some((t) => t.id === a.id))];
+
+  const addFromLink = async () => {
+    setError("");
+    setLinking(true);
+    try {
+      const meta = await api.post<{ needs_password: boolean; view_hint: string | null; items: { id: string; name: string; views: { id: string }[] }[] }>(
+        "/remote/inspect", { url: linkUrl.trim(), password: linkPw || undefined });
+      if (meta.needs_password) { setNeedsPw(true); setError("This link has a password"); return; }
+      const item = meta.items.find((i) => i.views.some((v) => v.id === meta.view_hint)) ?? meta.items[0];
+      if (!item) { setError("Nothing is shared through this link"); return; }
+      const view = item.views.find((v) => v.id === meta.view_hint) ?? item.views[0];
+      const t = await api.post<TableInfo>("/tables", { name: item.name, kind: "remote", base_id: baseId,
+        remote: { url: linkUrl.trim(), password: linkPw || undefined, item_id: item.id, view_id: view.id } });
+      setAdded((a) => [...a, t]);
+      setSources((s) => [...s, { table_id: t.id, color: PALETTE[s.length % PALETTE.length], name: t.name }]);
+      setLinkUrl(""); setLinkPw(""); setNeedsPw(false);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg === "password_required") { setNeedsPw(true); setError(linkPw ? "Wrong password" : "This link has a password"); }
+      else setError(msg);
+    } finally { setLinking(false); }
+  };
 
   useEffect(() => {
     if (!combo) return;
@@ -71,7 +100,7 @@ export function ComboModal({ tables, baseId, combo, initialTables, initialName, 
     }));
 
   const tableName = (id: string) =>
-    tables.find((t) => t.id === id)?.name ?? combo?.sources.find((s) => s.table_id === id)?.name ?? "?";
+    allTables.find((t) => t.id === id)?.name ?? combo?.sources.find((s) => s.table_id === id)?.name ?? "?";
 
   return (
     <Modal title={combo ? "Edit combined database" : "New combined database"} width={combo && tab === "mapping" ? 760 : 520} onClose={onClose}
@@ -98,7 +127,7 @@ export function ComboModal({ tables, baseId, combo, initialTables, initialName, 
           <div className="stack">
             <span>Tables to show together</span>
             <div className="source-list">
-              {tables.map((t) => {
+              {allTables.map((t) => {
                 const sel = sources.find((s) => s.table_id === t.id);
                 return (
                   <div key={t.id} className={`source-row ${sel ? "active" : ""}`}>
@@ -112,7 +141,19 @@ export function ComboModal({ tables, baseId, combo, initialTables, initialName, 
                   </div>
                 );
               })}
-              {!tables.length && <p className="muted">Create some tables in this base first.</p>}
+              {!allTables.length && <p className="muted">Create some tables in this base first, or add one from a link below.</p>}
+            </div>
+            <div className="stack combo-link">
+              <span className="muted small">From another Probyte (a public link, on this server or any other)</span>
+              <div className="row">
+                <input className="input" value={linkUrl} placeholder="https://their-probyte.example.com/s/AbC123"
+                  onChange={(e) => setLinkUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && linkUrl.trim() && addFromLink()} />
+                {needsPw && <input className="input" type="password" value={linkPw} placeholder="Password" style={{ maxWidth: 160 }}
+                  onChange={(e) => setLinkPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addFromLink()} />}
+                <button className="btn" disabled={!linkUrl.trim() || linking} onClick={addFromLink}>
+                  {linking ? <Icon name="sync" size={14} className="spin" /> : <Icon name="link" size={14} />} Add
+                </button>
+              </div>
             </div>
             <p className="hint">Fields are matched automatically (Title ↔ Title, Due ↔ End, Tags ↔ Tags…). You can adjust the mapping afterwards.</p>
           </div>

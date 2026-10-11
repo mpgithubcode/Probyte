@@ -1,11 +1,10 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { Field, Rec } from "../types";
 import { isEditable, recordTitle } from "../util";
 import { CellValue, Chip } from "./Cells";
 import { Icon } from "./Icon";
 import { Popover } from "./Overlay";
 import { isTouch } from "./useNarrow";
-import { holdToDrag } from "./touchDrag";
 import type { ViewProps } from "./viewTypes";
 
 export function CardBody({ rec, fields, skip }: { rec: Rec; fields: Field[]; skip?: string[] }) {
@@ -33,8 +32,6 @@ export function KanbanView({ fields, visible, records, view, ops, setConfig }: V
   const groupField = fields.find((f) => f.id === view.config.groupBy && f.type === "single_select");
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  const [touch, setTouch] = useState<{ rec: Rec; x: number; y: number } | null>(null);  // a card picked up by holding it
-  const suppressClick = useRef(false);
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [moveMenu, setMoveMenu] = useState<{ rec: Rec; anchor: HTMLElement } | null>(null);
 
@@ -59,7 +56,6 @@ export function KanbanView({ fields, visible, records, view, ops, setConfig }: V
   const known = new Set(columns.map((c) => c.name));
   const keyOf = (r: Rec) => { const v = r.data[groupField.id]; return v && known.has(v) ? v : null; };
   const canDrag = canEdit(groupField);
-  const colAt = (x: number, y: number) => (document.elementFromPoint(x, y)?.closest("[data-col]") as HTMLElement | null)?.dataset.col ?? null;
   const blank = (r: Rec) => [...fields.filter((f) => f.is_primary), ...visible].every((f) => {
     if (f.id === groupField.id || f.id === "__source" || f.computed) return true;  // the column and calculated values don't count
     const v = r.data[f.id];
@@ -94,16 +90,7 @@ export function KanbanView({ fields, visible, records, view, ops, setConfig }: V
                   style={{ borderLeftColor: ops.colorFor(r) ?? "transparent" }}
                   onDragStart={(e) => { setDragId(r.id); e.dataTransfer.effectAllowed = "move"; }}
                   onDragEnd={() => { setDragId(null); setOver(null); }}
-                  onPointerDown={(e) => { if (canDrag && !(e.target as HTMLElement).closest(".card-move")) holdToDrag(e, {
-                    onStart: (x, y) => { suppressClick.current = true; setDragId(r.id); setTouch({ rec: r, x, y }); },
-                    onMove: (x, y) => { setTouch((t) => t && { ...t, x, y }); setOver(colAt(x, y)); },
-                    onEnd: (x, y) => {
-                      const c = colAt(x, y);
-                      if (c !== null) { const name = c === "__none" ? null : c; if (keyOf(r) !== name) ops.update(r, { [groupField.id]: name }); }
-                      setTouch(null); setDragId(null); setOver(null);
-                    },
-                  }); }}
-                  onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } ops.open(r); }}>
+                  onClick={() => ops.open(r)}>
                   {isTouch && canDrag && (
                     <button className="card-move" title="Move to…" aria-label="Move to another column"
                       onClick={(e) => { e.stopPropagation(); setMoveMenu({ rec: r, anchor: e.currentTarget }); }}>
@@ -127,11 +114,6 @@ export function KanbanView({ fields, visible, records, view, ops, setConfig }: V
           </div>
         );
       })}
-      {touch && (
-        <div className="touch-ghost card" style={{ left: touch.x, top: touch.y }}>
-          <div className="card-title">{recordTitle(fields, touch.rec)}</div>
-        </div>
-      )}
       {moveMenu && (
         <Popover anchor={moveMenu.anchor} onClose={() => setMoveMenu(null)} width={220}>
           <div className="menu-heading">Move to</div>

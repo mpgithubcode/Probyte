@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from "react";
  */
 export function useVirtualRows(count: number, rowHeight: number, offset = 0, overscan = 12) {
   const [el, setEl] = useState<HTMLElement | null>(null);
-  const [view, setView] = useState({ top: 0, height: 800 });
+  const [view, setView] = useState({ top: 0, height: 800, width: 0 });
   const ref = useCallback((node: HTMLElement | null) => setEl(node), []);
 
   useEffect(() => {
@@ -16,7 +16,7 @@ export function useVirtualRows(count: number, rowHeight: number, offset = 0, ove
     let frame = 0;
     const update = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => setView({ top: el.scrollTop, height: el.clientHeight }));
+      frame = requestAnimationFrame(() => setView({ top: el.scrollTop, height: el.clientHeight, width: el.clientWidth }));
     };
     update();
     el.addEventListener("scroll", update, { passive: true });
@@ -27,5 +27,5 @@ export function useVirtualRows(count: number, rowHeight: number, offset = 0, ove
 
   const start = Math.min(count, Math.max(0, Math.floor((view.top - offset) / rowHeight) - overscan));
   const end = Math.max(start, Math.min(count, Math.ceil((view.top - offset + view.height) / rowHeight) + overscan));
-  return { ref, el, start, end, padTop: start * rowHeight, padBottom: (count - end) * rowHeight };
+  return { ref, el, start, end, width: view.width, padTop: start * rowHeight, padBottom: (count - end) * rowHeight };
 }

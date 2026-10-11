@@ -96,6 +96,7 @@ class TableIn(BaseModel):
 class TablePatch(BaseModel):
     name: str | None = None
     base_id: str | None = None
+    hidden: bool | None = None  # left out of the sidebar
 
 
 class FieldIn(BaseModel):
@@ -159,6 +160,7 @@ class ComboPatch(BaseModel):
     base_id: str | None = None
     sources: list[ComboSource] | None = None
     fields: list[ComboField] | None = None
+    hidden: bool | None = None
     remap: bool = False  # rebuild the field mapping automatically from the sources
 
 

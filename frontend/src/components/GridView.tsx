@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Field, Rec } from "../types";
-import { buildGroups, fitField, isEditable, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
+import { buildGroups, fitField, isEditable, orderFields, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
+import { isTouch } from "./useNarrow";
 import { CellValue, Chip, FieldInput, RefsContext } from "./Cells";
 import { anchorOf } from "../recur";
 import { FieldIcon, Icon } from "./Icon";
@@ -22,6 +23,17 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
   const { refs } = useContext(RefsContext);
   const [editing, setEditing] = useState<{ rec: string; field: string } | null>(null);
   const [menu, setMenu] = useState<{ field: Field; anchor: HTMLElement } | null>(null);
+  // dragging a column header to a new place (mouse only): the order is saved with the view
+  const [dragCol, setDragCol] = useState<string | null>(null);
+  const [overCol, setOverCol] = useState<string | null>(null);
+  const moveColumn = (from: string, to: string) => {
+    if (from === to) return;
+    const ids = orderFields(fields, view.config.fieldOrder).map((f) => f.id);
+    const without = ids.filter((id) => id !== from);
+    const at = without.indexOf(to) + (ids.indexOf(from) < ids.indexOf(to) ? 1 : 0);  // dropped on a column: take its place
+    without.splice(at, 0, from);
+    setConfig({ fieldOrder: without });
+  };
 
   // ---- grouping
   const groupSpecs = viewGroups(view.config);
@@ -164,6 +176,13 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
             </th>
             {visible.map((f) => (
               <th key={f.id} style={{ width: WIDTHS[f.type] ?? 200 }} title={f.options._error ?? undefined}
+                className={`${dragCol === f.id ? "col-dragging" : ""} ${overCol === f.id && dragCol && dragCol !== f.id
+                  ? (visible.findIndex((x) => x.id === dragCol) < visible.findIndex((x) => x.id === f.id) ? "col-over-after" : "col-over") : ""}`}
+                draggable={!f.is_primary && !isTouch}
+                onDragStart={(e) => { setDragCol(f.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", f.id); }}
+                onDragOver={(e) => { if (dragCol && !f.is_primary) { e.preventDefault(); setOverCol(f.id); } }}
+                onDragEnd={() => { setDragCol(null); setOverCol(null); }}
+                onDrop={(e) => { e.preventDefault(); if (dragCol) moveColumn(dragCol, f.id); setDragCol(null); setOverCol(null); }}
                 onClick={(e) => setMenu({ field: f, anchor: e.currentTarget })}>
                 <div className="th-inner">
                   <FieldIcon type={f.type} />

@@ -789,20 +789,25 @@ def _project(fields, src_name, tid, record):
     return {**clean_record(record), "data": data}
 
 
-def combo_records(conn, combo, engine=None):
+def combo_records(conn, combo, engine=None, only: set | None = None):
+    """Records of a combined database, projected onto its fields. `only`: just these source tables."""
     eng = engine or Engine(conn)
     sources, fields = resolve_combo(conn, combo, eng)
     out = []
     for s in sources:
+        if only is not None and str(s["table_id"]) not in only:
+            continue
         for r in list_records(conn, s["table_id"], eng):
             out.append(_project(fields, s["name"], s["table_id"], r))
     out.sort(key=lambda r: r["created_at"])
     return out
 
 
-def combo_refs(conn, combo, engine):
+def combo_refs(conn, combo, engine, only: set | None = None):
     refs = {"records": {}, "users": {}}
     for s in combo["sources"]:
+        if only is not None and str(s["table_id"]) not in only:
+            continue
         try:
             recs = engine.records(s["table_id"])
         except Exception:

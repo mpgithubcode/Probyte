@@ -94,6 +94,8 @@ export interface ViewConfig {
   hideUnassigned?: boolean;                               // Board: hide the "No <field>" column
   hideBlankCards?: boolean;                               // Board: hide cards with no title and no values
   listProps?: { field: string; align: "left" | "center" | "right" }[];  // List: property order and placement
+  fieldOrder?: string[];
+  pageSize?: number;  // table / list / gallery: records per page (unset = all)  // column order dragged in the table view (also used for cards)
   listLabels?: boolean;                                   // List: show property names (default on)
   calMode?: "month" | "week" | "day";                     // Calendar
   dateField?: string;
@@ -129,6 +131,7 @@ export interface TableInfo {
   id: string;
   base_id: string;
   name: string;
+  hidden?: boolean;  // left out of the sidebar
   kind: TableKind;
   account_id: string | null;
   calendar_url: string | null;
@@ -147,7 +150,8 @@ export interface Account {
   is_builtin: boolean;
 }
 
-export interface User { id: string; username: string; is_admin: boolean }
+export interface Prefs { week_start?: number }  // 0 = Sunday … 6 = Saturday
+export interface User { id: string; username: string; is_admin: boolean; prefs?: Prefs }
 
 export interface DavInfo {
   enabled: boolean;
@@ -157,7 +161,7 @@ export interface DavInfo {
   password: string | null;
 }
 
-export interface ComboSummary { id: string; base_id: string; name: string; sources: { table_id: string; color: string }[] }
+export interface ComboSummary { id: string; base_id: string; name: string; sources: { table_id: string; color: string }[]; hidden?: boolean }
 
 export interface LinkSource { table_id: string; name: string; color?: string | null; kind?: string }
 export interface Source { table_id: string; name: string; kind: TableKind; color: string; link_sources?: LinkSource[] | null }
@@ -198,4 +202,5 @@ export interface Dataset {
   refs: Refs;
   token?: string | null;  // where these records stand, for fetching just the changes (tables only)
   loadedAt?: number;      // when it was last loaded in full
+  pending?: string[];     // combined databases: linked-table sources still loading
 }

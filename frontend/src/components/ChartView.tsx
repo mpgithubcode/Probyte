@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { ChartConfig, Field, Rec, Refs } from "../types";
-import { addDaysKey, dayKey, displayText, innerField, parseKey, valueType } from "../util";
+import { addDaysKey, dayKey, dayOfWeek, displayText, innerField, parseKey, valueType } from "../util";
 import { Icon } from "./Icon";
 import type { ViewProps } from "./viewTypes";
 
@@ -15,7 +15,7 @@ const DEFAULT_CHART: ChartConfig = { type: "bar", agg: "count", bucket: "month" 
 
 function weekStart(k: string) {
   const d = parseKey(k);
-  return addDaysKey(k, -((d.getDay() + 6) % 7));
+  return addDaysKey(k, -dayOfWeek(d));
 }
 
 function bucketKeys(field: Field, v: unknown, bucket: ChartConfig["bucket"], refs?: Refs): string[] {

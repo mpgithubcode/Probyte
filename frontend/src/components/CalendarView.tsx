@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Field, Rec } from "../types";
-import { addDaysKey, dayKey, formatTime, isDateField, isEditable, keyOf, parseKey, recordTitle, shiftValue } from "../util";
+import { addDaysKey, dayKey, dayOfWeek, formatTime, isDateField, isEditable, keyOf, parseKey, recordTitle, shiftValue, weekdayNames, weekStartsOn } from "../util";
 import { expandRecords, overrideKey, setOverride } from "../recur";
 import { TimeGrid } from "./CalendarTimeGrid";
 import { Icon } from "./Icon";
 import { isTouch, useNarrow } from "./useNarrow";
-import { holdToDrag } from "./touchDrag";
 import type { ViewProps } from "./viewTypes";
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const occKey = (r: Rec) => `${r.id}:${r.occurrence ?? ""}`;
 const MAX_SPAN_DAYS = 62;
 
@@ -21,9 +19,6 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [dragId, setDragId] = useState<string | null>(null);
   const [overDay, setOverDay] = useState<string | null>(null);
-  const [touch, setTouch] = useState<{ rec: Rec; x: number; y: number } | null>(null);  // an item picked up by holding it
-  const suppressClick = useRef(false);
-  const dayAt = (x: number, y: number) => (document.elementFromPoint(x, y)?.closest("[data-day]") as HTMLElement | null)?.dataset.day ?? null;
   const today = keyOf(new Date());
   const narrow = useNarrow();
   const [picked, setPicked] = useState<string>(today);
@@ -32,9 +27,9 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
   const tdays = useMemo(() => {
     if (mode === "day") return [focus];
     const d = parseKey(focus);
-    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    d.setDate(d.getDate() - dayOfWeek(d));
     return Array.from({ length: 7 }, (_, i) => addDaysKey(keyOf(d), i));
-  }, [mode, focus]);
+  }, [mode, focus, weekStartsOn()]);
   const tExpanded = useMemo(() => (startField && mode !== "month" ? expandRecords(records, fields, startField, endField, tdays[0], tdays[tdays.length - 1]) : []),
     [records, fields, startField, endField, tdays, mode]);
   // Keep the picked day inside the month being shown (today if it's this month).
@@ -45,10 +40,9 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
 
   const days = useMemo(() => {
     const first = new Date(month);
-    const offset = (first.getDay() + 6) % 7; // Monday-first
-    first.setDate(first.getDate() - offset);
+    first.setDate(first.getDate() - dayOfWeek(first));  // the week starts on the day chosen in Settings
     return Array.from({ length: 42 }, (_, i) => { const d = new Date(first); d.setDate(first.getDate() + i); return keyOf(d); });
-  }, [month]);
+  }, [month, weekStartsOn()]);
 
   const expanded = useMemo(() => (startField ? expandRecords(records, fields, startField, endField, days[0], days[days.length - 1]) : records),
     [records, fields, startField, endField, days]);
@@ -160,7 +154,7 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
     <div className="calendar">
       {head}
       <div className={`cal-grid ${narrow ? "compact" : ""}`}>
-        {WEEKDAYS.map((w) => <div key={w} className="cal-weekday">{narrow ? w[0] : w}</div>)}
+        {weekdayNames().map((w) => <div key={w} className="cal-weekday">{narrow ? w[0] : w}</div>)}
         {narrow && days.map((k) => {
           const items = byDay.get(k) ?? [];
           return (
@@ -207,12 +201,7 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
                   style={{ background: `${color}22`, borderLeftColor: color }}
                   onDragStart={(e) => { setDragId(occKey(rec)); e.dataTransfer.effectAllowed = "move"; }}
                   onDragEnd={() => { setDragId(null); setOverDay(null); }}
-                  onPointerDown={(e) => { if (canEdit(startField) && (!rec.occurrence || repeatField)) holdToDrag(e, {
-                    onStart: (x, y) => { suppressClick.current = true; setTouch({ rec, x, y }); },
-                    onMove: (x, y) => { setTouch((t) => t && { ...t, x, y }); setOverDay(dayAt(x, y)); },
-                    onEnd: (x, y) => { const d = dayAt(x, y); if (d) move(rec, d); setTouch(null); setOverDay(null); },
-                  }); }}
-                  onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } ops.open(rec); }} title={recordTitle(fields, rec)}>
+                  onClick={() => ops.open(rec)} title={recordTitle(fields, rec)}>
                   {time && <span className="cal-time">{time}</span>}
                   <span className="cal-title">{recordTitle(fields, rec)}</span>
                   {rec.occurrence && <Icon name="repeat" size={10} className="cal-repeat" />}
@@ -245,9 +234,6 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
           })}
           {!(byDay.get(picked) ?? []).length && <p className="muted small">Nothing on this day.</p>}
         </div>
-      )}
-      {touch && (
-        <div className="touch-ghost cal-item" style={{ left: touch.x, top: touch.y }}>{recordTitle(fields, touch.rec)}</div>
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { DavInfo, User, Workspace } from "../types";
+import type { DavInfo, Prefs, User, Workspace } from "../types";
 import { ApiPanel } from "./ApiPanel";
 import { AccountsPanel } from "./AccountsModal";
 import { SharesPanel } from "./SharesPanel";
@@ -34,9 +34,13 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "links", label: "Public links", icon: "share" }, { id: "keys", label: "API & MCP", icon: "key" },
 ];
 
-export function SettingsModal({ user, ws, onClose, onAccountsChanged, initialTab = "account" }: {
-  user: User; ws: Workspace; onClose: () => void; onAccountsChanged: () => void; initialTab?: Tab;
+export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChanged, initialTab = "account" }: {
+  user: User; ws: Workspace; onClose: () => void; onAccountsChanged: () => void; onUserChanged?: (u: User) => void; initialTab?: Tab;
 }) {
+  const setPref = async (patch: Prefs) => {
+    const prefs = await api.patch<Prefs>("/auth/prefs", patch);
+    onUserChanged?.({ ...user, prefs });
+  };
   const [tab, setTab] = useState<Tab>(initialTab);
   const [dav, setDav] = useState<DavInfo | null>(null);
   const [check, setCheck] = useState<{ ok: boolean; detail: string } | "running" | null>(null);
@@ -150,6 +154,12 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, initialTab
         {tab === "account" && (
         <section className="settings-section">
           <div className="row"><span className="avatar">{user.username[0].toUpperCase()}</span> <b>{user.username}</b></div>
+          <h3>Calendar</h3>
+          <label className="stack">First day of the week
+            <select className="input" value={user.prefs?.week_start ?? 1} onChange={(e) => setPref({ week_start: Number(e.target.value) })}>
+              {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => <option key={d} value={i}>{d}</option>)}
+            </select>
+          </label>
           <h3>Change password</h3>
           <input className="input" type="password" placeholder="Current password" autoComplete="current-password"
             value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
