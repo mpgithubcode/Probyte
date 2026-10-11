@@ -5,6 +5,8 @@ Collection.state() is the server's change tag for the whole collection (CTag or 
 changed, nothing inside has. Collection.etags() lists every item with its ETag, so only new or changed items
 need downloading with Collection.fetch() (a calendar-multiget / addressbook-multiget REPORT).
 """
+import ipaddress
+import socket
 from urllib.parse import unquote, urljoin, urlparse
 from xml.etree import ElementTree as ET
 
@@ -12,12 +14,30 @@ import requests
 
 D, CAL, CARD, CS = "DAV:", "urn:ietf:params:xml:ns:caldav", "urn:ietf:params:xml:ns:carddav", "http://calendarserver.org/ns/"
 NS = f'xmlns:d="{D}" xmlns:cal="{CAL}" xmlns:card="{CARD}" xmlns:cs="{CS}"'
-TIMEOUT = 30
+TIMEOUT = (8, 30)  # seconds to connect, seconds to wait for an answer: an unreachable server fails fast
 BATCH = 100
 
 
 class DavError(Exception):
     pass
+
+
+def check_url(url: str) -> str:
+    """A CalDAV/CardDAV server address a user may connect Probyte to. Servers on your own network are fine
+    (a home Nextcloud); loopback, link-local (cloud metadata services), multicast and reserved addresses never are."""
+    url = (url or "").strip()
+    p = urlparse(url)
+    if p.scheme not in ("http", "https") or not p.hostname:
+        raise DavError("Enter the server address, starting with https://")
+    try:
+        addrs = {ai[4][0] for ai in socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80))}
+    except (socket.gaierror, UnicodeError):
+        return url  # can't be resolved now: connecting will say so
+    for a in addrs:
+        ip = ipaddress.ip_address(a.split("%")[0])
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+            raise DavError("That address can't be used for a calendar server")
+    return url
 
 
 def q(ns, tag):

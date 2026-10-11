@@ -14,7 +14,7 @@ import caldav
 
 from . import jobs, vcard, webhooks
 from .carddav import CardDAV
-from .dav import Collection, path_of
+from .dav import TIMEOUT as DAV_TIMEOUT, Collection, check_url, path_of
 from .db import Jsonb, connection
 from .ical import build_ical, component_kind, from_mixed, ical_to_values, to_mixed
 from .store import DAV_KINDS, apply_task_auto, ensure_choices, get_fields, get_table, insert_record
@@ -27,11 +27,12 @@ SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "300"))      # seconds betwe
 # ---------------------------------------------------------------- accounts: discovery
 
 def dav_client(account) -> caldav.DAVClient:
-    return caldav.DAVClient(url=account["url"], username=account["username"] or None, password=account["password"] or None)
+    return caldav.DAVClient(url=check_url(account["url"]), username=account["username"] or None,
+                            password=account["password"] or None, timeout=DAV_TIMEOUT)
 
 
 def card_client(account) -> CardDAV:
-    return CardDAV(account.get("carddav_url") or account["url"], account["username"] or None, account["password"] or None)
+    return CardDAV(check_url(account.get("carddav_url") or account["url"]), account["username"] or None, account["password"] or None)
 
 
 def list_addressbooks(account) -> list[dict]:

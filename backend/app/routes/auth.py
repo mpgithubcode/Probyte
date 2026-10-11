@@ -2,6 +2,7 @@
 from datetime import datetime
 from typing import Literal
 
+import psycopg
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
@@ -30,10 +31,13 @@ def register(body: Credentials, request: Request, response: Response):
             raise HTTPException(403, "Registration is disabled")
         if conn.execute("SELECT 1 FROM users WHERE username = %s", (username,)).fetchone():
             raise HTTPException(409, "That username is taken")
-        user = conn.execute(
-            "INSERT INTO users (username, password_hash, is_admin) VALUES (%s,%s,%s) RETURNING *",
-            (username, auth.hash_password(body.password), first),
-        ).fetchone()
+        try:
+            user = conn.execute(
+                "INSERT INTO users (username, password_hash, is_admin) VALUES (%s,%s,%s) RETURNING *",
+                (username, auth.hash_password(body.password), first),
+            ).fetchone()
+        except psycopg.errors.UniqueViolation:  # registered by a simultaneous request
+            raise HTTPException(409, "That username is taken")
         if first:
             # Data created before multi-user support belongs to the first account.
             for t in ("caldav_accounts", "tables", "combos"):

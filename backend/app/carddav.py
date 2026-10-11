@@ -30,6 +30,8 @@ class CardDAV(DavClient):
                 home = self._href_prop(principal, CARD, "addressbook-home-set")
                 if home:
                     return home
+            except (requests.ConnectionError, requests.Timeout) as e:
+                raise DavError(f"Can't reach the server: {e}")  # trying another path on the same host won't help
             except (DavError, requests.RequestException) as e:
                 last = e
         if last:

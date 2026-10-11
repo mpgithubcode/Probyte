@@ -8,6 +8,8 @@ hosts = 0.0.0.0:5232
 type = htpasswd
 htpasswd_filename = /radicale-users/users
 htpasswd_encryption = bcrypt
+# keep the user list in memory (re-read when Probyte rewrites the file): a login checks only that user's hash
+htpasswd_cache = True
 # seconds to wait after a failed login (slows down password guessing)
 delay = 2
 

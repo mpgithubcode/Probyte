@@ -3,6 +3,7 @@
 #   scripts/test.sh            all tests
 #   scripts/test.sh api        backend tests only
 #   scripts/test.sh -k sync    any pytest arguments
+#   scripts/test.sh tests/api/test_fields.py   one file (or test id)
 #   scripts/test.sh bench      timings at 1k/10k/50k rows (tests/bench/bench.py)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,6 +21,7 @@ target=tests
 cmd="python -m pytest -q -p no:cacheprovider --rootdir tests -c /dev/null"
 if [ "${1:-}" = bench ]; then shift; cmd="pip install -q 'psycopg[binary]' 2>/dev/null; python tests/bench/bench.py"; target=""; fi
 if [ "${1:-}" = api ] || [ "${1:-}" = ui ]; then target="tests/$1"; shift; fi
+case "${1:-}" in tests/*) target="" ;; esac  # a file or test id given: run just that
 args=$(printf "%q " "$@")  # keep quoted pytest arguments (-k "a or b") intact
 docker rm -f probyte-test-runner >/dev/null 2>&1 || true
 docker create --name probyte-test-runner --network probyte-test_default -w /work \

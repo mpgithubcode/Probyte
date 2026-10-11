@@ -66,6 +66,20 @@ app.add_middleware(CompressAPI)
 
 
 @app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    h = response.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # The app and its sign-in / consent pages can't be framed by other sites (clickjacking); public links (/s/…)
+    # are meant to be embedded, so they can.
+    if h.get("content-type", "").startswith("text/html") and not request.url.path.startswith("/s/"):
+        h.setdefault("X-Frame-Options", "SAMEORIGIN")
+        h.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
+    return response
+
+
+@app.middleware("http")
 async def cors(request: Request, call_next):
     if not request.url.path.startswith(CORS_PREFIXES):
         return await call_next(request)

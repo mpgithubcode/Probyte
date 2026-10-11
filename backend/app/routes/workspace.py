@@ -1,8 +1,9 @@
 """The sidebar: bases and sync accounts."""
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException
 
-from .. import store, sync
+from .. import dav, store, sync
 from ..db import connection
 from ..ical import PALETTE
 from .common import AccountIn, AccountTest, BaseIn, BasePatch, User, _account_public, _own_account, _table_out
@@ -52,9 +53,14 @@ def create_base(body: BaseIn, user=User):
 def update_base(base_id: str, body: BasePatch, user=User):
     with connection() as conn:
         b = store.get_base(conn, base_id, user["id"])
-        return conn.execute("UPDATE bases SET name = %s, color = %s, position = %s WHERE id = %s RETURNING id, name, color, position",
-                            ((body.name or b["name"]).strip(), body.color or b["color"],
-                             b["position"] if body.position is None else body.position, base_id)).fetchone()
+        if body.position is not None:  # move to that place in the list; the others keep their order
+            ids = [str(r["id"]) for r in conn.execute("SELECT id FROM bases WHERE user_id = %s AND id <> %s ORDER BY position, created_at",
+                                                      (user["id"], base_id)).fetchall()]
+            ids.insert(max(0, min(body.position, len(ids))), str(base_id))
+            for i, bid in enumerate(ids):
+                conn.execute("UPDATE bases SET position = %s WHERE id = %s", (i, bid))
+        return conn.execute("UPDATE bases SET name = %s, color = %s WHERE id = %s RETURNING id, name, color, position",
+                            ((body.name or b["name"]).strip(), body.color or b["color"], base_id)).fetchone()
 
 
 @router.get("/api/bases/{base_id}/views")
@@ -83,8 +89,19 @@ def delete_base(base_id: str, user=User):
 
 # ======================================================================== caldav accounts
 
+def _checked(body: AccountIn):
+    try:
+        body.url = dav.check_url(body.url)
+        if (body.carddav_url or "").strip():
+            body.carddav_url = dav.check_url(body.carddav_url)
+    except dav.DavError as e:
+        raise HTTPException(400, str(e))
+    return body
+
+
 @router.post("/api/accounts")
 def create_account(body: AccountIn, user=User):
+    body = _checked(body)
     with connection() as conn:
         a = conn.execute(
             "INSERT INTO caldav_accounts (user_id, name, url, carddav_url, username, password) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *",
@@ -100,6 +117,7 @@ def update_account(account_id: str, body: AccountIn, user=User):
         if a["is_builtin"]:
             conn.execute("UPDATE caldav_accounts SET name = %s WHERE id = %s", (body.name, account_id))
         else:
+            body = _checked(body)
             conn.execute(
                 "UPDATE caldav_accounts SET name=%s, url=%s, carddav_url=%s, username=%s, password=COALESCE(%s, password) WHERE id=%s",
                 (body.name, body.url, (body.carddav_url or "").strip() or None, body.username, body.password or None, account_id),
@@ -118,20 +136,23 @@ def delete_account(account_id: str, user=User):
 
 @router.post("/api/accounts/test")
 def test_account(body: AccountTest, user=User):
-    account = body.model_dump()
+    account = _checked(body).model_dump()
     if body.id and not body.password:
         with connection() as conn:
             account["password"] = _own_account(conn, body.id, user)["password"]
-    cals = books = None
     errors = []
-    try:
-        cals = sync.list_calendars(account)
-    except Exception as e:
-        errors.append(f"calendars: {e}")
-    try:
-        books = sync.list_addressbooks(account)
-    except Exception as e:
-        errors.append(f"contacts: {e}")
+
+    def attempt(what, fn):
+        try:
+            return fn(account)
+        except Exception as e:
+            errors.append(f"{what}: {e}")
+            return None
+    with ThreadPoolExecutor(2) as pool:  # both at once: an unreachable server costs one timeout, not two
+        cals_f = pool.submit(attempt, "calendars", sync.list_calendars)
+        books_f = pool.submit(attempt, "contacts", sync.list_addressbooks)
+        cals, books = cals_f.result(), books_f.result()
+    errors.sort()
     if cals is None and books is None:
         raise HTTPException(400, "Connection failed — " + "; ".join(errors))
     return {"ok": True, "calendars": cals or [], "addressbooks": books, "calendar_error": None if cals is not None else errors[0]}
