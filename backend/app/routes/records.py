@@ -235,3 +235,48 @@ def delete_record(record_id: str, user=User):
     with connection() as conn:
         store.delete_record(conn, record_id, user["id"])
     return {"ok": True}
+
+
+# ======================================================================== paste (a block copied from a spreadsheet)
+
+class PasteItem(BaseModel):
+    record_id: str | None = None     # None: a new record (the block ran past the last row)
+    values: dict[str, Any]           # field id -> the pasted text
+
+
+class PasteIn(BaseModel):
+    items: list[PasteItem]
+
+
+@router.post("/api/tables/{table_id}/paste")
+def paste(table_id: str, body: PasteIn, user=User):
+    """Cells pasted into the grid: each text is converted to its field's type (as in an import); empty clears it.
+    Cells of fields that can't be typed into (calculated, files, locked) are skipped."""
+    if len(body.items) > 5000:
+        raise HTTPException(400, "Paste at most 5000 rows at a time")
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"])
+        fields = {str(f["id"]): f for f in store.get_fields(conn, table_id)}
+        lookups = values.Lookups(conn)
+        updated, created, errors = 0, [], []
+        for n, it in enumerate(body.items, start=1):
+            data = {}
+            for fid, text in it.values.items():
+                f = fields.get(fid)
+                if not f or f["type"] in COMPUTED_TYPES or f["type"] in ("attachment", "button"):
+                    continue
+                blank = text is None or (isinstance(text, str) and not text.strip())
+                data[fid] = None if blank else values.from_cell(f, text, lookups)
+            if not data:
+                continue
+            try:
+                with conn.transaction():
+                    if it.record_id:
+                        recordops.update(conn, table_id, it.record_id, data, user["id"])
+                        updated += 1
+                    else:
+                        rid, _ = recordops.create(conn, table_id, {k: v for k, v in data.items() if v is not None}, user["id"])
+                        created.append(str(rid))
+            except HTTPException as e:
+                errors.append(f"Row {n}: {e.detail}")
+    return {"updated": updated, "created": created, "errors": errors[:20]}

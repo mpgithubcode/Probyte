@@ -112,6 +112,8 @@ interface InputProps {
   autoFocus?: boolean;
   inline?: boolean;          // grid cell editor (pickers open immediately)
   anchor?: string;           // repeat fields: the record's start, to suggest sensible days
+  initial?: string;          // grid: editing started by typing this character (replaces the value)
+  takeTyped?: () => string;  // grid: everything typed until the editor appeared (read once it has)
 }
 
 /** Editable input for a value. Commits on blur / Enter; Escape cancels. */
@@ -142,9 +144,20 @@ export function FieldInput(props: InputProps) {
   }
 }
 
-function TextInput({ field, value, onCommit, onDone, autoFocus, inline }: InputProps) {
+function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial, takeTyped }: InputProps) {
   const original = value ?? "";
-  const [draft, setDraft] = useState<string>(String(original));
+  const [draft, setDraft] = useState<string>(initial ?? String(original));
+  // started by typing: the caret goes after that first character
+  const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (el && initial !== undefined) {
+      const typed = takeTyped?.();  // keys pressed while the editor was appearing
+      if (typed && typed !== el.value) { setDraft(typed); el.value = typed; }
+      el.focus();
+      try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* number inputs have no caret position */ }
+    }
+  }, []);  // once, when editing starts
   const cancelled = useRef(false);
   const focused = useRef(false);
   useEffect(() => { if (!focused.current) setDraft(String(value ?? "")); }, [value]);
@@ -165,12 +178,15 @@ function TextInput({ field, value, onCommit, onDone, autoFocus, inline }: InputP
     onFocus: () => { focused.current = true; },
     onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
     onBlur: commit,
+    ref: inputRef,
   };
   if (field.type === "long_text") {
     return <textarea {...common} rows={inline ? 4 : 3}
       onKeyDown={(e) => {
         if (e.key === "Escape") { cancelled.current = true; e.currentTarget.blur(); }
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.blur();
+        // in the grid, Enter saves like a spreadsheet (Shift+Enter for a new line); in the record panel it's a new line
+        if (e.key === "Enter" && inline && !e.shiftKey && !e.altKey) { e.preventDefault(); e.currentTarget.blur(); }
       }} />;
   }
   return <input {...common} type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "url" ? "url" : "text"}

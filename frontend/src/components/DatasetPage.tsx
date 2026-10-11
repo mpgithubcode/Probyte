@@ -234,6 +234,17 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
         })
         .catch((e) => { onError(e.message); refresh(); });
     },
+    paste(items) {
+      if (!ds || ds.kind !== "table") return;
+      track(api.post<{ updated: number; created: string[]; errors: string[] }>(`/tables/${ds.id}/paste`, { items }))
+        .then((res) => {
+          refresh();
+          const n = res.updated + res.created.length;
+          showToast(res.errors.length ? `Pasted into ${n} rows; ${res.errors.length} couldn't be: ${res.errors[0]}`
+            : `Pasted into ${n} row${n === 1 ? "" : "s"}${res.created.length ? ` (${res.created.length} new)` : ""}`);
+        })
+        .catch((e) => onError(e.message));
+    },
     runButton(rec, field) {
       if (!ds) return;
       const r = buttonAction(ds, rec, field);

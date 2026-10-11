@@ -13,6 +13,7 @@ export interface Ops {
   open(rec: Rec): void;
   /** Update or delete many records at once (not offered on public links). */
   bulk?(action: "update" | "delete", recs: Rec[], patch?: Record<string, any>): void;
+  paste?(items: { record_id: string | null; values: Record<string, string> }[]): void;  // grid: a block pasted from a spreadsheet
   /** Open the field editor; null = new field. */
   editField(field: Field | null): void;
   /** Run a button field's action on a record. */

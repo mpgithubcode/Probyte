@@ -1,6 +1,6 @@
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
 import type { Field, Rec } from "../types";
-import { buildGroups, fitField, isEditable, orderFields, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
+import { buildGroups, displayText, fitField, isEditable, orderFields, parseTsv, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
 import { isTouch } from "./useNarrow";
 import { CellValue, Chip, FieldInput, RefsContext } from "./Cells";
 import { anchorOf } from "../recur";
@@ -21,7 +21,20 @@ type Row = { kind: "group"; g: GroupNode } | { kind: "rec"; r: Rec; n: number };
 export function GridView({ ds, view, fields, visible, records, ops, setConfig }: ViewProps) {
   const canEdit = (f: Field) => ops.can.edit && isEditable(f);
   const { refs } = useContext(RefsContext);
-  const [editing, setEditing] = useState<{ rec: string; field: string } | null>(null);
+  const [editing, setEditing] = useState<{ rec: string; field: string; initial?: string } | null>(null);
+  // the selected cell (spreadsheet keys: arrows / Tab move, Enter or typing edits, Delete clears, copy & paste)
+  const [active, setActive] = useState<{ rec: string; field: string } | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const editingRef = useRef(editing);  // current even between a key press and the next render (fast typing)
+  editingRef.current = editing;
+  const startEditing = (e: { rec: string; field: string; initial?: string }) => { editingRef.current = e; setEditing(e); };
+  const stopEditing = (rec: string, field: string) => {
+    const cur = editingRef.current;
+    if (cur?.rec !== rec || cur.field !== field) return;
+    editingRef.current = null;
+    setEditing(null);
+    wrapRef.current?.focus({ preventScroll: true });  // at once: the next key press already belongs to the grid
+  };
   const [menu, setMenu] = useState<{ field: Field; anchor: HTMLElement } | null>(null);
   // dragging a column header to a new place (mouse only): the order is saved with the view
   const [dragCol, setDragCol] = useState<string | null>(null);
@@ -106,6 +119,96 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
     ? { className: ` frozen${f.id === lastFrozen ? " frozen-last" : ""}`, style: { left: lefts[f.id] } as CSSProperties }
     : { className: "", style: undefined });
 
+  // ---- spreadsheet keys
+  const order = rows.flatMap((x) => (x.kind === "rec" ? [x.r] : []));
+  const select = (rec: string, field: string) => { setActive({ rec, field }); wrapRef.current?.focus({ preventScroll: true }); };
+  const reveal = (rec: string, field: string) => requestAnimationFrame(() => {
+    const el = wrapRef.current?.querySelector(`[data-cell="${rec}:${field}"]`) as HTMLElement | null;
+    if (el) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    else if (wrapRef.current) {  // not drawn yet (far down a long table): scroll to its row first
+      const i = rows.findIndex((x) => x.kind === "rec" && x.r.id === rec);
+      wrapRef.current.scrollTop = Math.max(0, i * ROW_H - wrapRef.current.clientHeight / 2);
+    }
+  });
+  const move = (dr: number, dc: number) => {
+    if (!active || !order.length) return;
+    const ri = Math.max(0, order.findIndex((r) => r.id === active.rec));
+    const ci = Math.max(0, visible.findIndex((f) => f.id === active.field));
+    const r = order[Math.min(order.length - 1, Math.max(0, ri + dr))];
+    const f = visible[Math.min(visible.length - 1, Math.max(0, ci + dc))];
+    setActive({ rec: r.id, field: f.id });
+    reveal(r.id, f.id);
+  };
+  const TYPE_STARTS = new Set(["text", "long_text", "number", "url", "email"]);
+  // typing on a cell: keys pressed until its editor has appeared are kept, so fast typing loses nothing
+  const typed = useRef<string | null>(null);
+  const takeTyped = () => { const t = typed.current ?? ""; typed.current = null; return t; };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (typed.current !== null && e.key.length === 1 && !e.ctrlKey && !e.metaKey && (e.target as HTMLElement) === wrapRef.current) {
+      e.preventDefault();
+      typed.current += e.key;
+      return;
+    }
+    if (editingRef.current || !active || (e.target as HTMLElement).closest("input, textarea, select, .popover")) return;
+    const r = order.find((x) => x.id === active.rec);
+    const f = visible.find((x) => x.id === active.field);
+    if (!r || !f) return;
+    const k = e.key;
+    const arrows: Record<string, [number, number]> = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    if (arrows[k]) { e.preventDefault(); move(...arrows[k]); return; }
+    if (k === "Tab") { e.preventDefault(); move(0, e.shiftKey ? -1 : 1); return; }
+    if (k === "Escape") { setActive(null); return; }
+    if (f.type === "checkbox" && (k === " " || k === "Enter")) {
+      e.preventDefault();
+      if (canEdit(f) && !eventDone(f, r)) ops.update(r, { [f.id]: !r.data[f.id] });
+      return;
+    }
+    if (!canEdit(f) || f.type === "button") return;
+    if (k === "Enter" || k === "F2") { e.preventDefault(); startEditing({ rec: r.id, field: f.id }); return; }
+    if (k === "Delete" || k === "Backspace") {
+      e.preventDefault();
+      ops.update(r, { [f.id]: ["link", "multi_select", "user", "attachment"].includes(f.type) ? [] : null });
+      return;
+    }
+    if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {  // typing starts editing (and replaces the value)
+      e.preventDefault();
+      const starts = TYPE_STARTS.has(f.type) && (f.type !== "number" || /[\d.,-]/.test(k));
+      typed.current = starts ? k : null;
+      startEditing({ rec: r.id, field: f.id, initial: starts ? k : undefined });
+    }
+  };
+  const onCopy = (e: ClipboardEvent) => {
+    if (editing || (e.target as HTMLElement).closest("input, textarea")) return;
+    const text = (r: Rec, f: Field) => displayText(f, r.data[f.id], refs).replace(/[\t\n]/g, " ");
+    let out = "";
+    if (sel.size) out = selected.map((r) => visible.map((f) => text(r, f)).join("\t")).join("\n");  // ticked rows: a block
+    else if (active) {
+      const r = order.find((x) => x.id === active.rec), f = visible.find((x) => x.id === active.field);
+      if (r && f) out = text(r, f);
+    }
+    if (!out) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", out);
+  };
+  const onPaste = (e: ClipboardEvent) => {
+    if (editing || !active || ds.kind !== "table" || (e.target as HTMLElement).closest("input, textarea")) return;
+    const block = parseTsv(e.clipboardData.getData("text/plain"));
+    if (!block.length) return;
+    e.preventDefault();
+    const r0 = Math.max(0, order.findIndex((r) => r.id === active.rec));
+    const c0 = Math.max(0, visible.findIndex((f) => f.id === active.field));
+    type Item = { record_id: string | null; values: Record<string, string> };
+    const items: Item[] = [];
+    block.forEach((cells, i) => {
+      const rec = order[r0 + i];
+      if (!rec && !ops.can.add) return;  // past the last row: new records, if this view may add
+      const values: Record<string, string> = {};
+      cells.forEach((text, j) => { const f = visible[c0 + j]; if (f && canEdit(f)) values[f.id] = text; });
+      if (Object.keys(values).length) items.push({ record_id: rec?.id ?? null, values });
+    });
+    if (items.length) ops.paste?.(items);
+  };
+
   const cell = (r: Rec, f: Field) => {
     const z = fz(f);
     const isEditing = editing?.rec === r.id && editing.field === f.id;
@@ -120,20 +223,24 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
     }
     if (f.type === "checkbox") {
       return (
-        <td key={f.id} className={`cell center${z.className}`} style={z.style}>
+        <td key={f.id} data-cell={`${r.id}:${f.id}`} className={`cell center${z.className}${active?.rec === r.id && active.field === f.id ? " active" : ""}`} style={z.style}
+          onClick={() => select(r.id, f.id)}>
           <input type="checkbox" className="checkbox" checked={!!r.data[f.id]} disabled={readonly || eventDone(f, r)}
             title={eventDone(f, r) ? "Events are completed once they're over" : undefined}
             onChange={(e) => ops.update(r, { [f.id]: e.target.checked })} />
         </td>
       );
     }
+    const isActive = active?.rec === r.id && active.field === f.id;
     return (
-      <td key={f.id} className={`cell ${isEditing ? "editing" : ""} ${readonly ? "readonly" : ""}${z.className}`} style={z.style}
-        onClick={() => !readonly && !isEditing && setEditing({ rec: r.id, field: f.id })}>
+      <td key={f.id} data-cell={`${r.id}:${f.id}`} className={`cell ${isEditing ? "editing" : ""} ${isActive && !isEditing ? "active" : ""} ${readonly ? "readonly" : ""}${z.className}`} style={z.style}
+        onClick={() => { if (isEditing) return; if (isActive && !readonly) startEditing({ rec: r.id, field: f.id }); else select(r.id, f.id); }}
+        onDoubleClick={() => !readonly && !isEditing && startEditing({ rec: r.id, field: f.id })}>
         {isEditing ? (
           <FieldInput field={fitField(f, recordKind(fields, r), r.data[f.id])} value={r.data[f.id]} inline autoFocus anchor={f.type === "recurrence" ? anchorOf(fields, r) : undefined}
+            initial={editing?.initial} takeTyped={takeTyped}
             onCommit={(v) => ops.update(r, { [f.id]: v })}
-            onDone={() => setEditing((e) => (e?.rec === r.id && e.field === f.id ? null : e))} />
+            onDone={() => stopEditing(r.id, f.id)} />
         ) : (
           <div className="cell-content"><CellValue field={f} value={r.data[f.id]} /></div>
         )}
@@ -182,7 +289,8 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
 
   const sorts = viewSorts(view.config);
   return (
-    <div className={`grid-wrap ${sel.size ? "selecting" : ""}`} ref={win.ref}>
+    <div className={`grid-wrap ${sel.size ? "selecting" : ""}`} tabIndex={0} onKeyDown={onKeyDown} onCopy={onCopy} onPaste={onPaste}
+      ref={(el) => { win.ref(el); wrapRef.current = el; }}>
       <table className="grid">
         <thead>
           <tr ref={headRow}>

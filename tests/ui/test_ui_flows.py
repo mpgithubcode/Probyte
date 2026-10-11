@@ -814,3 +814,54 @@ def test_undo_and_the_trash(browser, table_user):
     expect(pg.locator(".sidebar")).to_contain_text("Inventory")
     assert len(u.records(t["id"])) == 4
     assert not pg.errors, pg.errors
+
+
+def test_spreadsheet_keys_copy_and_paste(browser, table_user):
+    u, t, F = table_user
+    done = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Checked", "type": "checkbox"})["id"]
+    price = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Price", "type": "number"})["id"]
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    name = lambda i: rows(pg).nth(i).locator("td.cell").nth(0)
+    name(0).click()                                                       # selects (doesn't edit)
+    expect(pg.locator("td.cell.active")).to_have_count(1)
+    expect(pg.locator("td.cell.editing")).to_have_count(0)
+    pg.keyboard.press("ArrowDown")
+    pg.keyboard.type("Armchair")                                          # typing replaces the value
+    pg.keyboard.press("Enter")
+    pg.keyboard.press("ArrowRight")                                       # -> Notes
+    pg.keyboard.press("Enter")                                            # Enter edits, keeping the value
+    pg.keyboard.type("comfy")
+    pg.keyboard.press("Enter")
+    eventually(lambda: (lambda d: d if d.get(F["Name"]) == "Armchair" and d.get(F["Notes"]) == "comfy" else None)(
+        next(r for r in u.records(t["id"]) if r["data"].get(F["Name"]) == "Armchair")["data"]))
+    pg.keyboard.press("Delete")                                           # clears Notes
+    eventually(lambda: next(r for r in u.records(t["id"]) if r["data"].get(F["Name"]) == "Armchair")["data"].get(F["Notes"]) is None or None)
+    # the checkbox: Space ticks it
+    name(0).click()
+    for _ in range(3):                                                    # Name -> Notes -> Status -> Checked
+        pg.keyboard.press("ArrowRight")
+    pg.keyboard.press(" ")
+    eventually(lambda: next(r for r in u.records(t["id"]) if r["data"].get(F["Name"]) == "Chair")["data"].get(done) is True or None)
+    # copy a cell
+    name(0).click()
+    copied = pg.evaluate("""() => { const dt = new DataTransfer();
+        document.querySelector('.grid-wrap').dispatchEvent(new ClipboardEvent('copy', {clipboardData: dt, bubbles: true, cancelable: true}));
+        return dt.getData('text/plain'); }""")
+    assert copied == "Chair"
+    # paste a block from a spreadsheet: two columns, five rows (the last ones become new records)
+    pg.evaluate("""(t) => { const dt = new DataTransfer(); dt.setData('text/plain', t);
+        document.querySelector('.grid-wrap').dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true})); }""",
+                "Stool\tthree legs\nBench\t\"long, with\ttab\"\nRug\tsoft\nVase\tblue\nClock\tloud")
+    expect(rows(pg)).to_have_count(5, timeout=10000)
+    data = {r["data"].get(F["Name"]): r["data"] for r in u.records(t["id"])}
+    assert data["Stool"][F["Notes"]] == "three legs" and data["Bench"][F["Notes"]] == "long, with\ttab"
+    assert "Clock" in data and data["Clock"][F["Notes"]] == "loud" and "Chair" not in data
+    # numbers are converted like an import
+    pidx = pg.locator("thead th").evaluate_all("(ths) => ths.findIndex(th => th.textContent.includes('Price'))")
+    rows(pg).nth(0).locator("td").nth(pidx).click()
+    pg.evaluate("""() => { const dt = new DataTransfer(); dt.setData('text/plain', '1,250\\n9.5');
+        document.querySelector('.grid-wrap').dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true})); }""")
+    eventually(lambda: sorted(v for v in (r["data"].get(price) for r in u.records(t["id"])) if v is not None) == [9.5, 1250] or None)
+    assert not pg.errors, pg.errors

@@ -420,3 +420,24 @@ export function orderFields(fields: Field[], order?: string[]): Field[] {
   return [...fields].sort((a, b) => (a.is_primary ? -1 : b.is_primary ? 1 : 0)
     || (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity) || fields.indexOf(a) - fields.indexOf(b));
 }
+
+/** Text copied from a spreadsheet (tab-separated; cells with tabs, line breaks or quotes come "quoted") -> rows of cells. */
+export function parseTsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = "", i = 0, quoted = false;
+  const s = text.replace(/\r\n?/g, "\n");
+  while (i < s.length) {
+    const c = s[i];
+    if (quoted) {
+      if (c === '"' && s[i + 1] === '"') { cell += '"'; i += 2; continue; }
+      if (c === '"') { quoted = false; i++; continue; }
+      cell += c; i++; continue;
+    }
+    if (c === '"' && cell === "") { quoted = true; i++; continue; }
+    if (c === "\t") { row.push(cell); cell = ""; i++; continue; }
+    if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; i++; continue; }
+    cell += c; i++;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
