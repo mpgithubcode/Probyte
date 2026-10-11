@@ -50,7 +50,10 @@ def emit(conn, table_id, event: str, record_id) -> None:
         "VALUES ('webhook_event', %s, %s, now() + make_interval(secs => %s), 3) "
         "ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND locked_until IS NULL AND NOT failed DO UPDATE SET payload = "
         "jsonb_set(jobs.payload, '{event}', to_jsonb(CASE WHEN jobs.payload->>'event' = 'record.created' "
-        "AND EXCLUDED.payload->>'event' = 'record.updated' THEN 'record.created' ELSE EXCLUDED.payload->>'event' END))",
+        "AND EXCLUDED.payload->>'event' = 'record.updated' THEN 'record.created' ELSE EXCLUDED.payload->>'event' END)) "
+        # created then edited: hooks that only want updates still hear about the edit
+        "|| CASE WHEN jobs.payload->>'event' = 'record.created' AND EXCLUDED.payload->>'event' = 'record.updated' "
+        "THEN '{\"also_updated\": true}'::jsonb ELSE '{}'::jsonb END",
         (Jsonb({"table_id": str(table_id), "record_id": str(record_id), "event": event, "at": time.time()}),
          f"wh:{table_id}:{record_id}", COALESCE_SECONDS))
 
@@ -140,8 +143,15 @@ def _job_event(p):
         table = conn.execute("SELECT id, name, base_id, user_id FROM tables WHERE id = %s", (p["table_id"],)).fetchone()
         if not table:
             return
-        hooks = [h for h in conn.execute("SELECT * FROM webhooks WHERE user_id = %s AND enabled", (table["user_id"],)).fetchall()
-                 if p["event"] in (h["events"] or EVENTS) and (h["table_ids"] is None or p["table_id"] in h["table_ids"])
+        def event_for(h):
+            wanted = h["events"] or EVENTS
+            if p["event"] in wanted:
+                return p["event"]
+            if p["event"] == "record.created" and p.get("also_updated") and "record.updated" in wanted:
+                return "record.updated"
+            return None
+        hooks = [(h, ev) for h in conn.execute("SELECT * FROM webhooks WHERE user_id = %s AND enabled", (table["user_id"],)).fetchall()
+                 if (ev := event_for(h)) and (h["table_ids"] is None or p["table_id"] in h["table_ids"])
                  and h["created_at"].timestamp() <= p.get("at", time.time())]  # only hooks that existed at the time
         if not hooks:
             return
@@ -149,8 +159,8 @@ def _job_event(p):
         if not payload:
             return  # the record vanished before we got to it
         payload = json.loads(json.dumps(payload, default=str))  # dates/UUIDs as the JSON they'd be sent as
-        for h in hooks:
-            jobs.enqueue(conn, "webhook_deliver", {"hook_id": str(h["id"]), "event": p["event"], "payload": payload,
+        for h, ev in hooks:
+            jobs.enqueue(conn, "webhook_deliver", {"hook_id": str(h["id"]), "event": ev, "payload": payload,
                                                    "delivery": str(uuid.uuid4())}, max_attempts=4)
 
 

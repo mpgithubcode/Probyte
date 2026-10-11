@@ -11,7 +11,7 @@ import { GridView } from "./GridView";
 import { Icon } from "./Icon";
 import { KanbanView } from "./KanbanView";
 import { ListView } from "./ListView";
-import { RecordModal, SourcePicker } from "./RecordModal";
+import { NewRecordForm, RecordModal, SourcePicker } from "./RecordModal";
 import { TimelineView } from "./TimelineView";
 import { VIEW_TYPES, ViewOptions } from "./Toolbar";
 import type { Can, Ops } from "./viewTypes";
@@ -40,6 +40,7 @@ export function ShareApp({ token }: { token: string }) {
   const [openRec, setOpenRec] = useState<string | null>(null);
   const [openOcc, setOpenOcc] = useState<string | null>(null);
   const [pendingCreate, setPendingCreate] = useState<{ data: Record<string, unknown>; open: boolean } | null>(null);
+  const [draft, setDraft] = useState<{ data: Record<string, any>; tableId?: string } | null>(null);  // add-only links: a record being filled in
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => { setAttachmentBase(`/api${base}/attachments`); }, [base]);
@@ -93,10 +94,22 @@ export function ShareApp({ token }: { token: string }) {
   const setRecords = (fn: (r: Rec[]) => Rec[]) => setPayload((p) => p && { ...p, records: fn(p.records) });
 
   const doCreate = async (data: Record<string, unknown>, open: boolean, tableId?: string) => {
+    if (open && !can.edit) {  // may add but not edit: fill the record in first, then save it in one go
+      setDraft({ data: data as Record<string, any>, tableId });
+      return;
+    }
     try {
       const rec = await api.post<Rec>(`${base}/views/${viewId}/records`, { data, table_id: tableId });
       setRecords((rs) => [...rs, rec]);
       if (open) { setOpenRec(rec.id); setOpenOcc(null); }
+    } catch (e) { setToast((e as Error).message); }
+  };
+  const saveDraft = async (data: Record<string, any>) => {
+    try {
+      const rec = await api.post<Rec>(`${base}/views/${viewId}/records`, { data, table_id: draft?.tableId });
+      setRecords((rs) => [...rs, rec]);
+      setDraft(null);
+      setToast("Record added");
     } catch (e) { setToast((e as Error).message); }
   };
 
@@ -192,6 +205,7 @@ export function ShareApp({ token }: { token: string }) {
           <RecordModal ds={ds} rec={rec} fields={ds.fields} can={can} onClose={() => setOpenRec(null)} occurrence={openOcc}
             onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)} />
         )}
+        {draft && ds && <NewRecordForm fields={ds.fields} initial={draft.data} onSave={saveDraft} onClose={() => setDraft(null)} />}
         {pendingCreate && ds && (
           <SourcePicker choices={(ds.sources ?? []).map((s) => ({ label: s.name, color: s.color, tableId: s.table_id }))} onClose={() => setPendingCreate(null)}
             onPick={(t) => { doCreate(pendingCreate.data, pendingCreate.open, t.tableId); setPendingCreate(null); }} />

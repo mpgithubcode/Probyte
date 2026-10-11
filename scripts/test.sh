@@ -11,7 +11,8 @@ export COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080
 export POSTGRES_PASSWORD=probyte-test WEBHOOK_ALLOW_PRIVATE=true REMOTE_ALLOW_PRIVATE=true ALLOW_SIGNUP=true PUBLIC_URL= RADICALE_PUBLIC_URL= MCP_BEARER_TOKEN=
 PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
-cleanup() { docker rm -f probyte-test-runner >/dev/null 2>&1 || true; [ "${KEEP_STACK:-}" ] || docker compose down -v >/dev/null 2>&1 || true; }
+cleanup() { docker cp probyte-test-runner:/work/tests/.artifacts tests/ >/dev/null 2>&1 || true  # screenshots of failed UI tests
+  docker rm -f probyte-test-runner >/dev/null 2>&1 || true; [ "${KEEP_STACK:-}" ] || docker compose down -v >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 docker compose up -d --build --wait >/dev/null 2>&1

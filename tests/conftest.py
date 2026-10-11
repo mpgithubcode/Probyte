@@ -89,3 +89,24 @@ def user():
 @pytest.fixture
 def other_user():
     return Client()
+
+
+# ---------------------------------------------------------------- screenshots of failed browser tests
+
+ARTIFACTS = os.path.join(os.path.dirname(__file__), ".artifacts")
+pages = []  # browser tests append their pages here; failures save a screenshot to tests/.artifacts/
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    out = yield
+    rep = out.get_result()
+    if rep.when == "call" and rep.failed:
+        os.makedirs(ARTIFACTS, exist_ok=True)
+        for i, pg in enumerate(pages):
+            try:
+                pg.screenshot(path=os.path.join(ARTIFACTS, f"{item.name}-{i}.png"), full_page=True)
+            except Exception:
+                pass
+    if rep.when == "call":
+        pages.clear()

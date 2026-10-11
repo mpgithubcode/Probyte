@@ -12,9 +12,10 @@ export interface Attachment { id: string; name: string; mime: string; size: numb
 
 export interface Refs { records: Record<string, string>; users: Record<string, string> }
 
-export interface Choice { name: string; color: string }
+export interface Choice { name: string; color: string; from?: string }  // from: the name it had when the field editor opened
 
 export interface FieldOptions {
+  renames?: Record<string, string>;  // sent when saving: select options renamed in the editor (old name -> new name)
   choices?: Choice[];
   includeTime?: boolean;
   max?: number;

@@ -257,6 +257,8 @@ def update_field(field_id: str, body: FieldPatch, user=User):
         new_type = body.type or f["type"]
         if new_type != f["type"] and f["system_key"]:
             raise HTTPException(400, "The type of a CalDAV field can't be changed")
+        name = store.check_field_name(conn, f["table_id"], body.name, exclude=f["id"]) if body.name is not None else f["name"]
+        renames = (body.options or {}).pop("renames", None) if new_type == f["type"] else None
         options = f["options"]
         if new_type != f["type"] or body.options is not None:
             options = store.prepare_field(conn, table, new_type, f["options"] if body.options is None else body.options,
@@ -266,11 +268,13 @@ def update_field(field_id: str, body: FieldPatch, user=User):
             store.delete_field_cleanup(conn, f)  # drops the counterpart field (values were captured above)
         updated = conn.execute(
             "UPDATE fields SET name = %s, type = %s, options = %s WHERE id = %s RETURNING *",
-            (body.name or f["name"], new_type, Jsonb(options), field_id),
+            (name, new_type, Jsonb(options), field_id),
         ).fetchone()
+        if renames and new_type in ("single_select", "multi_select"):
+            store.rename_choices(conn, updated, renames)
         if new_type == "link" and f["type"] != "link" and (body.options or {}).get("symmetric", True) \
                 and str(options["foreignTableId"]) != str(table["id"]) and not store.is_remote_table(conn, options["foreignTableId"]):
-            sym = store.create_field(conn, options["foreignTableId"], table["name"], "link",
+            sym = store.create_field(conn, options["foreignTableId"], store.unique_field_name(conn, options["foreignTableId"], table["name"]), "link",
                                      {"foreignTableId": str(table["id"]), "relationship": "many", "symmetricFieldId": str(f["id"])})
             updated = conn.execute("UPDATE fields SET options = options || %s WHERE id = %s RETURNING *",
                                    (Jsonb({"symmetricFieldId": str(sym["id"])}), f["id"])).fetchone()

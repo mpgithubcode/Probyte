@@ -73,6 +73,7 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
   const [type, setType] = useState<FieldType>(field?.type ?? "text");
   const [o, setO] = useState<FieldOptions>(() => ({
     ...(field?.options ?? {}),
+    ...(field?.options.choices ? { choices: field.options.choices.map((c) => ({ ...c, from: c.name })) } : {}),
     ...(field?.type === "formula" ? { expression: field.options.displayExpression ?? field.options.expression ?? "" } : {}),
   }));
   const [error, setError] = useState("");
@@ -108,7 +109,13 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
     if (!name.trim()) return setError("Name is required");
     const options: FieldOptions = { ...o };
     delete options._inner; delete options._error; delete options.displayExpression; delete options.resultType;
-    if (type === "single_select" || type === "multi_select") options.choices = (o.choices ?? []).filter((c) => c.name.trim());
+    if (type === "single_select" || type === "multi_select") {
+      const kept = (o.choices ?? []).filter((c) => c.name.trim());
+      // renamed options: records holding the old name get the new one
+      const renames = Object.fromEntries(kept.filter((c) => c.from && c.from !== c.name.trim()).map((c) => [c.from, c.name.trim()]));
+      options.choices = kept.map(({ from: _, ...c }) => ({ ...c, name: c.name.trim() }));
+      if (Object.keys(renames).length && field && field.type === type) options.renames = renames;
+    }
     setBusy(true);
     try {
       if (field) await api.patch(`/fields/${field.id}`, { name: name.trim(), type, options });

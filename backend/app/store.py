@@ -77,9 +77,35 @@ def create_view(conn, *, name, type, config=None, table_id=None, combo_id=None):
     ).fetchone()
 
 
+def _name_taken(conn, table_id, name, exclude=None) -> bool:
+    return bool(conn.execute("SELECT 1 FROM fields WHERE table_id = %s AND lower(name) = lower(%s) AND id IS DISTINCT FROM %s",
+                             (table_id, name, exclude)).fetchone())
+
+
+def check_field_name(conn, table_id, name, exclude=None) -> str:
+    """A name a person chose for a field: not empty, and not the name of another field in the table (fields are
+    addressed by name in the API, formulas and imports)."""
+    name = (name or "").strip()
+    if not name:
+        bad("Give the field a name")
+    if _name_taken(conn, table_id, name, exclude):
+        bad(f"There's already a field called “{name}” in this table")
+    return name
+
+
+def unique_field_name(conn, table_id, name) -> str:
+    """A name made up by Probyte (a link's counterpart field): numbered when it's taken."""
+    out, n = name, 2
+    while _name_taken(conn, table_id, out):
+        out, n = f"{name} {n}", n + 1
+    return out
+
+
 def create_field(conn, table_id, name, type, options=None, system_key=None, is_primary=False):
     if type not in FIELD_TYPES:
         bad(f"Unknown field type {type}")
+    if not system_key:
+        name = check_field_name(conn, table_id, name)
     pos = conn.execute("SELECT COALESCE(MAX(position) + 1, 0) AS n FROM fields WHERE table_id = %s", (table_id,)).fetchone()["n"]
     f = conn.execute(
         "INSERT INTO fields (table_id, name, type, options, system_key, is_primary, position) "
@@ -164,6 +190,22 @@ def ensure_system_fields(conn):
                     d, st = str(by_key["done"]["id"]), str(by_key["status"]["id"])
                     conn.execute("UPDATE records SET data = jsonb_set(data, %s, to_jsonb(COALESCE(data->>%s, '') = 'Completed')) "
                                  "WHERE table_id = %s AND NOT data ? %s", ([d], st, t["id"], d))
+
+
+def rename_choices(conn, field, renames: dict):
+    """Select options renamed in the field editor: records holding an old name get the new one."""
+    fid, tid = str(field["id"]), str(field["table_id"])
+    for old, new in renames.items():
+        if not isinstance(old, str) or not isinstance(new, str) or old == new or not new.strip():
+            continue
+        if field["type"] == "single_select":
+            conn.execute("UPDATE records SET data = jsonb_set(data, %s, to_jsonb(%s::text)) WHERE table_id = %s AND data->>%s = %s",
+                         ([fid], new, tid, fid, old))
+        else:
+            conn.execute(
+                "UPDATE records SET data = jsonb_set(data, %s, (SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN x = %s THEN %s ELSE x END), '[]')"
+                " FROM jsonb_array_elements_text(data->%s) x)) WHERE table_id = %s AND jsonb_typeof(data->%s) = 'array' AND data->%s ? %s",
+                ([fid], old, new, fid, tid, fid, fid, old))
 
 
 def ensure_choices(conn, field, values):
@@ -319,7 +361,7 @@ def create_link_pair(conn, table, name, options, user_id):
     f = create_field(conn, table["id"], name, "link", options)
     ftid = options["foreignTableId"]
     if options.get("symmetric", True) and str(ftid) != str(table["id"]) and not is_remote_table(conn, ftid):
-        sym = create_field(conn, ftid, table["name"], "link",
+        sym = create_field(conn, ftid, unique_field_name(conn, ftid, table["name"]), "link",
                            {"foreignTableId": str(table["id"]), "relationship": "many", "symmetricFieldId": str(f["id"])})
         opts = {**f["options"], "symmetricFieldId": str(sym["id"])}
         opts.pop("symmetric", None)
@@ -354,6 +396,14 @@ def normalize_data(conn, table, fields, data: dict, user_id=None, record_id=None
                         (ftid, ids)).fetchall()}
                 ids = list(dict.fromkeys(x for x in ids if x in ok))
             v = ids[:1] if f["options"].get("relationship") == "one" else ids
+        elif t in ("number", "rating") and v is not None and not (isinstance(v, (int, float)) and not isinstance(v, bool)):
+            try:
+                v = float(str(v).replace(",", "").strip()) if str(v).strip() else None
+                v = int(v) if v is not None and v.is_integer() else v
+            except ValueError:
+                bad(f"{f['name']} needs a number, not “{v}”")
+        elif t == "checkbox":
+            v = bool(v) and str(v).lower() not in ("false", "0", "no", "off")
         elif t == "recurrence":
             try:
                 v = recur.normalize(v)
@@ -508,7 +558,8 @@ def create_record(conn, table_id, data: dict, user_id=None):
 
 
 def update_record(conn, record_id, patch: dict, user_id=None):
-    r = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted", (record_id,)).fetchone() or not_found("Record not found")
+    # FOR UPDATE: simultaneous edits of one record wait for each other instead of overwriting each other's fields
+    r = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted FOR UPDATE", (record_id,)).fetchone() or not_found("Record not found")
     table = get_table(conn, r["table_id"], user_id)
     fields = get_fields(conn, r["table_id"])
     patch = normalize_data(conn, table, fields, patch or {}, user_id, record_id)

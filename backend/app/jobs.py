@@ -56,12 +56,18 @@ def enqueue(conn, kind: str, payload: dict | None = None, *, key: str | None = N
             run(c)
 
 
-def _claim():
+SLOW_KINDS = ["sync_table"]  # jobs that talk to other servers for a while; one worker thread never takes them
+
+
+def _claim(fast_only=False):
+    """The next due job. Quick jobs (webhooks) go first, so a slow calendar server doesn't hold them up."""
     with connection() as conn:
         return conn.execute(
             "UPDATE jobs SET locked_until = now() + make_interval(secs => %s), attempts = attempts + 1 WHERE id = ("
             "  SELECT id FROM jobs WHERE NOT failed AND run_at <= now() AND (locked_until IS NULL OR locked_until < now())"
-            "  ORDER BY run_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *", (LOCK_SECONDS,)).fetchone()
+            "  AND NOT (%s AND kind = ANY(%s))"
+            "  ORDER BY kind = ANY(%s), run_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *",
+            (LOCK_SECONDS, fast_only, SLOW_KINDS, SLOW_KINDS)).fetchone()
 
 
 def _finish(job, error: str | None = None, retry_in: float | None = None):
@@ -80,9 +86,9 @@ def _finish(job, error: str | None = None, retry_in: float | None = None):
                          (backoff, error[:2000], job["id"]))
 
 
-def run_one() -> bool:
+def run_one(fast_only=False) -> bool:
     """Run one due job. Returns False when there was nothing to do."""
-    job = _claim()
+    job = _claim(fast_only)
     if not job:
         return False
     fn = _handlers.get(job["kind"])
@@ -111,10 +117,10 @@ def _wait_for_notify(stop: threading.Event, timeout: float):
         stop.wait(timeout)
 
 
-def worker_thread(stop: threading.Event):
+def worker_thread(stop: threading.Event, fast_only=False):
     while not stop.is_set():
         try:
-            if not run_one():
+            if not run_one(fast_only):
                 _wait_for_notify(stop, 2.0)
         except Exception:
             log.exception("worker error")
@@ -148,7 +154,8 @@ def stats() -> dict:
 def start(stop: threading.Event, threads: int = 4) -> list[threading.Thread]:
     out = []
     for i in range(threads):
-        t = threading.Thread(target=worker_thread, args=(stop,), name=f"job-worker-{i}", daemon=True)
+        # thread 0 only runs quick jobs: webhooks never wait behind slow syncs
+        t = threading.Thread(target=worker_thread, args=(stop, i == 0 and threads > 1), name=f"job-worker-{i}", daemon=True)
         t.start()
         out.append(t)
     return out

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CreateTarget, Dataset, Field, Rec } from "../types";
 import { addExdate, anchorOf, findOverride, occurrenceData, overrideKey, seriesDateFields, setOverride } from "../recur";
-import { formatDate, recordTitle } from "../util";
+import { formatDate, isEditable, recordTitle } from "../util";
 import { CellValue, Chip, FieldInput } from "./Cells";
 import { CAN_ALL, type Can } from "./viewTypes";
 import { FieldIcon, Icon } from "./Icon";
@@ -120,6 +120,41 @@ export function SourcePicker({ choices, onPick, onClose }: { choices: CreateTarg
             <span className="swatch" style={{ background: c.color ?? "var(--accent)" }} /> {c.label}
             {c.linkTableId && <span className="muted small" style={{ marginLeft: "auto" }}><Icon name="link" size={12} /> linked</span>}
           </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * A new record filled in before it's saved: for public links that may add records but not edit them, where
+ * creating an empty record first and filling it in afterwards isn't allowed.
+ */
+export function NewRecordForm({ fields, initial, onSave, onClose }: {
+  fields: Field[]; initial: Record<string, any>; onSave: (data: Record<string, any>) => Promise<void> | void; onClose: () => void;
+}) {
+  const [data, setData] = useState<Record<string, any>>(initial);
+  const [busy, setBusy] = useState(false);
+  const shown = fields.filter((f) => f.id !== "__source" && isEditable(f) && f.type !== "attachment" && f.type !== "button");
+  const save = async () => {
+    setBusy(true);
+    try { await onSave(data); } finally { setBusy(false); }
+  };
+  return (
+    <Modal width={640} onClose={onClose} title="New record"
+      footer={<>
+        <span className="spacer" />
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn primary" disabled={busy} onClick={save}>{busy ? "Adding…" : "Add record"}</button>
+      </>}>
+      <div className="form">
+        {shown.map((f) => (
+          <div key={f.id} className="form-row">
+            <span className="form-label"><FieldIcon type={f.type} /> {f.name}</span>
+            <div className="form-input">
+              <FieldInput field={f} value={data[f.id]} onCommit={(v) => setData((d) => ({ ...d, [f.id]: v }))} />
+            </div>
+          </div>
         ))}
       </div>
     </Modal>
