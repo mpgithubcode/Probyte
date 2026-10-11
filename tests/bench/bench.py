@@ -49,7 +49,7 @@ def main(sizes):
         F = {f["name"]: f["id"] for f in s.get(f"{API}/tables/{tid}").json()["fields"]}
         mk = lambda name, type, options=None: s.post(f"{API}/tables/{tid}/fields", json={"name": name, "type": type, "options": options or {}}).json()["id"]
         F["Amount"] = mk("Amount", "number")
-        F["Status"] = mk("Status", "single_select", {"choices": [{"name": c} for c in ("New", "Active", "Done")]})
+        F["Status"] = mk("Stage", "single_select", {"choices": [{"name": c} for c in ("New", "Active", "Done")]})
         F["Due"] = mk("Due", "date")
         F["Double"] = mk("Double", "formula", {"expression": "{Amount} * 2"})
         F["Client"] = mk("Client", "link", {"foreignTableId": clients["id"]})

@@ -543,3 +543,39 @@ def test_event_and_task_panels_show_their_own_fields(browser):
         pg.keyboard.press("Escape")
         expect(pg.locator(".modal")).to_have_count(0)
     assert not pg.errors, pg.errors
+
+
+def test_new_contacts_and_linked_tables_from_the_dialog(browser, table_user):
+    u, t, F = table_user
+    s = u.j("POST", "/shares", json={"name": "Catalogue", "base_id": u.base_id, "items": [{"kind": "table", "id": t["id"]}]})
+    other = Client()
+    pg = new_page(browser)
+    sign_in(pg, other)
+    # contacts on the built-in server
+    pg.click(".side-add >> nth=0")
+    pg.click(".kind:has-text('Contacts')")
+    pg.fill(".modal input[placeholder='Contacts']", "People")
+    pg.click(".modal-foot button:has-text('Create')")   # waits until the address books have loaded
+    expect(pg.locator(".page-head h1")).to_have_text("People", timeout=15000)
+    expect(pg.locator("thead")).to_contain_text("Email")
+    # a table from someone's public link
+    pg.click(".side-add >> nth=0")
+    pg.click(".kind:has-text('From a link')")
+    pg.fill(".modal input[placeholder*='/s/']", f"{BASE}/s/{s['token']}")
+    pg.click(".modal-foot button:has-text('Check link')")
+    pg.click(".modal-foot button:has-text('Create')")
+    expect(pg.locator(".page-head h1")).not_to_have_text("People", timeout=15000)
+    expect(pg.locator(".grid tbody")).to_contain_text("Chair")
+    expect(pg.locator(".remote-badge")).to_be_visible()
+    assert not pg.errors, pg.errors
+
+
+def test_embedded_public_link(browser, table_user):
+    u, t, F = table_user
+    s = u.j("POST", "/shares", json={"name": "Embed me", "base_id": u.base_id, "items": [{"kind": "table", "id": t["id"]}]})
+    pg = new_page(browser)
+    pg.set_content(f'<iframe src="{BASE}/s/{s["token"]}?embed=1" style="width:600px;height:500px;border:0"></iframe>')
+    frame = pg.frame_locator("iframe")
+    expect(frame.locator("body")).to_contain_text("Chair")
+    expect(frame.locator(".share-foot")).to_have_count(0)            # no page chrome when embedded
+    assert not pg.errors, pg.errors

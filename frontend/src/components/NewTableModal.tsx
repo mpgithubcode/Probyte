@@ -63,6 +63,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
   useEffect(() => {
     if (kind === "generic" || kind === "remote" || !accountId) return;
     setCalendars(null);
+    setCalendarUrl("");  // never keep another kind's calendar (a contacts table on a calendar) while loading
     setError("");
     api.get<CalendarInfo[]>(`/accounts/${accountId}/${book ? "addressbooks" : "calendars"}`)
       .then((cals) => {
@@ -96,6 +97,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
   };
 
   const needsAccount = kind !== "generic" && kind !== "remote" && !accounts.length;
+  const loadingCalendars = kind !== "generic" && kind !== "remote" && !needsAccount && (calendars === null || !calendarUrl);
   const coll = book ? "address book" : "calendar";
 
   return (
@@ -103,7 +105,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
       footer={<>
         <span className="spacer" />
         <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn primary" disabled={busy || needsAccount || (kind === "remote" && !url.trim())} onClick={create}>
+        <button className="btn primary" disabled={busy || needsAccount || loadingCalendars || (kind === "remote" && !url.trim())} onClick={create}>
           {busy ? "Working…" : kind === "remote" && !pick ? "Check link" : "Create"}
         </button>
       </>}>

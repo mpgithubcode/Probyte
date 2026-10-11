@@ -279,12 +279,15 @@ npm run dev                                    # UI on :5173, proxies /api to :8
 
 ```bash
 scripts/test.sh            # everything: API tests (pytest) and browser tests (Playwright)
-scripts/test.sh api        # just the API tests;  scripts/test.sh -k sync   any pytest arguments
+scripts/test.sh api        # just the API tests (or: ui);  scripts/test.sh -k sync   any pytest arguments
+scripts/test.sh tests/api/test_fields.py   # one file or test
 scripts/test.sh bench      # timings at 1k / 10k / 50k rows
 KEEP_STACK=1 scripts/test.sh ...   # leave the test stack running afterwards to inspect it
 ```
 
-Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale), never your real data. Only Docker is needed.
+Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
+
+What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
 
 ### Database changes
 
