@@ -14,9 +14,9 @@ RADICALE = os.environ.get("RADICALE_URL", "http://radicale:5232").rstrip("/")
 class Client(requests.Session):
     """A logged-in test user with small helpers."""
 
-    def __init__(self):
+    def __init__(self, username=None):
         super().__init__()
-        self.username = "t" + uuid.uuid4().hex[:10]
+        self.username = username or "t" + uuid.uuid4().hex[:10]
         self.password = "test-pass-123"
         r = self.post(API + "/auth/register", json={"username": self.username, "password": self.password})
         r.raise_for_status()

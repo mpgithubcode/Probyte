@@ -363,3 +363,4 @@ def test_combined_database_loads_linked_sources_separately(user, other_user):
     full = user.j("GET", f"/combos/{c['id']}")                                   # without defer: everything at once
     assert full["pending"] == [] and len(full["records"]) == 2
     assert user.get(API + f"/combos/{c['id']}/sources/{src['id']}").status_code == 404   # not a source
+

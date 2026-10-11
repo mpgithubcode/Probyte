@@ -358,7 +358,9 @@ textarea.cell-input { position: absolute; top: 0; left: 0; height: auto; min-hei
 /* ---------------------------------------------------------------- timeline */
 .timeline { flex: 1; display: flex; flex-direction: column; padding: 12px 20px 16px; min-height: 0; }
 .tl-scroll { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: 8px; min-height: 0; }
-.tl-content { position: relative; min-height: 100%; }
+.tl-content { position: relative; min-height: 100%; display: flex; flex-direction: column; }
+.tl-fill { flex: 1; display: flex; }
+.tl-fill .tl-title { cursor: default; }
 .tl-header { display: flex; position: sticky; top: 0; z-index: 4; background: var(--bg-soft); border-bottom: 1px solid var(--border); height: 52px; }
 .tl-corner {
   width: var(--tl-title, 240px); flex-shrink: 0; position: sticky; left: 0; z-index: 5; background: var(--bg-soft); border-right: 1px solid var(--border);
@@ -1016,3 +1018,8 @@ button.cal-day { font: inherit; color: inherit; text-align: left; background: va
 
 /* a combined database whose linked-table sources are still arriving */
 .sources-loading { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* frozen columns in the table view (left offsets set inline, measured from the header) */
+.grid td.frozen { position: sticky; z-index: 1; background: var(--bg); }
+.grid th.frozen { position: sticky; z-index: 3; background: var(--bg-soft); }
+.grid .frozen-last { box-shadow: inset -1px 0 0 var(--border-strong), 4px 0 6px -4px rgba(0, 0, 0, 0.18); }

@@ -747,3 +747,34 @@ def test_list_properties_start_position_and_names(browser):
     done = next(p for p in cfg["listProps"] if p["field"] == F["done"])
     assert done["align"] == "start" and next(p for p in cfg["listProps"] if p["field"] == F["priority"])["label"] is False
     assert not pg.errors, pg.errors
+
+
+def test_freezing_columns(browser):
+    u = Client()
+    t = u.table(name="Wide")
+    F = u.fields(t["id"])
+    for n in "ABCDEF":
+        u.j("POST", f"/tables/{t['id']}/fields", json={"name": f"Col {n}", "type": "text", "options": {}})
+    for i in range(4):
+        u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: f"Row {i}"}})
+    pg = new_page(browser)
+    pg.set_viewport_size({"width": 1000, "height": 600})
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click("thead th:has-text('Notes')")
+    pg.click(".menu-item:has-text('Freeze up to this column')")
+    expect(pg.locator("thead th.frozen")).to_have_count(2)
+    before = [pg.locator("thead th.frozen").nth(i).bounding_box()["x"] for i in range(2)]
+    for x in (300, 700, 1200):                                     # scrolling sideways (several times) leaves them in place
+        pg.locator(".grid-wrap").evaluate(f"e => e.scrollLeft = {x}")
+        pg.mouse.wheel(10, 0)
+        pg.wait_for_timeout(150)
+        assert [round(pg.locator("thead th.frozen").nth(i).bounding_box()["x"]) for i in range(2)] == [round(b) for b in before]
+        assert pg.locator(".grid tbody tr").first.locator("td.frozen").first.is_visible()
+    pg.wait_for_timeout(600)
+    cfg = u.j("GET", f"/tables/{t['id']}")["views"][0]["config"]
+    assert cfg["frozen"] == 2
+    pg.click("thead th:has-text('Notes')")
+    pg.click(".menu-item:has-text('Unfreeze columns')")
+    expect(pg.locator("thead th.frozen")).to_have_count(0)
+    assert not pg.errors, pg.errors

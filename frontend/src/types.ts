@@ -98,7 +98,8 @@ export interface ViewConfig {
   // List: property order, placement (start = right after the color dot, before the title) and whether its name shows
   listProps?: { field: string; align: ListAlign; label?: boolean }[];
   fieldOrder?: string[];
-  pageSize?: number;  // table / list / gallery: records per page (unset = all)  // column order dragged in the table view (also used for cards)
+  pageSize?: number;
+  frozen?: number;  // table view: how many columns (after the row numbers) stay put when scrolling sideways  // table / list / gallery: records per page (unset = all)  // column order dragged in the table view (also used for cards)
   listLabels?: boolean;                                   // List: show property names (default on)
   calMode?: "month" | "week" | "day";                     // Calendar
   dateField?: string;

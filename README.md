@@ -2,6 +2,27 @@
 
 A small, self-hosted, multi-user, [Teable](https://teable.ai/)-style database app backed by PostgreSQL. Each user's work is organised as **bases → tables**. A base groups related tables (normal tables, CalDAV task/event tables) and combined databases. Use the sidebar to create, rename, recolour or delete bases, and a table's ⋯ menu to move it to another base.
 
+<p align="center"><img src="docs/screenshots/editing.gif" alt="Adding a record, typing into the grid and searching" width="860"></p>
+
+| | |
+|---|---|
+| ![Table view with a frozen title column, links, lookups and formulas](docs/screenshots/table.png) **Table** — links, lookups, formulas, a frozen title column | ![Board view grouped by status](docs/screenshots/board.png) **Board** — drag cards between columns |
+| ![Week calendar with events and tasks](docs/screenshots/calendar-week.png) **Calendar** — tasks & events synced with your phone (week view) | ![To-do list with checkboxes, grouped by status](docs/screenshots/list.png) **List** — checkboxes first, grouped, columns that line up |
+| ![Timeline of projects](docs/screenshots/timeline.png) **Timeline** | ![Bar chart of budget by status](docs/screenshots/chart.png) **Chart** |
+| ![Combined database calendar](docs/screenshots/combined.png) **Combined database** — several tables in one view, here as a calendar | ![Record panel](docs/screenshots/record.png) **Record panel** |
+| ![Settings: connecting AI assistants and the API](docs/screenshots/settings-api.png) **API & MCP** — connect Claude and other assistants | ![Dark mode](docs/screenshots/dark.png) **Dark mode** |
+
+<p align="center">
+  <img src="docs/screenshots/phone-list.png" alt="To-do list on a phone" width="240">
+  <img src="docs/screenshots/phone-calendar.png" alt="Month calendar on a phone" width="240">
+  <img src="docs/screenshots/phone-share.png" alt="A public link on a phone" width="240">
+  <br><em>On a phone: a to-do list, the month with its agenda, and a public link anyone can open.</em>
+</p>
+
+<p align="center"><img src="docs/screenshots/board-drag.gif" alt="Dragging cards between board columns" width="760"></p>
+
+The pictures are made by `scripts/test.sh screens` from demo data on the test stack; run it again after UI changes.
+
 On top of that, Probyte has these extras:
 
 1. **CalDAV task & event databases.** A database can be bound to a calendar collection and sync both ways with any CalDAV server (Nextcloud, Radicale, Baïkal, iCloud, Fastmail…). There are three kinds:
@@ -22,7 +43,7 @@ Every database and combined database can have any number of Notion-style views, 
 
 | View | What it shows |
 |---|---|
-| **Table** | Spreadsheet grid; click a cell to edit it. Drag a column header to move the column (the order is saved with the view; the title column stays first) |
+| **Table** | Spreadsheet grid; click a cell to edit it. Drag a column header to move the column (the order is saved with the view; the title column stays first). A column header's menu can **freeze** the columns up to it, so they stay put while the rest scrolls sideways |
 | **Board** | Kanban columns grouped by a single-select field; drag cards between columns |
 | **Timeline** | Records as bars between a start and end date. Drag a bar to move it, or drag its edges to change the start or end. Day, week and month scales. Click an empty row to give an undated record dates. |
 | **Calendar** | **Month**, **Week** and **Day**. Month: drag items to another day. Week/Day: a time grid with an all-day row (on phones the week scrolls sideways and opens on today); click a slot to add, drag a block to move it (15-minute steps, across days in Week), drag its bottom edge to change the end |
@@ -288,12 +309,23 @@ scripts/test.sh            # everything: API tests (pytest) and browser tests (P
 scripts/test.sh api        # just the API tests (or: ui);  scripts/test.sh -k sync   any pytest arguments
 scripts/test.sh tests/api/test_fields.py   # one file or test
 scripts/test.sh bench      # timings at 1k / 10k / 50k rows
+scripts/test.sh screens    # refresh the README's screenshots and GIFs (docs/screenshots)
 KEEP_STACK=1 scripts/test.sh ...   # leave the test stack running afterwards to inspect it
 ```
 
 Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
 
 What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
+
+### Forgotten password
+
+Passwords are stored only as hashes, so they can't be looked up. Whoever runs the server can set a new one:
+
+```bash
+docker compose exec app python -m app.admin reset-password <username>
+```
+
+It prints a new random password and signs that user out everywhere; change it afterwards in **Settings → Account**.
 
 ### Database changes
 

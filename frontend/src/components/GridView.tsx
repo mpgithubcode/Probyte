@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Field, Rec } from "../types";
 import { buildGroups, fitField, isEditable, orderFields, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
 import { isTouch } from "./useNarrow";
@@ -88,12 +88,31 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
   const componentF = fields.find((x) => x.system_key === "component");
   const eventDone = (f: Field, r: Rec) => f.system_key === "done"
     && (ds.table?.kind === "events" || (!!componentF && r.data[componentF.id] === "Event"));
+  // Frozen columns stay put while the table scrolls sideways. Their offsets are measured from the header, so
+  // they're right whatever the column widths are (phones use narrower columns).
+  const headRow = useRef<HTMLTableRowElement>(null);
+  const frozenIds = visible.slice(0, Math.max(0, view.config.frozen ?? 0)).map((f) => f.id);
+  const [lefts, setLefts] = useState<Record<string, number>>({});
+  useLayoutEffect(() => {
+    const ths = headRow.current ? [...headRow.current.children] as HTMLElement[] : [];
+    const next: Record<string, number> = {};
+    // add up the widths before each column (not offsetLeft: a sticky column's position moves as it scrolls)
+    let x = ths[0]?.offsetWidth ?? 0;  // the row-number column
+    frozenIds.forEach((id, i) => { const th = ths[i + 1]; if (th) { next[id] = x; x += th.offsetWidth; } });
+    if (JSON.stringify(next) !== JSON.stringify(lefts)) setLefts(next);
+  });
+  const lastFrozen = frozenIds[frozenIds.length - 1];
+  const fz = (f: Field) => (f.id in lefts
+    ? { className: ` frozen${f.id === lastFrozen ? " frozen-last" : ""}`, style: { left: lefts[f.id] } as CSSProperties }
+    : { className: "", style: undefined });
+
   const cell = (r: Rec, f: Field) => {
+    const z = fz(f);
     const isEditing = editing?.rec === r.id && editing.field === f.id;
     const readonly = !canEdit(f);
     if (f.type === "button") {
       return (
-        <td key={f.id} className="cell center">
+        <td key={f.id} className={`cell center${z.className}`} style={z.style}>
           <button className="cell-button" style={{ background: f.options.color ?? "var(--accent)" }} disabled={!ops.can.edit && f.options.action !== "url"}
             onClick={(e) => { e.stopPropagation(); ops.runButton(r, f); }}>{f.options.label ?? "Click"}</button>
         </td>
@@ -101,7 +120,7 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
     }
     if (f.type === "checkbox") {
       return (
-        <td key={f.id} className="cell center">
+        <td key={f.id} className={`cell center${z.className}`} style={z.style}>
           <input type="checkbox" className="checkbox" checked={!!r.data[f.id]} disabled={readonly || eventDone(f, r)}
             title={eventDone(f, r) ? "Events are completed once they're over" : undefined}
             onChange={(e) => ops.update(r, { [f.id]: e.target.checked })} />
@@ -109,7 +128,7 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
       );
     }
     return (
-      <td key={f.id} className={`cell ${isEditing ? "editing" : ""} ${readonly ? "readonly" : ""}`}
+      <td key={f.id} className={`cell ${isEditing ? "editing" : ""} ${readonly ? "readonly" : ""}${z.className}`} style={z.style}
         onClick={() => !readonly && !isEditing && setEditing({ rec: r.id, field: f.id })}>
         {isEditing ? (
           <FieldInput field={fitField(f, recordKind(fields, r), r.data[f.id])} value={r.data[f.id]} inline autoFocus anchor={f.type === "recurrence" ? anchorOf(fields, r) : undefined}
@@ -166,7 +185,7 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
     <div className={`grid-wrap ${sel.size ? "selecting" : ""}`} ref={win.ref}>
       <table className="grid">
         <thead>
-          <tr>
+          <tr ref={headRow}>
             <th className="rownum">
               {selectable && records.length > 0 && (
                 <input type="checkbox" className="checkbox row-check all" checked={allOn} title={allOn ? "Clear selection" : "Select all"}
@@ -175,8 +194,8 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
               )}
             </th>
             {visible.map((f) => (
-              <th key={f.id} style={{ width: WIDTHS[f.type] ?? 200 }} title={f.options._error ?? undefined}
-                className={`${dragCol === f.id ? "col-dragging" : ""} ${overCol === f.id && dragCol && dragCol !== f.id
+              <th key={f.id} style={{ width: WIDTHS[f.type] ?? 200, ...fz(f).style }} title={f.options._error ?? undefined}
+                className={`${fz(f).className} ${dragCol === f.id ? "col-dragging" : ""} ${overCol === f.id && dragCol && dragCol !== f.id
                   ? (visible.findIndex((x) => x.id === dragCol) < visible.findIndex((x) => x.id === f.id) ? "col-over-after" : "col-over") : ""}`}
                 draggable={!f.is_primary && !isTouch}
                 onDragStart={(e) => { setDragCol(f.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", f.id); }}
@@ -249,6 +268,17 @@ export function GridView({ ds, view, fields, visible, records, ops, setConfig }:
                 <Icon name="edit" size={14} /> Edit field
               </button>
             )}
+            {(() => {
+              const at = visible.findIndex((f) => f.id === menu.field.id) + 1;
+              return <>
+                <button className="menu-item" onClick={() => { setConfig({ frozen: at === frozenIds.length ? 0 : at }); setMenu(null); }}>
+                  <Icon name="lock" size={14} /> {at === frozenIds.length ? "Unfreeze columns" : `Freeze ${at === 1 ? "this column" : `up to this column (${at})`}`}
+                </button>
+                {frozenIds.length > 0 && at !== frozenIds.length && (
+                  <button className="menu-item" onClick={() => { setConfig({ frozen: 0 }); setMenu(null); }}><Icon name="lock" size={14} /> Unfreeze columns</button>
+                )}
+              </>;
+            })()}
             <button className="menu-item" onClick={() => { setConfig({ sorts: [{ field: menu.field.id, dir: "asc" }], sort: undefined }); setMenu(null); }}>
               <Icon name="sort" size={14} /> Sort ascending
             </button>

@@ -262,6 +262,8 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
               {ops.can.add && <button className="ghost-btn" onClick={() => ops.create({}, true)}><Icon name="plus" size={14} /> New</button>}
             </div>
           </div>
+          {/* the title column carries on to the bottom, so gridlines don't show through where it would be */}
+          <div className="tl-fill"><div className="tl-title" aria-hidden /></div>
         </div>
       </div>
     </div>
