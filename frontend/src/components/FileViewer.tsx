@@ -1,114 +1,419 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api";
-import { attachmentUrl, fileExt, textUrl, thumbUrl, viewOf } from "../files";
-import type { Attachment } from "../types";
-import { formatBytes } from "../util";
-import { Icon } from "./Icon";
-import { Modal } from "./Overlay";
+import { attachmentUrl, editableKind, fetchBytes, fileExt, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
+import type { Attachment, Field, Rec } from "../types";
+import { formatBytes, isEditable } from "../util";
+import { CellValue, FieldInput } from "./Cells";
+import { FieldIcon, Icon } from "./Icon";
 
-const MAX_TEXT = 2 * 1024 * 1024;  // larger text files are downloaded rather than shown
+const RichText = lazy(() => import("./RichText"));
+const PdfView = lazy(() => import("./PdfView"));
 
-/** A file shown in the page: image, PDF, video, audio or a text file's source (editable for files of files tables). */
-export function FileView({ item, editable, onSaved }: { item: Attachment; editable?: boolean; onSaved?: () => void }) {
-  const view = viewOf(item);
-  const [text, setText] = useState<string | null>(null);
-  const [draft, setDraft] = useState<string | null>(null);
-  const [err, setErr] = useState("");
+/** The browser's own PDF viewer where it shows every page (desktop browsers); pdf.js elsewhere (phones). */
+const nativePdf = () => (navigator as Navigator & { pdfViewerEnabled?: boolean }).pdfViewerEnabled === true
+  && !window.matchMedia("(pointer: coarse)").matches;
+
+function Pdf({ src, data, name }: { src?: string; data?: ArrayBuffer; name: string }) {
+  const [blob, setBlob] = useState<string | null>(null);
+  useEffect(() => {
+    if (!data || !nativePdf()) return;
+    const u = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
+    setBlob(u);
+    return () => URL.revokeObjectURL(u);
+  }, [data]);
+  if (nativePdf()) return src ? <iframe className="viewer-frame" src={src} title={name} /> : blob ? <iframe className="viewer-frame" src={blob} title={name} /> : <Loading />;
+  return <Suspense fallback={<Loading />}><PdfView src={src} data={data} /></Suspense>;
+}
+
+const MAX_TEXT = 5 * 1024 * 1024;     // larger text files are downloaded rather than shown
+const MAX_PARSE = 40 * 1024 * 1024;   // spreadsheets / Word files read in the browser
+const SHEET_ROWS = 5000, SHEET_COLS = 200;
+
+export interface ViewerEntry { item: Attachment; rec?: Rec }
+
+/** Full-screen viewer (like Google Drive's): the file in the middle, actions on top, details on the right.
+ * Files of files tables can be edited here (text files; Markdown as formatted text) and their fields changed. */
+export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate, onDelete, onSaved, onReplace, location, onMove }: {
+  entries: ViewerEntry[]; index: number; onClose: () => void;
+  fields?: Field[];                                     // the record's fields, for the details panel
+  canEdit?: boolean;
+  onUpdate?: (rec: Rec, patch: Record<string, unknown>) => void;
+  onDelete?: (rec: Rec) => void;
+  onSaved?: (rec: Rec) => void;                         // after saving an edited file / replacing it
+  onReplace?: boolean;                                  // offer "Replace file…"
+  location?: string | null;                             // where the files are (bucket / folder)
+  onMove?: (entry: ViewerEntry) => void;                // went to another file
+}) {
+  const [i, setI] = useState(Math.max(0, Math.min(index, entries.length - 1)));
+  const [info, setInfo] = useState(() => window.innerWidth > 900);
+  const [draft, setDraft] = useState<string | null>(null);   // the edited text, while editing
+  const [original, setOriginal] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const big = item.size > MAX_TEXT;
+  const [err, setErr] = useState("");
+  const [version, setVersion] = useState(0);                 // reload the file after saving / replacing
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const replaceRef = useRef<HTMLInputElement>(null);
+  const entry = entries[i];
+  const item = entry?.item;
+  const editing = draft !== null;
+  const dirty = editing && draft !== original;
+
+  const leave = (then: () => void) => {
+    if (dirty && !window.confirm("Discard your changes to this file?")) return;
+    setDraft(null); setErr(""); setConfirmDelete(false);
+    then();
+  };
+  const go = (n: number) => n >= 0 && n < entries.length && leave(() => { setI(n); onMove?.(entries[n]); });
+  const close = () => leave(onClose);
 
   useEffect(() => {
-    setText(null); setDraft(null); setErr("");
-    if (view !== "text" || big) return;
-    let live = true;
-    fetch(textUrl(item)).then(async (r) => {
-      if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail);
-      return r.text();
-    }).then((t) => { if (live) setText(t); }).catch((e) => live && setErr(e.message));
-    return () => { live = false; };
-  }, [item.id, item.size, view, big]);
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      const typing = !!t.closest("input, textarea, select, [contenteditable=true]");
+      if (e.key === "Escape" && !document.querySelector(".popover")) { e.preventDefault(); typing && editing ? leave(() => undefined) : close(); }
+      if (typing) {
+        if ((e.metaKey || e.ctrlKey) && e.key === "s" && editing) { e.preventDefault(); save(); }
+        return;
+      }
+      if (e.key === "ArrowRight") go(i + 1);
+      if (e.key === "ArrowLeft") go(i - 1);
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  });
 
-  const save = async () => {
-    setBusy(true);
-    try { await api.put(`/files/${item.id}/text`, { text: draft }); setText(draft); setDraft(null); onSaved?.(); }
-    catch (e) { setErr((e as Error).message); }
+  if (!item) return null;
+  const kind = viewKind(item);
+  const canEditFile = !!canEdit && editableKind(item) && item.size <= MAX_TEXT;
+
+  async function save() {
+    if (!item || draft === null) return;
+    setBusy(true); setErr("");
+    try {
+      const rec = await api.put<Rec>(`/files/${item.id}/text`, { text: draft });
+      setDraft(null); setVersion((v) => v + 1);
+      onSaved?.(rec);
+    } catch (e) { setErr((e as Error).message); }
     setBusy(false);
+  }
+
+  const replace = async (list: FileList | null) => {
+    if (!list?.[0]) return;
+    const body = new FormData();
+    body.append("file", list[0]);
+    setBusy(true); setErr("");
+    try {
+      const rec = await api.upload<Rec>(`/records/${item.id}/file`, body, "PUT");
+      setVersion((v) => v + 1);
+      onSaved?.(rec);
+    } catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+    if (replaceRef.current) replaceRef.current.value = "";
   };
 
-  const url = attachmentUrl(item);
-  switch (view) {
-    case "image": return <div className="file-view image"><img src={url} alt={item.name} /></div>;
-    case "pdf": return <div className="file-view pdf"><iframe src={url} title={item.name} /></div>;
-    case "video": return <div className="file-view media"><video src={url} controls preload="metadata" /></div>;
-    case "audio": return <div className="file-view audio"><audio src={url} controls preload="metadata" /></div>;
-    case "text":
-      if (big) return <NoPreview item={item} why="This file is too large to show here." />;
-      return (
-        <div className="file-view text">
-          {err && <div className="error small">{err}</div>}
-          {text === null && !err && <div className="muted pad">Loading…</div>}
-          {text !== null && (draft === null
-            ? <pre className="file-text" onDoubleClick={() => editable && setDraft(text)}>{text || <span className="muted">(empty)</span>}</pre>
-            : <textarea className="file-text input" autoFocus value={draft} spellCheck={false} onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); save(); } }} />)}
-          {editable && text !== null && (
-            <div className="row file-text-actions">
-              {draft === null
-                ? <button className="btn sm" onClick={() => setDraft(text)}><Icon name="edit" size={14} /> Edit</button>
-                : <>
-                    <button className="btn sm primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>
-                    <button className="btn sm" onClick={() => setDraft(null)}>Cancel</button>
-                    <span className="muted small">Ctrl/⌘ S saves</span>
-                  </>}
-            </div>
-          )}
+  return createPortal(
+    <div className="viewer" role="dialog" aria-label={item.name}>
+      <header className="viewer-bar">
+        <button className="viewer-btn" onClick={close} aria-label="Close" title="Close (Esc)"><Icon name="x" size={18} /></button>
+        <span className="viewer-ext">{fileExt(item.name)}</span>
+        <div className="viewer-title">
+          <b title={item.name}>{item.name}</b>
+          <span>{formatBytes(item.size)}{entries.length > 1 ? ` · ${i + 1} of ${entries.length}` : ""}{dirty ? " · unsaved changes" : ""}</span>
         </div>
-      );
+        <span className="spacer" />
+        {err && <span className="viewer-err" title={err}>{err}</span>}
+        {editing ? (
+          <>
+            <button className="viewer-btn text" onClick={() => leave(() => undefined)}>Cancel</button>
+            <button className="viewer-btn primary" disabled={busy || !dirty} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+          </>
+        ) : (
+          <>
+            {canEditFile && <button className="viewer-btn text" onClick={() => setDraft(original ?? "")} disabled={original === null}>
+              <Icon name="edit" size={16} /> <span>Edit</span></button>}
+            {(kind === "pdf" || kind === "image" || kind === "video" || kind === "audio") && (item.file || item.url) && (
+              <a className="viewer-btn" href={attachmentUrl(item)} target="_blank" rel="noreferrer" title="Open in a new tab"><Icon name="external" size={17} /></a>
+            )}
+            <a className="viewer-btn text" href={attachmentUrl(item, true)} title="Download"><Icon name="download" size={17} /> <span>Download</span></a>
+            {onReplace && canEdit && entry.rec && (<>
+              <input ref={replaceRef} type="file" hidden onChange={(e) => replace(e.target.files)} />
+              <button className="viewer-btn" title="Replace file (upload a new version)" disabled={busy} onClick={() => replaceRef.current?.click()}>
+                <Icon name="upload" size={17} /></button>
+            </>)}
+          </>
+        )}
+        <button className={`viewer-btn ${info ? "on" : ""}`} onClick={() => setInfo(!info)} title="Details" aria-label="Details">
+          <Icon name="list" size={17} /></button>
+      </header>
+      <div className="viewer-main">
+        <div className="viewer-stage">
+          {entries.length > 1 && i > 0 && !editing && <button className="viewer-nav prev" onClick={() => go(i - 1)} aria-label="Previous file"><Icon name="left" size={22} /></button>}
+          <FileBody key={`${item.id}:${item.size}:${version}`} item={item} kind={kind} editing={editing} draft={draft}
+            onDraft={setDraft} onText={setOriginal} />
+          {entries.length > 1 && i < entries.length - 1 && !editing && <button className="viewer-nav next" onClick={() => go(i + 1)} aria-label="Next file"><Icon name="right" size={22} /></button>}
+        </div>
+        {info && (
+          <aside className="viewer-info">
+            <div className="viewer-info-head"><b>Details</b><button className="icon-btn" onClick={() => setInfo(false)} aria-label="Close details"><Icon name="x" size={14} /></button></div>
+            <Details item={item} rec={entry.rec} fields={fields} canEdit={!!canEdit && !editing} onUpdate={onUpdate} location={location} />
+            {entry.rec && onDelete && canEdit && (
+              <div className="viewer-info-foot">
+                {confirmDelete ? (
+                  <>
+                    <span className="muted small">Moves it to the trash; the file is deleted from the storage when the trash is emptied.</span>
+                    <div className="row">
+                      <button className="btn sm danger" onClick={() => { onDelete(entry.rec!); if (entries.length > 1) setI(Math.min(i, entries.length - 2)); else onClose(); setConfirmDelete(false); }}>Delete</button>
+                      <button className="btn sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
+                    </div>
+                  </>
+                ) : <button className="btn sm danger-ghost" onClick={() => setConfirmDelete(true)}><Icon name="trash" size={14} /> Delete file</button>}
+              </div>
+            )}
+          </aside>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** The details panel: the record's fields (editable ones can be changed here), or a plain attachment's name, type and size. */
+function Details({ item, rec, fields, canEdit, onUpdate, location }: {
+  item: Attachment; rec?: Rec; fields?: Field[]; canEdit: boolean; onUpdate?: (rec: Rec, patch: Record<string, unknown>) => void; location?: string | null;
+}) {
+  if (!rec || !fields) {
+    return (
+      <dl className="viewer-details">
+        <dt>Name</dt><dd>{item.name}</dd>
+        <dt>Type</dt><dd>{item.mime || "–"}</dd>
+        <dt>Size</dt><dd>{formatBytes(item.size)} <span className="muted small">({item.size.toLocaleString()} bytes)</span></dd>
+      </dl>
+    );
+  }
+  const shown = fields.filter((f) => f.system_key !== "text" && f.system_key !== "file" && f.type !== "button");
+  const folder = fields.find((f) => f.system_key === "folder");
+  const path = [location, folder ? rec.data[folder.id] : null, item.name].filter(Boolean).join("/");
+  return (
+    <div className="viewer-details fields">
+      {thumbUrl(item) && <img className="viewer-thumb" src={thumbUrl(item)!} alt="" />}
+      <div className="viewer-field">
+        <span className="viewer-label">Location</span>
+        <span className="viewer-path" title={path}>{path}</span>
+      </div>
+      {shown.map((f) => {
+        const editable = canEdit && !!onUpdate && isEditable(f) && !f.readonly;
+        const v = rec.data[f.id];
+        return (
+          <div key={f.id} className="viewer-field">
+            <span className="viewer-label"><FieldIcon type={f.type} /> {f.name}</span>
+            {editable
+              ? <FieldInput key={`${rec.id}:${f.id}`} field={f} value={v} onCommit={(nv) => onUpdate!(rec, { [f.id]: nv })} />
+              : <span className="viewer-value">{v === null || v === undefined || v === "" ? <span className="muted">–</span> : <CellValue field={f} value={v} />}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The file itself, shown the way it can be best in a browser. */
+function FileBody({ item, kind, editing, draft, onDraft, onText }: {
+  item: Attachment; kind: ReturnType<typeof viewKind>; editing: boolean; draft: string | null;
+  onDraft: (s: string) => void; onText: (s: string | null) => void;
+}) {
+  const url = attachmentUrl(item);
+  switch (kind) {
+    case "image": return <ImageView item={item} />;
+    case "pdf": return item.file || item.url ? <Pdf src={url} name={item.name} /> : <BlobPdf url={attachmentUrl(item, true)} name={item.name} />;
+    case "video": return <div className="viewer-media"><video src={url} controls autoPlay={false} preload="metadata" /></div>;
+    case "audio": return <div className="viewer-media audio"><span className="viewer-ext big">{fileExt(item.name)}</span><audio src={url} controls preload="metadata" /></div>;
+    case "text": case "markdown":
+      return <TextView item={item} markdown={kind === "markdown"} editing={editing} draft={draft} onDraft={onDraft} onText={onText} />;
+    case "sheet": return <SheetView item={item} />;
+    case "document": return <DocumentView item={item} />;
     default: return <NoPreview item={item} />;
   }
+}
+
+function ImageView({ item }: { item: Attachment }) {
+  const [zoom, setZoom] = useState(false);
+  return (
+    <div className={`viewer-image ${zoom ? "zoom" : ""}`} onClick={() => setZoom(!zoom)} title={zoom ? "Fit to screen" : "Actual size"}>
+      <img src={attachmentUrl(item)} alt={item.name} />
+    </div>
+  );
+}
+
+/** A PDF attachment (served as a download): read it, then show it. */
+function BlobPdf({ url, name }: { url: string; name: string }) {
+  const [data, setData] = useState<ArrayBuffer | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { fetchBytes(url).then(setData).catch((e) => setErr(e.message)); }, [url]);
+  if (err) return <div className="viewer-msg error">{err}</div>;
+  return data ? <Pdf data={data} name={name} /> : <Loading />;
+}
+
+function TextView({ item, markdown, editing, draft, onDraft, onText }: {
+  item: Attachment; markdown: boolean; editing: boolean; draft: string | null; onDraft: (s: string) => void; onText: (s: string | null) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  const big = item.size > MAX_TEXT;
+  useEffect(() => {
+    onText(null);
+    if (big) return;
+    let live = true;
+    fetchBytes(textUrl(item))
+      .then((b) => { const t = new TextDecoder().decode(b); if (live) { setText(t); onText(t); } })
+      .catch((e) => live && setErr(e.message));
+    return () => { live = false; };
+  }, [item.id]);
+  if (big) return <NoPreview item={item} why="This file is too large to show here." />;
+  if (err) return <div className="viewer-msg error">{err}</div>;
+  if (text === null) return <Loading />;
+  if (markdown) {
+    return (
+      <div className="viewer-doc">
+        <Suspense fallback={<Loading />}>
+          <RichText markdown={text} editable={editing} onChange={editing ? onDraft : undefined} />
+        </Suspense>
+      </div>
+    );
+  }
+  return (
+    <div className="viewer-doc code">
+      {editing
+        ? <textarea className="viewer-code-edit" autoFocus spellCheck={false} value={draft ?? ""} onChange={(e) => onDraft(e.target.value)} />
+        : <pre className="viewer-code">{text || <span className="muted">(empty file)</span>}</pre>}
+    </div>
+  );
+}
+
+/** Excel, OpenDocument, Numbers and CSV files as tables, one tab per sheet. */
+function SheetView({ item }: { item: Attachment }) {
+  const [sheets, setSheets] = useState<{ name: string; rows: string[][]; more: boolean }[] | null>(null);
+  const [tab, setTab] = useState(0);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    if (item.size > MAX_PARSE) { setErr("This spreadsheet is too large to show here; download it instead."); return; }
+    let live = true;
+    (async () => {
+      const [XLSX, bytes] = await Promise.all([import("xlsx"), fetchBytes(item.file ? attachmentUrl(item, true) : attachmentUrl(item, true))]);
+      const ext = fileExt(item.name);
+      const wb = ext === "csv" || ext === "tsv"
+        ? XLSX.read(new TextDecoder().decode(bytes), { type: "string", FS: ext === "tsv" ? "\t" : undefined })
+        : XLSX.read(bytes, { type: "array", cellDates: true });
+      const out = wb.SheetNames.map((name) => {
+        const rows = XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], { header: 1, raw: false, blankrows: true, defval: "" });
+        return { name, rows: rows.slice(0, SHEET_ROWS).map((r) => r.slice(0, SHEET_COLS).map((c) => String(c ?? ""))), more: rows.length > SHEET_ROWS };
+      });
+      if (live) setSheets(out);
+    })().catch((e) => live && setErr(`This spreadsheet couldn't be read: ${(e as Error).message}`));
+    return () => { live = false; };
+  }, [item.id]);
+  if (err) return <NoPreview item={item} why={err} />;
+  if (!sheets) return <Loading />;
+  const s = sheets[tab] ?? sheets[0];
+  const cols = Math.max(1, ...s.rows.map((r) => r.length));
+  return (
+    <div className="viewer-sheet">
+      <div className="sheet-scroll">
+        <table className="sheet-table">
+          <thead><tr><th className="corner" />{Array.from({ length: cols }, (_, c) => <th key={c}>{colName(c)}</th>)}</tr></thead>
+          <tbody>
+            {s.rows.map((r, n) => (
+              <tr key={n}><th>{n + 1}</th>{Array.from({ length: cols }, (_, c) => <td key={c}>{r[c] ?? ""}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
+        {s.more && <div className="muted small pad">Showing the first {SHEET_ROWS.toLocaleString()} rows. Download the file to see everything.</div>}
+      </div>
+      {sheets.length > 1 && (
+        <div className="sheet-tabs">
+          {sheets.map((x, n) => <button key={x.name} className={n === tab ? "active" : ""} onClick={() => setTab(n)}>{x.name}</button>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const colName = (n: number): string => (n < 26 ? String.fromCharCode(65 + n) : colName(Math.floor(n / 26) - 1) + String.fromCharCode(65 + (n % 26)));
+
+/** Word, PowerPoint and OpenDocument files: as PDF pages made by the server's converter; .docx in the browser when
+ * the converter isn't there. */
+function DocumentView({ item }: { item: Attachment }) {
+  const [pdf, setPdf] = useState<ArrayBuffer | null>(null);
+  const [fallback, setFallback] = useState<string | null>(null);  // why the converted preview isn't there
+  const box = useRef<HTMLDivElement>(null);
+  const [docxErr, setDocxErr] = useState("");
+  const isDocx = useMemo(() => ["docx", "docm", "dotx"].includes(fileExt(item.name)), [item.name]);
+
+  useEffect(() => {
+    let live = true;
+    if (!item.file) { setFallback("only-docx"); return; }
+    fetchBytes(previewPdfUrl(item)).then((b) => live && setPdf(b)).catch((e) => live && setFallback((e as Error).message));
+    return () => { live = false; };
+  }, [item.id]);
+
+  useEffect(() => {
+    if (!fallback || !isDocx || !box.current) return;
+    if (item.size > MAX_PARSE) { setDocxErr("This document is too large to show here."); return; }
+    let live = true;
+    (async () => {
+      const [{ renderAsync }, bytes] = await Promise.all([import("docx-preview"), fetchBytes(attachmentUrl(item, true))]);
+      if (!live || !box.current) return;
+      await renderAsync(bytes, box.current, undefined, { inWrapper: true, ignoreLastRenderedPageBreak: true, experimental: false,
+        renderHeaders: true, renderFooters: true, useBase64URL: true });
+      // links inside a document can only go to web pages
+      box.current.querySelectorAll("a").forEach((a) => {
+        if (!/^(https?:|mailto:|#)/i.test(a.getAttribute("href") ?? "")) a.removeAttribute("href");
+        a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener noreferrer");
+      });
+      box.current.querySelectorAll("script, iframe, object, embed").forEach((x) => x.remove());
+    })().catch((e) => live && setDocxErr(`This document couldn't be shown: ${(e as Error).message}`));
+    return () => { live = false; };
+  }, [fallback, isDocx, item.id]);
+
+  if (pdf) return <Pdf data={pdf} name={item.name} />;
+  if (!fallback) return <Loading text="Preparing the preview…" />;
+  if (isDocx) return docxErr ? <NoPreview item={item} why={docxErr} /> : <div className="viewer-docx" ref={box}><Loading /></div>;
+  return <NoPreview item={item} why={fallback === "only-docx" ? undefined : fallback} />;
+}
+
+function Loading({ text = "Loading…" }: { text?: string }) {
+  return <div className="viewer-msg"><Icon name="sync" size={18} className="spin" /> {text}</div>;
 }
 
 function NoPreview({ item, why }: { item: Attachment; why?: string }) {
   const thumb = thumbUrl(item);
   return (
-    <div className="file-view none">
-      {thumb ? <img className="file-cover" src={thumb} alt="" /> : <span className="file-ext big">{fileExt(item.name)}</span>}
-      <span className="muted">{why ?? "No preview for this kind of file."}</span>
-      <a className="btn sm" href={attachmentUrl(item, true)}><Icon name="download" size={14} /> Download</a>
+    <div className="viewer-msg none">
+      {thumb ? <img className="viewer-cover" src={thumb} alt="" /> : <span className="viewer-ext big">{fileExt(item.name)}</span>}
+      <b>{item.name}</b>
+      <span>{why ?? "There's no preview for this kind of file."}</span>
+      <a className="btn primary" href={attachmentUrl(item, true)}><Icon name="download" size={14} /> Download</a>
     </div>
   );
 }
 
-/** Files in a dialog, with previous / next. */
-export function FilePreview({ items, index, onClose, editable, onSaved }: {
-  items: Attachment[]; index: number; onClose: () => void; editable?: boolean; onSaved?: () => void;
-}) {
-  const [i, setI] = useState(index);
-  const item = items[i];
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("textarea, input")) return;
-      if (e.key === "ArrowRight" && i < items.length - 1) setI(i + 1);
-      if (e.key === "ArrowLeft" && i > 0) setI(i - 1);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [i, items.length]);
-  if (!item) return null;
+/** A small read-only preview (record panel), with a button for the full-screen viewer. */
+export function FileView({ item, onExpand }: { item: Attachment; onExpand?: () => void }) {
+  const kind = viewKind(item);
+  const thumb = thumbUrl(item);
   return (
-    <Modal width={980} onClose={onClose}
-      title={<span className="row file-preview-title"><span className="ellipsis">{item.name}</span> <span className="muted small">{formatBytes(item.size)}</span></span>}
-      footer={<>
-        {items.length > 1 && <>
-          <button className="btn sm" disabled={i === 0} onClick={() => setI(i - 1)} aria-label="Previous file"><Icon name="left" size={14} /></button>
-          <span className="muted small">{i + 1} / {items.length}</span>
-          <button className="btn sm" disabled={i === items.length - 1} onClick={() => setI(i + 1)} aria-label="Next file"><Icon name="right" size={14} /></button>
-        </>}
-        <span className="spacer" />
-        {viewOf(item) && viewOf(item) !== "text" && <a className="btn sm" href={attachmentUrl(item)} target="_blank" rel="noreferrer"><Icon name="external" size={14} /> Open</a>}
-        <a className="btn sm" href={attachmentUrl(item, true)}><Icon name="download" size={14} /> Download</a>
-      </>}>
-      <FileView item={item} editable={editable && item.file} onSaved={onSaved} />
-    </Modal>
+    <div className="file-card" onClick={onExpand} role={onExpand ? "button" : undefined}>
+      {kind === "image" ? <img src={attachmentUrl(item)} alt={item.name} />
+        : thumb ? <img src={thumb} alt={item.name} />
+          : <span className="viewer-ext big">{fileExt(item.name)}</span>}
+      {onExpand && <span className="file-card-open"><Icon name="expand" size={14} /> Open preview</span>}
+    </div>
   );
+}
+
+/** Attachments in the full-screen viewer (from thumbnails anywhere). */
+export function FilePreview({ items, index, onClose }: { items: Attachment[]; index: number; onClose: () => void }) {
+  return <FullViewer entries={items.map((item) => ({ item }))} index={index} onClose={onClose} />;
 }

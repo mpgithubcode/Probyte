@@ -259,7 +259,7 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
           {win.padBottom > 0 && <div style={{ height: win.padBottom }} />}
           <div className="tl-row">
             <div className="tl-title">
-              {ops.can.add && <button className="ghost-btn" onClick={() => ops.create({}, true)}><Icon name="plus" size={14} /> New</button>}
+              {ops.can.add && <button className="ghost-btn" onClick={() => ops.create({}, true)}><Icon name={ops.addLabel ? "upload" : "plus"} size={14} /> {ops.addLabel ?? "New"}</button>}
             </div>
           </div>
           {/* the title column carries on to the bottom, so gridlines don't show through where it would be */}

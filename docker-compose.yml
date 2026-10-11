@@ -43,6 +43,8 @@ services:
       BACKUP_KEEP: ${BACKUP_KEEP:-14}
       # Key that encrypts stored account passwords; empty = a key file created on the "keys" volume
       PROBYTE_SECRET_KEY: ${PROBYTE_SECRET_KEY:-}
+      # Document converter for previews of Word / PowerPoint / OpenDocument files in files tables (empty = off)
+      OFFICE_CONVERTER_URL: ${OFFICE_CONVERTER_URL-http://office:3000}
     volumes:
       - radicale-users:/radicale-users
       - attachments:/data/attachments
@@ -69,6 +71,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  # Converts Word, PowerPoint and OpenDocument files to PDF for previews in files tables (LibreOffice, no GUI).
+  # Internal only. Not needed without files tables: remove it and set OFFICE_CONVERTER_URL= to turn previews of those off.
+  office:
+    build: ./office
+    restart: unless-stopped
+    mem_limit: 1g
 
   # CalDAV server for phones/desktop clients. Point your reverse proxy at port 5232
   # (preferably on its own subdomain, e.g. https://dav.example.com).

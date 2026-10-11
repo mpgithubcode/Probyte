@@ -41,6 +41,10 @@ log = logging.getLogger("probyte.files")
 router = APIRouter()
 
 THUMB_DIR = ATTACH_DIR / "thumbs"
+PREVIEW_DIR = ATTACH_DIR / "previews"      # Word / PowerPoint / OpenDocument files converted to PDF for viewing
+CONVERTER = os.environ.get("OFFICE_CONVERTER_URL", "").strip().rstrip("/")
+CONVERT_MAX = 100 * 1024 * 1024
+CONVERT_EXT = {"doc", "docx", "docm", "dot", "dotx", "odt", "ott", "rtf", "wpd", "pptx", "ppt", "pps", "ppsx", "pptm", "odp", "otp", "odg", "vsd", "vsdx"}
 MAX_UPLOAD = int(os.environ.get("FILES_MAX_UPLOAD_MB", "2048")) * 1024 * 1024
 THUMB_PX = 480
 TEXT_CHARS = 20_000           # how much of a text file goes into the Text field (for search)
@@ -82,6 +86,17 @@ def kind_of(mime: str, name: str) -> str:
 
 def is_text(mime: str, name: str) -> bool:
     return mime.startswith("text/") or _ext(name) in _TEXT or mime in ("application/json", "application/xml", "application/javascript")
+
+
+def convertible(name: str) -> bool:
+    """Shown as PDF made by the document converter (Word, PowerPoint, OpenDocument…)."""
+    return _ext(name) in CONVERT_EXT
+
+
+def _drop_cache(rid):
+    (THUMB_DIR / f"{rid}.webp").unlink(missing_ok=True)
+    for p in PREVIEW_DIR.glob(f"{rid}.*.pdf"):
+        p.unlink(missing_ok=True)
 
 
 def view_of(mime: str, name: str) -> str | None:
@@ -263,7 +278,7 @@ def _purge(conn, rows):
                 log.warning("couldn't delete %s: %s", r["caldav_href"], e)
                 continue
             conn.execute("DELETE FROM records WHERE id = %s", (r["id"],))
-            (THUMB_DIR / f"{r['id']}.webp").unlink(missing_ok=True)
+            _drop_cache(r["id"])
 
 
 def purge_deleted(conn=None):
@@ -300,7 +315,7 @@ def sync(table, stats: dict, full: bool = False) -> dict:
         for path, rec in by_path.items():
             if path not in objects and not rec["deleted"]:
                 conn.execute("DELETE FROM records WHERE id = %s", (rec["id"],))
-                (THUMB_DIR / f"{rec['id']}.webp").unlink(missing_ok=True)
+                _drop_cache(rec["id"])
                 audit.note(conn, table["id"], rec["id"], "deleted")
                 webhooks.emit(conn, table["id"], "record.deleted", rec["id"])
                 stats["removed"] += 1
@@ -311,7 +326,7 @@ def sync(table, stats: dict, full: bool = False) -> dict:
 # ---------------------------------------------------------------- previews (worker)
 
 def _queue_preview(conn, rid, mime, path):
-    if mime in _RASTER or mime in ("image/tiff", "application/pdf") or is_text(mime, path) \
+    if mime in _RASTER or mime in ("image/tiff", "application/pdf") or is_text(mime, path) or convertible(path) \
             or _ext(path) in ("odt", "ods", "odp", "docx", "xlsx", "pptx"):
         jobs.enqueue(conn, "file_preview", {"record_id": str(rid)}, key=f"preview:{rid}", delay=0.5, max_attempts=2)
 
@@ -326,6 +341,54 @@ def _save_thumb(img, rid):
     tmp = THUMB_DIR / f".{rid}.webp"
     img.save(tmp, "WEBP", quality=78)
     tmp.replace(THUMB_DIR / f"{rid}.webp")
+
+
+def preview_pdf(drv, rec, item) -> "os.PathLike":
+    """The file as PDF (made by the document converter once per version, then kept)."""
+    import requests
+    if not CONVERTER:
+        raise HTTPException(501, "Previews of Word and PowerPoint files need the document converter (OFFICE_CONVERTER_URL)")
+    name = item.get("name") or "file"
+    if not convertible(name):
+        raise HTTPException(400, "This kind of file isn't converted for previews")
+    out = PREVIEW_DIR / f"{rec['id']}.{re.sub(r'[^A-Za-z0-9]', '', rec['caldav_etag'] or 'x')[:16]}.pdf"
+    if out.exists():
+        return out
+    size = item.get("size") or 0
+    if size > CONVERT_MAX:
+        raise HTTPException(413, "This file is too large to preview; download it instead")
+    try:
+        data = drv.read(rec["caldav_href"], size + 1)
+    except FileNotFoundError:
+        raise HTTPException(404, "The file isn't in the storage any more")
+    except StorageError as e:
+        raise HTTPException(502, str(e))
+    try:
+        r = requests.post(f"{CONVERTER}/convert", params={"name": name}, data=data, timeout=(5, 180))
+    except requests.RequestException:
+        raise HTTPException(502, "The document converter isn't reachable")
+    if r.status_code != 200 or not r.content.startswith(b"%PDF"):
+        raise HTTPException(422, "This document couldn't be converted for a preview; download it instead")
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    for old in PREVIEW_DIR.glob(f"{rec['id']}.*.pdf"):
+        old.unlink(missing_ok=True)
+    tmp = PREVIEW_DIR / f".{rec['id']}.pdf"
+    tmp.write_bytes(r.content)
+    tmp.replace(out)
+    return out
+
+
+def _pdf_thumb(pdf_path, rid):
+    from PIL import Image
+    with tempfile.TemporaryDirectory() as d:
+        subprocess.run(["pdftoppm", "-f", "1", "-l", "1", "-scale-to", str(THUMB_PX), "-png", str(pdf_path), os.path.join(d, "p")],
+                       check=True, capture_output=True, timeout=60)
+        page = next((os.path.join(d, x) for x in os.listdir(d) if x.endswith(".png")), None)
+        if not page:
+            return False
+        with Image.open(page) as img:
+            _save_thumb(img.copy(), rid)
+        return True
 
 
 def _docx_text(data: bytes) -> str:
@@ -360,13 +423,12 @@ def _job_preview(payload):
                 src = os.path.join(d, "in.pdf")
                 with open(src, "wb") as f:
                     f.write(drv.read(path, size + 1))
-                subprocess.run(["pdftoppm", "-f", "1", "-l", "1", "-scale-to", str(THUMB_PX), "-png", src, os.path.join(d, "p")],
-                               check=True, capture_output=True, timeout=60)
-                page = next((os.path.join(d, x) for x in os.listdir(d) if x.startswith("p") and x.endswith(".png")), None)
-                if page:
-                    with Image.open(page) as img:
-                        _save_thumb(img.copy(), rid)
-                    thumb = True
+                thumb = _pdf_thumb(src, rid)
+        elif convertible(path) and CONVERTER and size <= CONVERT_MAX:
+            # the first page of the converted PDF (also kept, so opening the preview is instant)
+            thumb = _pdf_thumb(preview_pdf(drv, rec, item), rid)
+            if _ext(path) == "docx":
+                text = _docx_text(drv.read(path, size + 1))[:TEXT_CHARS]
         elif _ext(path) in ("odt", "ods", "odp", "docx", "xlsx", "pptx") and size <= 60 * 1024 * 1024:
             data = drv.read(path, size + 1)
             with zipfile.ZipFile(io.BytesIO(data)) as z:
@@ -420,7 +482,8 @@ def stream(table, rec, keys, *, download=False, as_text=False, rng: str | None =
     except StorageError as e:
         raise HTTPException(502, str(e))
     view = view_of(mime, name)
-    h = {**headers, "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=60"}
+    # no-cache: a file edited or replaced here (or in the storage) shows its new contents at once
+    h = {**headers, "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"}
     if as_text and view == "text":
         media, h["Content-Disposition"] = "text/plain; charset=utf-8", _disposition("inline", name)
         h["Content-Security-Policy"] = "default-src 'none'; sandbox"
@@ -453,6 +516,22 @@ def file_content(record_id: str, request: Request, download: bool = False, text:
     with connection() as conn:
         table, rec, keys = _own_record(conn, record_id, user["id"])
     return stream(table, rec, keys, download=download, as_text=text, rng=request.headers.get("range"))
+
+
+def preview_response(table, rec, keys):
+    with connection() as conn:
+        drv = _storage(conn, table)
+    pdf = preview_pdf(drv, rec, (rec["data"].get(keys["file"]) or [{}])[0])
+    return FileResponse(pdf, media_type="application/pdf", content_disposition_type="inline",
+                        headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
+
+
+@router.get("/api/files/{record_id}/preview")
+def file_preview(record_id: str, user=User):
+    """Word / PowerPoint / OpenDocument files as PDF, to view them in the browser."""
+    with connection() as conn:
+        table, rec, keys = _own_record(conn, record_id, user["id"])
+    return preview_response(table, rec, keys)
 
 
 @router.get("/api/files/{record_id}/thumb")

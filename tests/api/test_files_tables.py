@@ -113,6 +113,7 @@ def test_webdav_files_table_and_outside_changes(user):
     assert s["kind"] == "webdav" and s["has_secret"] and "secret" not in s
     prefix = f"p{uuid.uuid4().hex[:8]}"
     t = user.table("files", "NAS files", storage_id=s["id"], storage_prefix=prefix)
+    user.sync(t["id"])  # after the first sync (started when the table is made), so the counts below are this test's
     F = user.fields(t["id"])
     base = f"http://webdav:8080/shared/{prefix}/"
     # uploaded here: on the server, in a folder
@@ -194,3 +195,19 @@ def test_json_schema(user):
     mcp = requests.post(root + "/mcp", headers=H, json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                         "params": {"name": "get_json_schema", "arguments": {"table": t["id"]}}}).json()
     assert '"Email"' in mcp["result"]["content"][0]["text"]
+
+
+def test_document_previews(user):
+    """Word / PowerPoint files are converted to PDF (the office service) for viewing, and get a cover image."""
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    t = user.table("files", "Office", storage=S3, storage_prefix=f"p{uuid.uuid4().hex[:8]}")
+    with open(os.path.join(here, "fixtures", "report.docx"), "rb") as f:
+        doc = upload(user, t, ("report.docx", f.read(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))[0]
+    r = user.get(API + f"/files/{doc['id']}/preview")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/pdf" and r.content.startswith(b"%PDF")
+    wait(lambda: user.get(API + f"/files/{doc['id']}/thumb").status_code == 200, timeout=60)
+    F = user.fields(t["id"])
+    wait(lambda: "Revenue grew" in (by_name(user, t, F, "report.docx")["data"].get(F["text"]) or ""))
+    txt = upload(user, t, ("a.txt", b"x", "text/plain"))[0]
+    assert user.get(API + f"/files/{txt['id']}/preview").status_code == 400

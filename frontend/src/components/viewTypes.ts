@@ -20,6 +20,8 @@ export interface Ops {
   runButton(rec: Rec, field: Field): void;
   /** Accent color of a record (source color in combined databases, or a select field's choice color). */
   colorFor(rec: Rec, colorField?: string | null): string | undefined;
+  /** What adding is called ("Upload" in files tables, where adding uploads files). */
+  addLabel?: string;
 }
 
 export interface ViewProps {

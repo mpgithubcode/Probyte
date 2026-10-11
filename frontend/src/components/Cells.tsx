@@ -32,16 +32,24 @@ function RefChip({ label, kind }: { label: string; kind: "record" | "user" }) {
 
 export { attachmentUrl, setAttachmentBase } from "../files";
 
-/** Small previews; a click opens the file in the preview (images, PDFs, video, audio, text) or downloads it. */
+/** Files tables: opens one of their files (by record id) in the full-screen viewer with its details; false = not ours. */
+export const FileOpenContext = createContext<((item: Attachment) => boolean) | null>(null);
+
+/** Small previews; a click opens the full-screen viewer (or downloads what can't be shown). */
 export function AttachmentThumbs({ items, size = 24 }: { items: Attachment[]; size?: number }) {
   const [open, setOpen] = useState<number | null>(null);
+  const openFile = useContext(FileOpenContext);
   return (
     <span className="thumbs">
       {items.map((a, i) => {
         const src = thumbUrl(a);
         return (
           <a key={a.id} href={attachmentUrl(a, !viewOf(a))} target="_blank" rel="noreferrer" title={a.name}
-            onClick={(e) => { e.stopPropagation(); if (viewOf(a)) { e.preventDefault(); setOpen(i); } }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (openFile?.(a)) { e.preventDefault(); return; }
+              if (viewOf(a) || a.file) { e.preventDefault(); setOpen(i); }
+            }}
             className="thumb" style={{ width: size, height: size }}>
             {src ? <img src={src} alt={a.name} loading="lazy" /> : <span className="file-ext">{fileExt(a.name)}</span>}
           </a>

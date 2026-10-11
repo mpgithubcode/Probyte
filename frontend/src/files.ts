@@ -19,9 +19,46 @@ export const thumbUrl = (a: Attachment) => a.file
   ? (a.thumb ? `${fileBase}/${a.id}/thumb?s=${a.size}` : null)
   : isImage(a) ? attachmentUrl(a) : null;
 
-/** How the browser can show it. Plain attachments: only images (everything else downloads). */
-export const viewOf = (a: Attachment) => (a.file ? a.view ?? null : isImage(a) ? "image" : null);
+export const textUrl = (a: Attachment) => (a.file ? `${fileBase}/${a.id}/content?text=1` : attachmentUrl(a, true));
+/** Word / PowerPoint / OpenDocument files as PDF (made by the server's document converter). */
+export const previewPdfUrl = (a: Attachment) => `${fileBase}/${a.id}/preview?s=${a.size}`;
 
-export const textUrl = (a: Attachment) => `${fileBase}/${a.id}/content?text=1`;
+export const fileExt = (name: string) => (name.includes(".") ? name.split(".").pop()!.toLowerCase().slice(0, 5) : "file");
 
-export const fileExt = (name: string) => (name.includes(".") ? name.split(".").pop()!.slice(0, 4) : "file");
+export type ViewKind = "image" | "pdf" | "video" | "audio" | "markdown" | "text" | "sheet" | "document" | null;
+
+const TEXT = new Set(["txt", "log", "csv", "tsv", "json", "xml", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "sql", "py", "js", "mjs",
+  "ts", "tsx", "jsx", "css", "scss", "html", "htm", "sh", "bash", "ps1", "bat", "c", "h", "cpp", "hpp", "cs", "java", "kt", "go", "rs",
+  "rb", "php", "swift", "vue", "svelte", "lua", "pl", "r", "dart", "svg", "rst", "srt", "vtt", "ics", "vcf", "gitignore", "dockerfile"]);
+const SHEET = new Set(["xlsx", "xlsm", "xls", "ods", "numbers", "csv", "tsv"]);
+const DOCUMENT = new Set(["doc", "docx", "docm", "dot", "dotx", "odt", "ott", "rtf", "wpd", "pptx", "ppt", "pps", "ppsx", "pptm", "odp", "otp",
+  "odg", "vsd", "vsdx"]);
+const VIDEO = new Set(["video/mp4", "video/webm", "video/ogg", "video/quicktime"]);
+
+/** How the viewer shows a file. Spreadsheets as tables (CSV too), Word / PowerPoint as pages, Markdown as formatted text. */
+export function viewKind(a: Attachment): ViewKind {
+  const ext = fileExt(a.name), mime = a.mime || "";
+  if (isImage(a)) return "image";
+  if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (ext === "md" || ext === "markdown") return "markdown";
+  if (SHEET.has(ext)) return "sheet";
+  if (DOCUMENT.has(ext)) return "document";
+  if (!a.file && !a.url) return null;  // plain attachments: the rest isn't served inline
+  if (VIDEO.has(mime)) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.startsWith("text/") || TEXT.has(ext) || mime === "application/json") return "text";
+  return null;
+}
+
+/** Can be edited in the viewer (files of files tables only). */
+export const editableKind = (a: Attachment) => !!a.file && (viewKind(a) === "markdown" || viewKind(a) === "text")
+  && !["csv", "tsv"].includes(fileExt(a.name));
+
+/** Still used by thumbnails: something to open (else the click downloads). */
+export const viewOf = (a: Attachment) => viewKind(a);
+
+export async function fetchBytes(url: string): Promise<ArrayBuffer> {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText);
+  return r.arrayBuffer();
+}

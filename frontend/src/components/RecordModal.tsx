@@ -1,7 +1,5 @@
-import { useRef, useState } from "react";
-import { api } from "../api";
-import { attachmentUrl } from "../files";
-import { FileView } from "./FileViewer";
+import { useState } from "react";
+import { FileView, FullViewer } from "./FileViewer";
 import type { Attachment, CreateTarget, Dataset, Field, Rec } from "../types";
 import { addExdate, anchorOf, findOverride, occurrenceData, overrideKey, seriesDateFields, setOverride } from "../recur";
 import { fieldApplies, fitField, formatDate, isEditable, recordKind, recordTitle } from "../util";
@@ -27,16 +25,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
   // files tables: the file itself, shown at the top
   const fileF = files ? fields.find((f) => f.system_key === "file") : undefined;
   const fileItem = fileF ? (rec.data[fileF.id] as Attachment[] | undefined)?.[0] : undefined;
-  const replaceRef = useRef<HTMLInputElement>(null);
-  const [fileErr, setFileErr] = useState("");
-  const replace = async (list: FileList | null) => {
-    if (!list?.[0]) return;
-    const body = new FormData();
-    body.append("file", list[0]);
-    setFileErr("");
-    try { await api.upload(`/records/${rec.id}/file`, body, "PUT"); } catch (e) { setFileErr((e as Error).message); }
-    if (replaceRef.current) replaceRef.current.value = "";
-  };
+  const [viewing, setViewing] = useState(false);
   const repeatF = fields.find((f) => f.type === "recurrence");
   const kind = recordKind(fields, rec);
   const shown = fields.filter((f) => f.id !== "__source" && fieldApplies(f, kind));
@@ -68,15 +57,8 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
       </>}>
       {fileItem && (
         <div className="record-file">
-          <FileView item={fileItem} editable={can.edit && history} />
-          <div className="row wrap">
-            <a className="btn sm" href={attachmentUrl(fileItem, true)}><Icon name="download" size={14} /> Download</a>
-            {can.edit && history && <>
-              <input ref={replaceRef} type="file" hidden onChange={(e) => replace(e.target.files)} />
-              <button className="btn sm" onClick={() => replaceRef.current?.click()}><Icon name="upload" size={14} /> Replace file…</button>
-            </>}
-            {fileErr && <span className="error small">{fileErr}</span>}
-          </div>
+          <FileView item={fileItem} onExpand={() => setViewing(true)} />
+          {viewing && <FullViewer entries={[{ item: fileItem, rec }]} index={0} fields={fields} onClose={() => setViewing(false)} />}
         </div>
       )}
       <div className="form">

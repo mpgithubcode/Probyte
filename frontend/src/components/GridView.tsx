@@ -279,7 +279,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
               <span className="group-count">{g.records.length}</span>
             </button>
             {canAddHere && (
-              <button className="icon-btn group-add" title={`New record in ${g.label}`} onClick={() => ops.create(preset, true)}>
+              <button className="icon-btn group-add" title={`${ops.addLabel ?? "New record"} in ${g.label}`} onClick={() => ops.create(preset, true)}>
                 <Icon name="plus" size={13} />
               </button>
             )}
@@ -356,7 +356,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
           {ops.can.add && (
             <tr className="add-row">
               <td colSpan={visible.length + 2}>
-                <button className="ghost-btn" onClick={() => ops.create()}><Icon name="plus" size={14} /> New record</button>
+                <button className="ghost-btn" onClick={() => ops.create()}><Icon name={ops.addLabel ? "upload" : "plus"} size={14} /> {ops.addLabel ?? "New record"}</button>
               </td>
             </tr>
           )}

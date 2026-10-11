@@ -1,8 +1,10 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
+import type { Attachment, Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
 import { applyView, choiceColor, debounce, hiddenIds, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
-import { RefsContext, invalidateTitles } from "./Cells";
+import { FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
+import { FullViewer, type ViewerEntry } from "./FileViewer";
+import { fromDrop, fromPicker, useUploads } from "./Uploads";
 import { Icon, tableIcon } from "./Icon";
 import { Popover, usePopover } from "./Overlay";
 import { EmojiPicker } from "./EmojiPicker";
@@ -48,9 +50,12 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [comboEdit, setComboEdit] = useState(false);
   const [combineNew, setCombineNew] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [uploading, setUploading] = useState(0);
   const [dropping, setDropping] = useState(false);
-  const uploadRef = useRef<HTMLInputElement>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);    // files tables: file picker…
+  const folderRef = useRef<HTMLInputElement>(null);    // …and folder picker
+  const [uploadInto, setUploadInto] = useState("");    // the folder uploads go into
+  const uploadPop = usePopover();
+  const [viewing, setViewing] = useState<string | null>(null);  // files tables: the record open in the full-screen viewer
   const [linkEdit, setLinkEdit] = useState(false);
   const [transfer, setTransfer] = useState<"import" | "export" | null>(null);
   const [feedsOpen, setFeedsOpen] = useState(false);
@@ -95,7 +100,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
   useEffect(() => {
     const hit = cached(kind, id);
-    setDs(hit ?? null); setSearch(""); setOpenRec(null);
+    setDs(hit ?? null); setSearch(""); setOpenRec(null); setViewing(null); setUploadInto("");
     if (hit) refresh(); else reload();
   }, [kind, id]);
 
@@ -104,8 +109,9 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   // opened from search: show that record once the table is here, then drop it from the address
   useEffect(() => {
     if (!openRecord || !ds || !ds.records.some((r) => r.id === openRecord)) return;
-    setOpenRec(openRecord);
+    if (ds.table?.kind === "files") setViewing(openRecord); else setOpenRec(openRecord);
     history.replaceState(null, "", location.hash.replace(/\?record=[^&]*/, ""));
+    window.dispatchEvent(new HashChangeEvent("hashchange"));  // the app forgets it too, so the same link works again
   }, [openRecord, ds?.records.length]);
 
   // A combined database shows its own tables at once; sources that are linked tables arrive one by one.
@@ -209,6 +215,13 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     can,
     create(data = {}, openAfter = false) {
       if (!ds) return;
+      if (ds.table?.kind === "files") {  // adding to a files table = uploading files (into a group's folder, if any)
+        const folderF = ds.fields.find((f) => f.system_key === "folder");
+        const into = folderF && typeof data[folderF.id] === "string" ? data[folderF.id] : uploadInto;
+        setUploadInto(into);
+        uploadRef.current?.click();
+        return;
+      }
       const choices = createTargets(ds);
       if (choices.length > 1) setPendingCreate({ data, open: openAfter, choices });
       else doCreate(data, openAfter, choices[0]);
@@ -276,7 +289,11 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       else if (r.url) window.open(r.url, "_blank", "noopener");
       else if (r.patch && Object.keys(r.patch).length) ops.update(rec, r.patch);
     },
-    open: (rec) => { setOpenRec(rec.id); setOpenOcc(rec.occurrence ?? null); },
+    open: (rec) => {
+      if (ds?.table?.kind === "files") { setViewing(rec.id); return; }
+      setOpenRec(rec.id); setOpenOcc(rec.occurrence ?? null);
+    },
+    addLabel: ds?.table?.kind === "files" ? "Upload" : undefined,
     editField: (f) => setFieldEdit(f && (ds?.fields.find((x) => x.id === f.id) ?? f)),  // the field itself, not a view's name for it
     colorFor(rec, colorField = view?.config.colorField) {
       if (!ds) return undefined;
@@ -332,23 +349,15 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     reload();
   };
 
-  /** Files tables: add files (each becomes a record). */
-  const uploadFiles = async (files: FileList | File[] | null) => {
-    if (!ds?.table || !files || !files.length) return;
-    const list = Array.from(files);
-    setUploading(list.length);
-    const failed: string[] = [];
-    for (const f of list) {
-      const body = new FormData();
-      body.append("files", f);
-      try { await api.upload(`/tables/${ds.id}/files`, body); }
-      catch (e) { failed.push(`${f.name}: ${(e as Error).message}`); }
-      setUploading((n) => n - 1);
-    }
-    if (uploadRef.current) uploadRef.current.value = "";
-    if (failed.length) onError(failed.join("\n"));
-    else showToast(`Uploaded ${list.length} file${list.length === 1 ? "" : "s"}`);
+  /** Files tables: uploads (files or whole folders), shown in a panel with progress. */
+  const uploads = useUploads(ds?.table?.kind === "files" ? ds.id : undefined, (done, failed) => {
+    if (failed) onError(`${failed} upload${failed === 1 ? "" : "s"} failed; see the upload panel`);
+    else if (done) showToast(`Uploaded ${done} file${done === 1 ? "" : "s"}`);
     reload();
+  });
+  const pickFiles = (list: FileList | null, input: HTMLInputElement | null) => {
+    uploads.enqueue(fromPicker(list, uploadInto));
+    if (input) input.value = "";
   };
 
   const renameDataset = async (name: string) => {
@@ -403,16 +412,31 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const props = { ds, view, fields: vfields, visible, records, allRecords, ops, setConfig };
   const t = ds.table;
   const isFiles = t?.kind === "files";
+  // files tables: the view's files, for the viewer (it goes through them in the view's order)
+  const fileF = isFiles ? ds.fields.find((f) => f.system_key === "file") : undefined;
+  const fileEntries: ViewerEntry[] = fileF
+    ? allRecords.flatMap((r) => { const it = (r.data[fileF.id] as Attachment[] | undefined)?.[0]; return it ? [{ item: it, rec: r }] : []; })
+    : [];
+  const openFile = (a: Attachment) => {
+    if (!a.file || !ds.records.some((r) => r.id === a.id)) return false;
+    setViewing(a.id);
+    return true;
+  };
   const isCaldav = t && ["tasks", "events", "mixed", "contacts", "files"].includes(t.kind);
   const link = t?.kind === "remote" ? t.remote : null;
 
   return (
     <RefsContext.Provider value={{ refs: ds.refs, addRefs, me }}>
+    <FileOpenContext.Provider value={isFiles ? openFile : null}>
     <div className={`page ${dropping ? "dropping" : ""}`}
       onDragOver={isFiles ? (e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } } : undefined}
       onDragLeave={isFiles ? (e) => { if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) setDropping(false); } : undefined}
-      onDrop={isFiles ? (e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropping(false); uploadFiles(e.dataTransfer.files); } } : undefined}>
-      {dropping && <div className="drop-overlay"><Icon name="upload" size={28} /> Drop files to upload them to {ds.storage?.location ?? ds.name}</div>}
+      onDrop={isFiles ? (e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault(); setDropping(false);
+        fromDrop(e.dataTransfer, uploadInto).then(uploads.enqueue).catch((err) => onError(String(err)));
+      } : undefined}>
+      {dropping && <div className="drop-overlay"><Icon name="upload" size={28} /> Drop files or folders to upload them to {[ds.storage?.location, uploadInto].filter(Boolean).join("/") || ds.name}</div>}
       <header className="page-head">
         <div className="title-row">
           <button className="icon-btn menu-btn" onClick={onMenu} aria-label="Menu"><Icon name="menu" size={20} /></button>
@@ -464,10 +488,19 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             </div>
           )}
           {isFiles && (<>
-            <input ref={uploadRef} type="file" multiple hidden onChange={(e) => uploadFiles(e.target.files)} />
-            <button className="btn sm primary" disabled={!!uploading} onClick={() => uploadRef.current?.click()} title="Upload files (or drop them on the page)">
-              <Icon name="upload" size={14} className={uploading ? "spin" : ""} /> <span className="btn-label">{uploading ? `Uploading ${uploading}…` : "Upload"}</span>
-            </button>
+            <input ref={uploadRef} type="file" multiple hidden onChange={(e) => pickFiles(e.target.files, e.target)} />
+            <input ref={folderRef} type="file" multiple hidden {...{ webkitdirectory: "", directory: "" }} onChange={(e) => pickFiles(e.target.files, e.target)} />
+            {uploadPop.anchor && (
+              <Popover anchor={uploadPop.anchor} onClose={uploadPop.close} align="right" width={260}>
+                <div className="menu-list">
+                  <button className="menu-item" onClick={() => { uploadPop.close(); uploadRef.current?.click(); }}><Icon name="file" size={14} /> Upload files…</button>
+                  <button className="menu-item" onClick={() => { uploadPop.close(); folderRef.current?.click(); }}><Icon name="folder" size={14} /> Upload a folder…</button>
+                </div>
+                <label className="stack pad small upload-into">Into folder
+                  <input className="input sm" value={uploadInto} placeholder="(top level)" onChange={(e) => setUploadInto(e.target.value)} />
+                </label>
+              </Popover>
+            )}
           </>)}
           {ds.kind === "combo" && <button className="btn sm" title="Sources & mapping" onClick={() => setComboEdit(true)}><Icon name="settings" size={14} /> <span className="btn-label">Sources & mapping</span></button>}
           {ds.kind === "table" && !link && <button className="btn sm" title="Add field" onClick={() => setFieldEdit(null)}><Icon name="plus" size={14} /> <span className="btn-label">Field</span></button>}
@@ -544,7 +577,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             onNavigate(undefined);
           }} />
         <ViewOptions view={view} fields={vfields} config={view.config} setConfig={setConfig} search={search} setSearch={setSearch}
-          onAdd={ops.can.add ? () => ops.create({}, true) : undefined} />
+          onAdd={ops.can.add ? (isFiles ? uploadPop.open : () => ops.create({}, true)) : undefined} addLabel={ops.addLabel} />
       </header>
 
       <main className="page-body">
@@ -562,6 +595,19 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
       <Suspense fallback={null}>
 
+      {isFiles && viewing && fileEntries.some((e) => e.rec!.id === viewing) && (
+        <FullViewer entries={fileEntries} index={fileEntries.findIndex((e) => e.rec!.id === viewing)} fields={vfields}
+          canEdit={ops.can.edit} onClose={() => setViewing(null)} onUpdate={ops.update} onReplace
+          onMove={(e) => e.rec && setViewing(e.rec.id)}
+          onDelete={(r) => {
+            const k = fileEntries.findIndex((e) => e.rec!.id === r.id);
+            const next = fileEntries[k + 1] ?? fileEntries[k - 1];
+            setViewing(next ? next.rec!.id : null);
+            ops.remove(r);
+          }}
+          onSaved={(saved) => patchLocal(saved.id, (r) => ({ ...r, ...saved }))} location={ds.storage?.location} />
+      )}
+      {uploads.panel}
       {rec && (
         <RecordModal ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc}
           onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)}
@@ -597,6 +643,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       )}
       </Suspense>
     </div>
+    </FileOpenContext.Provider>
     </RefsContext.Provider>
   );
 }

@@ -80,10 +80,11 @@ function FieldSelect({ fields, value, onChange, placeholder, allowNone }: {
   );
 }
 
-export function ViewOptions({ view, fields, config, setConfig, search, setSearch, onAdd }: {
+export function ViewOptions({ view, fields, config, setConfig, search, setSearch, onAdd, addLabel }: {
   view: View; fields: Field[]; config: ViewConfig; setConfig: (p: Partial<ViewConfig>) => void;
   search: string; setSearch: (s: string) => void;
-  onAdd?: () => void;   // "New record" (left of the search box); left out when the viewer can't add
+  onAdd?: (e: { currentTarget: HTMLElement }) => void;   // "New record" (left of the search box); left out when the viewer can't add
+  addLabel?: string;    // files tables: "Upload"
 }) {
   const filterPop = usePopover();
   const sortPop = usePopover();
@@ -103,7 +104,8 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
 
   return (
     <div className="view-options">
-      {onAdd && <button className="btn sm primary new-record-btn" onClick={onAdd} title="New record"><Icon name="plus" size={14} /> <span>New</span></button>}
+      {onAdd && <button className="btn sm primary new-record-btn" onClick={onAdd} title={addLabel ? "Upload files" : "New record"}>
+        <Icon name={addLabel ? "upload" : "plus"} size={14} /> <span>{addLabel ?? "New"}</span></button>}
       <div className="search">
         <Icon name="search" size={14} />
         <input placeholder="Search" value={search} onChange={(e) => setSearch(e.target.value)} />

@@ -113,9 +113,15 @@ The main app installs the same way, as "Probyte", and works on phones: the sideb
 A **Files** table (New table → **Files**) shows the files in an **S3 bucket** (Amazon S3, MinIO, Cloudflare R2, Backblaze B2, Wasabi…) or a **WebDAV folder** (Nextcloud, ownCloud, a NAS…) as records, optionally only one folder of it. The files stay in your storage: Probyte doesn't keep copies.
 
 - **Fixed fields**, like a calendar table's: **Name**, **File**, **Folder**, **Kind** (Image, Video, Audio, PDF, Document, Spreadsheet, Presentation, Text, Code, Archive, Other), **Size**, **Modified**, **Type** (the MIME type) and **Text**. Add your own fields next to them (tags, status, notes, links…); those are kept in Probyte.
-- **Upload** with the button, or drop files on the page. A name that's taken gets a number (`report (2).pdf`). **New** makes an empty file with the name you give it (e.g. `notes.md`).
-- **Rename and move**: editing **Name** renames the file in the storage, editing **Folder** moves it (folders are made as needed). **Replace file…** in the record panel uploads new contents and keeps the record, its fields and its links.
-- **Previews**: images, PDFs (first page) and OpenDocument / Office files with a built-in thumbnail get a small preview image, used in the grid and as the Gallery cover. In the browser, images, PDFs, video, audio and text / code files open in a viewer (arrow keys go through them); text files can be **edited and saved** right there. Everything else downloads. Text files (and .docx) put their first 20,000 characters in **Text**, so search finds words inside them.
+- **Upload** takes the place of **New** in files tables: upload **files** or a whole **folder** (its subfolders kept), into the top level or a folder you name, or drop files and folders on the page. Uploads run three at a time with a progress panel and can be cancelled. A group's **+** (e.g. grouped by Folder) uploads into that group's folder. A name that's taken gets a number (`report (2).pdf`).
+- **Rename and move**: editing **Name** renames the file in the storage, editing **Folder** moves it (folders are made as needed).
+- **Full-screen viewer** (like Google Drive's): opening a file shows the whole file with **Download**, **Open in a new tab**, **Replace file** (a new version; the record, its fields and links stay) and the **details** on the right (location, every field; Name, Folder and your own fields can be changed there; delete). Arrow keys go to the previous / next file of the view.
+  - **PDF**: every page, with zoom (the browser's own viewer on desktops; drawn with pdf.js on phones and elsewhere).
+  - **Word, PowerPoint, OpenDocument, RTF** (.docx, .doc, .pptx, .ppt, .odt, .odp…): converted to PDF by the **office** service (LibreOffice) and shown page by page; the PDF is kept, so it opens instantly next time. Without the service, .docx files are drawn in the browser.
+  - **Spreadsheets** (.xlsx, .xls, .ods, .numbers, .csv, .tsv): as a table with a tab per sheet (the first 5,000 rows).
+  - **Markdown**: formatted, and edited as formatted text (**WYSIWYG**: headings, bold, lists, quotes, code, links), saved back as Markdown. **Text and code files**: shown and edited as text (Ctrl/⌘ S saves).
+  - Images (click for actual size), video and audio play in place; anything else can be downloaded.
+- **Cover images**: images, PDFs and Word / PowerPoint / OpenDocument files (first page) get a small preview image, used in the grid, the Gallery and the viewer. Text files (and .docx) put their first 20,000 characters in **Text**, so search finds words inside them.
 - **Link files to other tables**: a link field pointing at a files table gets **Upload files…** in its picker, which uploads into the files table and links the new records at once. A lookup of the **File** field shows the previews in the other table.
 - **Changes in the storage** (from other apps, phones, the Nextcloud client…) arrive with the next sync: every `SYNC_INTERVAL`, on **Sync**, and right after the table is created. Up to 100,000 files per table.
 - **Deleting**: a deleted record goes to the trash; its file is deleted from the storage when the trash is emptied (or after 30 days), and restoring the record keeps everything. Deleting the **table** never deletes the files.
@@ -261,6 +267,7 @@ The device password is separate from the Probyte login password, and you can reg
 | `WORKER_THREADS`    | `4`     | Jobs the worker runs at once |
 | `RUN_WORKER`        | –       | `embedded` runs the worker inside the web app (single-container setups without the `worker` service) |
 | `FILES_MAX_UPLOAD_MB` | `2048` | Largest file that can be uploaded to a files table (S3 / WebDAV) |
+| `OFFICE_CONVERTER_URL` | `http://office:3000` | The document converter (the `office` service) for previews of Word / PowerPoint / OpenDocument files; empty = off (remove the service too) |
 | `ATTACHMENT_GC_INTERVAL` | `3600` | Seconds between cleanups of uploaded files no record uses any more |
 | `COMPUTE_CACHE_ROWS` | `300000` | Records kept computed in memory between requests (`0` = off) |
 | `SESSION_DAYS`      | `30`    | How long a login lasts |
@@ -440,6 +447,7 @@ backend/app/
   audit.py     record history (who changed what)
   admin.py     command line: reset-password, create-user, backup, backups, restore
 radicale/      bundled Radicale image: htpasswd auth, owner-only rights
+office/        document converter for file previews (LibreOffice without a GUI behind a tiny HTTP service; internal only)
 frontend/src/
   App.tsx                    shell + hash routing
   data.ts                    in-memory dataset cache, incremental refresh (/changes), live event stream

@@ -471,6 +471,12 @@ def share_file(token: str, record_id: str, request: Request, download: bool = Fa
     return files.stream(table, rec, keys, download=download, as_text=text, rng=request.headers.get("range"))
 
 
+@router.get("/api/public/{token}/files/{record_id}/preview")
+def share_file_preview(token: str, record_id: str, request: Request):
+    from . import files
+    return files.preview_response(*core_file(token, record_id, _cookie(request, token)))
+
+
 @router.get("/api/public/{token}/files/{record_id}/thumb")
 def share_file_thumb(token: str, record_id: str, request: Request):
     from . import files

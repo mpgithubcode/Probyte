@@ -148,7 +148,7 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
         {win.padBottom > 0 && <div className="list-span" style={{ height: win.padBottom }} />}
       </div>
       {!records.length && <div className="muted pad">No records match this view.</div>}
-      {ops.can.add && <button className="ghost-btn list-new" onClick={() => ops.create({}, true)}><Icon name="plus" size={14} /> New</button>}
+      {ops.can.add && <button className="ghost-btn list-new" onClick={() => ops.create({}, true)}><Icon name={ops.addLabel ? "upload" : "plus"} size={14} /> {ops.addLabel ?? "New"}</button>}
     </div>
   );
 }

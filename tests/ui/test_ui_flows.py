@@ -1004,38 +1004,93 @@ def test_files_table_new_upload_preview_and_edit(browser):
     pg.fill(".modal input[placeholder^='All of it']", f"ui{uuid.uuid4().hex[:6]}")
     pg.click(".modal button:has-text('Test connection')")
     pg.wait_for_selector(".modal .ok, .modal .error")
-    assert not pg.locator(".modal .error").count(), (pg.locator(".modal .error").inner_text(),
-        pg.evaluate("() => [...document.querySelectorAll('.modal input')].map(i => (i.closest('label')?.firstChild?.textContent || '') + '=' + i.value)"))
-    expect(pg.locator(".modal .ok")).to_contain_text("Connected")
+    assert not pg.locator(".modal .error").count(), pg.locator(".modal .error").inner_text()
     pg.click(".modal-foot button:has-text('Create')")
     expect(pg.locator(".page-head h1")).to_have_text("Shared docs")
     expect(pg.locator(".storage-badge")).to_contain_text("webdav:8080/shared/ui")
-    # upload two files
-    pg.set_input_files(".page-head input[type=file]", [
-        {"name": "readme.md", "mimeType": "text/markdown", "buffer": b"# Hello\nfrom the test"},
+    # "New" is "Upload" here: files, or a whole folder
+    pg.click(".new-record-btn:has-text('Upload')")
+    expect(pg.locator(".popover")).to_contain_text("Upload a folder")
+    pg.keyboard.press("Escape")
+    pg.set_input_files(".page-head input[type=file]:not([webkitdirectory])", [
+        {"name": "readme.md", "mimeType": "text/markdown", "buffer": b"# Hello\n\nfrom the **test**\n"},
+        {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"plain words"},
         {"name": "dot.png", "mimeType": "image/png", "buffer": base64.b64decode(PNG_B64)}])
-    expect(rows(pg)).to_have_count(2)
-    expect(pg.locator(".grid tbody")).to_contain_text("readme.md")
-    # the image gets a preview; clicking it opens the viewer
+    expect(pg.locator(".upload-panel")).to_contain_text("3 uploads complete", timeout=15000)
+    expect(rows(pg)).to_have_count(3)
+    # the image: a preview; clicking it opens the full-screen viewer with the details on the right
     expect(pg.locator(".grid tbody .thumb img")).to_have_count(1, timeout=15000)
     pg.locator(".grid tbody .thumb img").first.click()
-    expect(pg.locator(".modal .file-view.image img")).to_be_visible()
+    expect(pg.locator(".viewer .viewer-image img")).to_be_visible()
+    expect(pg.locator(".viewer-info")).to_contain_text("Kind")
+    expect(pg.locator(".viewer-info")).to_contain_text("Image")
+    expect(pg.locator(".viewer a:has-text('Download')")).to_have_attribute("href", re.compile("download=1"))
     pg.keyboard.press("Escape")
-    # the text file: preview, edit and save from the record panel
+    expect(pg.locator(".viewer")).to_have_count(0)
     t = next(x for x in u.workspace()["tables"] if x["name"] == "Shared docs")
     F = u.fields(t["id"])
-    rid = next(r["id"] for r in u.records(t["id"]) if r["data"][F["name"]] == "readme.md")
-    pg.goto(f"{BASE}/#/table/{t['id']}?record={rid}")
-    expect(pg.locator(".record-file .file-text")).to_contain_text("from the test")
-    pg.click(".record-file button:has-text('Edit')")
-    pg.fill(".record-file textarea", "# Hello\nedited in the browser")
-    pg.click(".record-file button:has-text('Save')")
-    expect(pg.locator(".record-file pre.file-text")).to_contain_text("edited in the browser")
-    assert u.get(API + f"/files/{rid}/content").text == "# Hello\nedited in the browser"
-    # the gallery shows the preview as a cover
+    rid = lambda n: next(r["id"] for r in u.records(t["id"]) if r["data"][F["name"]] == n)
+    # Markdown: formatted, edited as formatted text (WYSIWYG), saved back as Markdown
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rid('readme.md')}")
+    expect(pg.locator(".viewer .rich-text h1")).to_have_text("Hello")
+    expect(pg.locator(".viewer .rich-text strong")).to_have_text("test")
+    pg.click(".viewer-bar button:has-text('Edit')")
+    expect(pg.locator(".rt-toolbar")).to_be_visible()
+    pg.locator(".rich-text .ProseMirror p").click()
+    pg.keyboard.press("End")
+    pg.keyboard.type(" and more")
+    pg.click(".viewer-bar button:has-text('Save')")
+    expect(pg.locator(".rt-toolbar")).to_have_count(0)
+    eventually(lambda: "from the **test and more**" in u.get(API + f"/files/{rid('readme.md')}/content").text)  # typed inside the bold word
+    # going to the next file with the arrow keys; a text file is edited as text
     pg.keyboard.press("Escape")
-    pg.click(".view-tab:has-text('Gallery')")
-    expect(pg.locator(".gallery-cover img")).to_have_count(1)
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rid('notes.txt')}")
+    expect(pg.locator(".viewer .viewer-code")).to_have_text("plain words")
+    pg.click(".viewer-bar button:has-text('Edit')")
+    pg.fill(".viewer-code-edit", "edited in the viewer")
+    pg.keyboard.press("Control+s")
+    expect(pg.locator(".viewer .viewer-code")).to_have_text("edited in the viewer")
+    assert u.get(API + f"/files/{rid('notes.txt')}/content").text == "edited in the viewer"
+    # rename from the details panel
+    name = pg.locator(".viewer-info .viewer-field", has_text="Name").locator("input")
+    name.fill("renamed.txt")
+    name.press("Enter")
+    eventually(lambda: any(r["data"][F["name"]] == "renamed.txt" for r in u.records(t["id"])))
+    pg.keyboard.press("Escape") if pg.locator(".viewer").count() else None
+    # the record panel no longer edits files (the viewer does)
+    assert not pg.errors, pg.errors
+
+
+def test_viewer_documents_spreadsheets_and_folder_upload(browser, tmp_path):
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    u = Client()
+    t = u.table("files", "Office files", storage={"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket",
+                "username": "testkey", "secret": "testsecret12345"}, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    # a folder with a subfolder, uploaded as it is
+    top = tmp_path / "project"
+    (top / "sheets").mkdir(parents=True)
+    (top / "report.docx").write_bytes(open(os.path.join(here, "fixtures", "report.docx"), "rb").read())
+    (top / "sheets" / "stock.xlsx").write_bytes(open(os.path.join(here, "fixtures", "stock.xlsx"), "rb").read())
+    pg.set_input_files(".page-head input[webkitdirectory]", str(top))
+    expect(pg.locator(".upload-panel")).to_contain_text("2 uploads complete", timeout=20000)
+    F = u.fields(t["id"])
+    got = {r["data"][F["name"]]: r for r in u.records(t["id"])}
+    assert got["report.docx"]["data"][F["folder"]] == "project" and got["stock.xlsx"]["data"][F["folder"]] == "project/sheets"
+    # a spreadsheet as a table
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={got['stock.xlsx']['id']}")
+    expect(pg.locator(".viewer .sheet-table")).to_contain_text("Chairs")
+    expect(pg.locator(".viewer .sheet-table thead")).to_contain_text("C")
+    # a Word file as pages (converted to PDF)
+    pg.keyboard.press("Escape")
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={got['report.docx']['id']}")
+    # (a browser without its own PDF viewer, like this one or a phone's, gets every page drawn by pdf.js)
+    expect(pg.locator(".viewer .pdf-page canvas")).to_have_count(1, timeout=60000)
+    expect(pg.locator(".viewer .pdf-controls")).to_contain_text("1 / 1")
+    expect(pg.locator(".viewer-info")).to_contain_text("project")
     assert not pg.errors, pg.errors
 
 

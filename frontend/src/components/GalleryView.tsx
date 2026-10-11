@@ -77,7 +77,7 @@ export function GalleryView({ fields, visible, records, view, ops }: ViewProps) 
       <div className="gallery-groups">
         {buildGroups(records, specs, fields, refs).map(section)}
         {ops.can.add && (
-          <button className="ghost-btn" onClick={() => ops.create({}, true)}><Icon name="plus" size={14} /> New record</button>
+          <button className="ghost-btn" onClick={() => ops.create({}, true)}><Icon name={ops.addLabel ? "upload" : "plus"} size={14} /> {ops.addLabel ?? "New record"}</button>
         )}
       </div>
     );
@@ -89,7 +89,7 @@ export function GalleryView({ fields, visible, records, view, ops }: ViewProps) 
       {more(records)}
       {ops.can.add && (
         <button className="card gallery-card add" onClick={() => ops.create({}, true)}>
-          <Icon name="plus" /> New record
+          <Icon name={ops.addLabel ? "upload" : "plus"} /> {ops.addLabel ?? "New record"}
         </button>
       )}
     </div>
