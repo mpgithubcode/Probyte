@@ -11,9 +11,10 @@ import threading
 import traceback
 from datetime import datetime, timedelta, timezone
 
+import psycopg
 from psycopg.types.json import Jsonb
 
-from .db import connection, pool
+from .db import DATABASE_URL, connection
 
 log = logging.getLogger("probyte.jobs")
 
@@ -104,16 +105,21 @@ def run_one(fast_only=False) -> bool:
     return True
 
 
+_listeners = threading.local()
+
+
 def _wait_for_notify(stop: threading.Event, timeout: float):
-    """Sleep until a job is queued (NOTIFY) or `timeout` passes."""
+    """Sleep until a job is queued (NOTIFY) or `timeout` passes. Each worker thread listens on a connection of its
+    own (not one borrowed from the pool, which jobs need)."""
     try:
-        with pool.connection() as conn:
-            conn.autocommit = True
+        conn = getattr(_listeners, "conn", None)
+        if conn is None or conn.closed:
+            conn = _listeners.conn = psycopg.connect(DATABASE_URL, autocommit=True)
             conn.execute(f"LISTEN {CHANNEL}")
-            for _ in conn.notifies(timeout=timeout, stop_after=1):
-                break
-            conn.execute(f"UNLISTEN {CHANNEL}")
+        for _ in conn.notifies(timeout=timeout, stop_after=1):
+            break
     except Exception:
+        _listeners.conn = None
         stop.wait(timeout)
 
 

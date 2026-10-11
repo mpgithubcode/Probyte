@@ -7,7 +7,9 @@ from psycopg_pool import ConnectionPool
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://probyte:probyte@localhost:5432/probyte")
 
-pool = ConnectionPool(DATABASE_URL, kwargs={"row_factory": dict_row}, open=False, min_size=1, max_size=10)
+# A sync holds two connections while it runs (its per-table lock, and its work), so the worker sizes this to its threads.
+POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))
+pool = ConnectionPool(DATABASE_URL, kwargs={"row_factory": dict_row}, open=False, min_size=1, max_size=POOL_SIZE)
 
 
 def init_db() -> None:

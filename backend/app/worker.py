@@ -42,6 +42,8 @@ def start(stop: threading.Event):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     init_db()
+    from .db import pool
+    pool.resize(pool.min_size, max(pool.max_size, THREADS * 2 + 4))  # every thread may be syncing (2 connections each)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())

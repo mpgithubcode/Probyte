@@ -199,19 +199,24 @@ def _sync(table_id: str, full: bool) -> dict:
                 elif rec["deleted"] or rec["sync_status"] == "dirty":
                     conn.execute("UPDATE records SET caldav_href = %s WHERE id = %s", (item_url, rec["id"]))  # local edit wins
                 elif rec["caldav_raw"] != raw:
-                    conn.execute("UPDATE records SET data = %s, caldav_href = %s, caldav_raw = %s, caldav_etag = %s, updated_at = now() WHERE id = %s",
-                                 (Jsonb(to_data(vals, rec["data"])), item_url, raw, etag, rec["id"]))
-                    webhooks.emit(conn, table_id, "record.updated", rec["id"])
-                    stats["updated"] += 1
+                    # Only if nobody edited it here since we read it: a newer local edit wins (and is pushed next).
+                    cur = conn.execute("UPDATE records SET data = %s, caldav_href = %s, caldav_raw = %s, caldav_etag = %s, updated_at = now() "
+                                       "WHERE id = %s AND updated_at = %s AND sync_status = 'synced' AND NOT deleted",
+                                       (Jsonb(to_data(vals, rec["data"])), item_url, raw, etag, rec["id"], rec["updated_at"]))
+                    if cur.rowcount:
+                        webhooks.emit(conn, table_id, "record.updated", rec["id"])
+                        stats["updated"] += 1
                 else:
                     conn.execute("UPDATE records SET caldav_href = %s, caldav_etag = %s WHERE id = %s", (item_url, etag, rec["id"]))
             # Removed on the server since our last sync (and not edited locally).
             present = {path_of(u) for u in etags}
             for rec in rows:
                 if rec["caldav_href"] and path_of(rec["caldav_href"]) not in present and rec["sync_status"] == "synced" and not rec["deleted"]:
-                    conn.execute("DELETE FROM records WHERE id = %s", (rec["id"],))
-                    webhooks.emit(conn, table_id, "record.deleted", rec["id"])
-                    stats["removed"] += 1
+                    cur = conn.execute("DELETE FROM records WHERE id = %s AND updated_at = %s AND sync_status = 'synced'",
+                                       (rec["id"], rec["updated_at"]))  # edited here meanwhile: keep it (it's pushed again)
+                    if cur.rowcount:
+                        webhooks.emit(conn, table_id, "record.deleted", rec["id"])
+                        stats["removed"] += 1
             sync_state["ignored"] = {p: e for p, e in ignored.items() if p in present}
 
     # ---- push
@@ -251,10 +256,14 @@ def _sync(table_id: str, full: bool) -> dict:
 
 @jobs.handler("sync_table")
 def _job_sync(payload):
+    with connection() as conn:
+        t = conn.execute("SELECT kind, account_id, calendar_url FROM tables WHERE id = %s", (payload["table_id"],)).fetchone()
+    if not t or t["kind"] not in DAV_KINDS or not t["account_id"] or not t["calendar_url"]:
+        return  # deleted or unlinked since it was queued: nothing to do
     try:
         sync_table(payload["table_id"], bool(payload.get("full")))
     except ValueError:
-        pass  # not linked any more: nothing to retry
+        pass  # the account went away meanwhile: nothing to retry
 
 
 def schedule_all():

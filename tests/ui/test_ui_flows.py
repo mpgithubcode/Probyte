@@ -22,7 +22,8 @@ def new_page(browser, phone=False):
     pg = ctx.new_page()
     pg.errors = []
     pg.on("pageerror", lambda e: pg.errors.append(str(e)))
-    pg.on("console", lambda m: pg.errors.append(m.text) if m.type == "error" and "401" not in m.text and "404" not in m.text else None)
+    # script errors fail a test; failed requests (wrong password and other expected 4xx answers) don't
+    pg.on("console", lambda m: pg.errors.append(m.text) if m.type == "error" and "Failed to load resource" not in m.text else None)
     pages.append(pg)
     return pg
 
@@ -437,4 +438,76 @@ def test_renaming_an_option_in_the_field_editor_keeps_the_values(browser, table_
     statuses = sorted(r["data"].get(F["Status"]) for r in u.records(t["id"]))
     assert statuses.count("To do") == 2 and "Todo" not in statuses, statuses
     expect(pg.locator(".grid tbody")).to_contain_text("To do")
+    assert not pg.errors, pg.errors
+
+
+def _day(pg, n):
+    import re
+    return pg.locator(".cal-day:not(.other)").filter(has=pg.locator(".cal-daynum > span", has_text=re.compile(f"^{n}$")))
+
+
+def test_repeating_event_skip_and_change_one_date(browser):
+    u = Client()
+    t = u.table("events", "Gym")
+    F = u.fields(t["id"])
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Gym", F["dtstart"]: "2026-10-05T13:00:00Z",
+                                                             F["dtend"]: "2026-10-05T14:00:00Z", F["rrule"]: "FREQ=WEEKLY"}})
+    u.j("POST", f"/tables/{t['id']}/views", json={"name": "Cal", "type": "calendar", "config": {"dateField": F["dtstart"], "endField": F["dtend"]}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".view-tab:has-text('Cal')")
+    pg.wait_for_selector(".cal-head")
+    _day(pg, 19).locator(".cal-item").first.click()
+    modal = pg.locator(".modal")
+    expect(modal).to_contain_text("Occurrence on")
+    modal.locator("button:has-text('Skip this date')").click()
+    expect(_day(pg, 19).locator(".cal-item")).to_have_count(0)
+    expect(_day(pg, 26).locator(".cal-item")).to_have_count(1)
+    _day(pg, 26).locator(".cal-item").first.click()
+    modal.locator("button:has-text('Change this date only')").click()
+    title = modal.locator(".occ-fields .form-row").filter(has_text="Title").locator("input").first
+    title.fill("Gym (moved)")
+    title.press("Enter")
+    pg.keyboard.press("Escape")
+    expect(_day(pg, 26).locator(".cal-item")).to_contain_text("Gym (moved)")
+    expect(_day(pg, 12).locator(".cal-item")).to_contain_text("Gym")
+    for _ in range(20):                                      # the last edit may still be on its way
+        rule = u.records(t["id"])[0]["data"][F["rrule"]]
+        if "OVERRIDE" in rule:
+            break
+        pg.wait_for_timeout(250)
+    assert "EXDATE" in rule and "OVERRIDE" in rule and "Gym (moved)" in rule
+    u.sync(t["id"])
+    body = u.server_item(t["calendar_url"], "SUMMARY:Gym")[1]
+    assert "EXDATE" in body and "RECURRENCE-ID" in body
+    assert not pg.errors, pg.errors
+
+
+def test_settings_password_webhook_and_mcp_token(browser):
+    u = Client()
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.click(".side-user .side-item")
+    pg.fill("input[placeholder='Current password']", "wrong-password")
+    pg.fill("input[placeholder^='New password']", "brand-new-pass-1")
+    pg.fill("input[placeholder='Confirm new password']", "brand-new-pass-1")
+    pg.click("button:has-text('Change password')")
+    expect(pg.locator(".settings-section .error")).to_be_visible()
+    pg.fill("input[placeholder='Current password']", u.password)
+    pg.click("button:has-text('Change password')")
+    expect(pg.locator(".settings-section .success")).to_be_visible()
+    assert requests.post(API + "/auth/login", json={"username": u.username, "password": "brand-new-pass-1"}).status_code == 200
+    pg.click(".settings-tabs button:has-text('API & MCP')")
+    pg.click("button:has-text('Create MCP token')")
+    expect(pg.locator(".bearer-box")).to_contain_text("pbk_")
+    pg.click("button:has-text('New webhook')")
+    pg.fill(".modal input[placeholder='n8n: new tasks']", "Notify")
+    pg.fill(".modal input[placeholder^='https://n8n']", "https://example.com/hook")
+    pg.click(".modal-foot button:has-text('Create webhook')")
+    pg.wait_for_timeout(600)
+    session = requests.Session()
+    session.post(API + "/auth/login", json={"username": u.username, "password": "brand-new-pass-1"})
+    hooks = session.get(API + "/v1/webhooks").json()["webhooks"]
+    assert [h["name"] for h in hooks] == ["Notify"]
     assert not pg.errors, pg.errors
