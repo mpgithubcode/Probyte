@@ -46,29 +46,12 @@ def _open(pid):
     return fitz.open(p)
 
 
-def upright(path: Path) -> bool:
-    """Pages stored turned (CAD sets often are: /Rotate 90 or 270) are straightened, keeping how they look, so that
-    text, lines and pictures all use the coordinates the sheet is seen in. True when the file changed."""
-    doc = fitz.open(path)
-    if not any(p.rotation for p in doc):
-        doc.close()
-        return False
-    for p in doc:
-        if p.rotation:
-            p.remove_rotation()
-    tmp = path.with_suffix(".upright.pdf")
-    doc.save(tmp, garbage=1, deflate=True)
-    doc.close()
-    tmp.replace(path)
-    return True
-
-
 def _ensure_upright(conn, p) -> None:
     """Projects made before pages were straightened: straighten now, read the sheets again (the ones nobody checked
     yet) and drop suggestions placed in the old coordinates."""
     if (p["settings"] or {}).get("upright"):
         return
-    if upright(_pdf(p["id"])):
+    if drawings.upright(_pdf(p["id"])):
         doc = _open(p["id"])
         fresh = {x["page_no"]: x for x in _index(p["id"], doc)}
         for pg in conn.execute("SELECT * FROM tk_pages WHERE project_id = %s", (p["id"],)).fetchall():
@@ -184,7 +167,7 @@ def _create(user, name: str, data_path: Path, file_name: str, source: dict) -> d
     if doc.page_count > MAX_PAGES:
         raise HTTPException(400, f"That's more than {MAX_PAGES} pages")
     doc.close()
-    upright(data_path)
+    drawings.upright(data_path)
     doc = fitz.open(data_path)
     pid = uuid.uuid4()
     pages = _index(pid, doc)

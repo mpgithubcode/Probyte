@@ -578,3 +578,25 @@ def render(page, dpi: int, clip=None, gray=False) -> fitz.Pixmap:
 def most_common(values):
     c = Counter(v for v in values if v)
     return c.most_common(1)[0][0] if c else None
+
+
+def straighten(doc) -> bool:
+    """Pages stored turned (CAD sets often are: /Rotate 90 or 270) are straightened in place, keeping how they look, so
+    that text, lines and pictures all use the coordinates the sheet is seen in. True when something changed."""
+    turned = [p for p in doc if p.rotation]
+    for p in turned:
+        p.remove_rotation()
+    return bool(turned)
+
+
+def upright(path) -> bool:
+    """straighten() a PDF file in place. True when the file changed."""
+    doc = fitz.open(path)
+    if not straighten(doc):
+        doc.close()
+        return False
+    tmp = path.with_suffix(".upright.pdf")
+    doc.save(tmp, garbage=1, deflate=True)
+    doc.close()
+    tmp.replace(path)
+    return True
