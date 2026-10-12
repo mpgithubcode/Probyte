@@ -141,6 +141,9 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
                     <li>Enter the server, username and password above, then tap Next.</li>
                     <li>Turn on Calendars and Reminders. Events appear in Calendar and tasks appear in Reminders.</li>
                   </ol>
+                  <p className="hint">The iPhone sends its changes at once. It checks for changes made here on its own schedule: set
+                    Settings → Apps → Calendar → Calendar Accounts → Fetch New Data to <b>Every 15 Minutes</b> (the most often), and
+                    pull down on the Calendars list to check right away. (DAVx⁵ on Android: its sync interval, or pull down.)</p>
                   <p className="hint">Every Tasks & events, Tasks or Events table on the “Probyte” account is a calendar there; a list made in
                     Reminders or a calendar made on the phone becomes a table here. Apps that ask for a full address: {serverUrl}dav/</p>
                 </details>

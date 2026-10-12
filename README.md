@@ -371,6 +371,8 @@ For contacts, create a table with **New table → Contacts** on the **Probyte** 
 
 The device password is separate from the Probyte login password, and you can regenerate it at any time from the same screen.
 
+A phone sends its changes at once. It checks for changes made in Probyte on its own schedule (iOS doesn't offer push to calendar servers other than Apple's): on an iPhone set **Settings → Apps → Calendar → Calendar Accounts → Fetch New Data** to every 15 minutes, and pull down on the Calendars list to check right away. Each check costs Probyte one small lookup and sends only what changed.
+
 ### Reverse proxy
 
 **One address is enough.** Probyte answers calendar requests itself: phones find it at `/.well-known/caldav` and `/.well-known/carddav`, and use `/dav/…` (devices set up before 0.9 use `/<username>/…`, which keeps working). Point your proxy at Probyte (`app:8000`, published on `PROBYTE_PORT`) and phones use that same address.
