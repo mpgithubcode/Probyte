@@ -468,7 +468,7 @@ def _set_reminder(kind: str, comp, label):
         anchor = _alarm_anchor(kind, comp)
         if anchor is None:
             return  # a task without a date can't remind
-        alarm.add("trigger", (anchor - before).astimezone(timezone.utc))
+        alarm.add("trigger", (anchor - before).astimezone(timezone.utc), parameters={"VALUE": "DATE-TIME"})  # an absolute TRIGGER must say so
     comp.add_component(alarm)
 
 

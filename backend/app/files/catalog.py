@@ -29,10 +29,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.core import events, jobs
 from app.data import audit
-from app.core import jobs
 from app.data import store
-from app.adapters import webhooks
 from app.blobs.attachments import ATTACH_DIR
 from app.calc.compute import FILE_READONLY as READONLY_KEYS
 from app.core.db import Jsonb, connection
@@ -176,7 +175,7 @@ def _insert(conn, table, fields, meta, user_id=None, extra: dict | None = None):
     r = store.insert_record(conn, table["id"], data, user_id=user_id, caldav_href=meta["path"], record_id=rid)
     conn.execute("UPDATE records SET caldav_etag = %s WHERE id = %s", (meta["etag"], rid))
     audit.note(conn, table["id"], rid, "created")
-    webhooks.emit(conn, table["id"], "record.created", rid)
+    events.record_changed(conn, table, "record.created", rid, source="files")
     _queue_preview(conn, rid, mime, meta["path"])
     return r
 
@@ -197,7 +196,7 @@ def _refresh(conn, rec, keys, meta, *, note=True):
                  (Jsonb(new), meta["path"], meta["etag"], rec["id"]))
     if note:
         audit.note(conn, rec["table_id"], rec["id"], "updated", old, new, None)
-        webhooks.emit(conn, rec["table_id"], "record.updated", rec["id"])
+        events.record_changed(conn, {"id": rec["table_id"], "kind": "files"}, "record.updated", rec["id"], source="files")
 
 
 def _free_path(drv, conn, table_id, rel: str, exclude=None) -> str:
@@ -347,7 +346,7 @@ def sync(table, stats: dict, full: bool = False) -> dict:
                 conn.execute("DELETE FROM records WHERE id = %s", (rec["id"],))
                 _drop_cache(rec["id"])
                 audit.note(conn, table["id"], rec["id"], "deleted")
-                webhooks.emit(conn, table["id"], "record.deleted", rec["id"])
+                events.record_changed(conn, table, "record.deleted", rec["id"], source="files")
                 stats["removed"] += 1
         stats["files"] = len(objects)
     return stats

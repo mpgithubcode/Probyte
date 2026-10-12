@@ -293,10 +293,10 @@ def test_dav_info_check_and_reset(user):
 def test_external_account_validation(user):
     bad = user.post(API + "/accounts/test", json={"name": "x", "url": "http://127.0.0.1:1/", "username": "a", "password": "b"})
     assert bad.status_code in (200, 400) and (bad.status_code == 400 or not bad.json().get("ok"))
-    a = user.j("POST", "/accounts", json={"name": "Elsewhere", "url": "http://radicale:5232/", "username": user.dav_auth()[0], "password": user.dav_auth()[1]})
+    a = user.j("POST", "/accounts", json={"name": "Elsewhere", "url": f"{BASE}/dav/", "username": user.dav_auth()[0], "password": user.dav_auth()[1]})
     cals = user.get(API + f"/accounts/{a['id']}/calendars")
     assert cals.status_code == 200
-    user.j("PATCH", f"/accounts/{a['id']}", json={"name": "Renamed", "url": "http://radicale:5232/"})
+    user.j("PATCH", f"/accounts/{a['id']}", json={"name": "Renamed", "url": f"{BASE}/dav/"})
     user.j("DELETE", f"/accounts/{a['id']}")
     assert user.get(API + f"/accounts/{a['id']}/calendars").status_code == 404
 
@@ -386,7 +386,7 @@ def test_password_guessing_is_slowed_down(user):
 def test_stored_passwords_are_encrypted(user):
     """Account passwords and webhook secrets are stored encrypted, and still work."""
     name, pw = user.dav_auth()
-    acct = user.j("POST", "/accounts", json={"name": "Same server", "url": "http://radicale:5232/", "username": name, "password": pw})
+    acct = user.j("POST", "/accounts", json={"name": "Same server", "url": f"{BASE}/dav/", "username": name, "password": pw})
     assert user.get(API + f"/accounts/{acct['id']}/calendars").status_code == 200   # decrypted when used
     hook = user.j("POST", "/v1/webhooks", json={"url": "https://example.com/h"})
     assert hook["secret"].startswith("whsec_")

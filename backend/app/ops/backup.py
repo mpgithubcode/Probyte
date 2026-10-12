@@ -32,7 +32,7 @@ log = logging.getLogger("probyte.backup")
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", "/backups"))
 INTERVAL_HOURS = float(os.environ.get("BACKUP_INTERVAL", "24"))  # 0 = no automatic backups
 KEEP = max(1, int(os.environ.get("BACKUP_KEEP", "14")))
-RADICALE_DATA = Path(os.environ.get("RADICALE_DATA_DIR", "/radicale-data"))
+RADICALE_DATA = Path(os.environ.get("RADICALE_DATA_DIR", "/radicale-data"))  # restoring a backup from before 0.9 (calendars were there)
 PREFIX = "probyte-"
 
 
@@ -80,7 +80,6 @@ def run_backup() -> dict:
         subprocess.run(["pg_dump", "--format=custom", "--no-owner", "--file", str(tmp / "database.dump"), DATABASE_URL],
                        check=True, capture_output=True, timeout=3600)
         sizes = {"database": (tmp / "database.dump").stat().st_size,
-                 "calendars": _tar(RADICALE_DATA, tmp / "calendars.tar.gz"),
                  "attachments": _tar(ATTACH_DIR, tmp / "attachments.tar.gz")}
         with connection() as conn:
             migrations = [r["version"] for r in conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()]
@@ -88,7 +87,7 @@ def run_backup() -> dict:
                                   "(SELECT count(*) FROM records) AS records").fetchone()
         manifest = {"created_at": datetime.now(timezone.utc).isoformat(), "seconds": round(time.time() - started, 1),
                     "sizes": sizes, "total": sum(sizes.values()), "migrations": migrations, "counts": dict(counts),
-                    "calendars_included": RADICALE_DATA.is_dir()}
+                    "calendars_included": True}  # in the database (Probyte serves them itself)
         (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2))
         tmp.rename(BACKUP_DIR / name)  # only complete backups get a real name
     except subprocess.CalledProcessError as e:

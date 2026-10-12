@@ -33,14 +33,15 @@ def create_table(body: TableIn, user=User):
             from app.files import catalog as files
             t = files.create_table(conn, user["id"], base["id"], body)
     if body.kind == "files":
-        store.schedule_sync(t["id"], 0)
+        sync.schedule(t["id"], 0)
         return _table_out(t)
     calendar_url = body.calendar_url
     if body.kind != "generic":
-        if not body.account_id:
-            raise HTTPException(400, "An account is required")
         with connection() as conn:
-            a = _own_account(conn, body.account_id, user)
+            a = _own_account(conn, body.account_id, user) if body.account_id else None
+            if a is None or a["is_builtin"]:  # on Probyte's own server: the table is the calendar / address book
+                t = store.create_table(conn, user["id"], base["id"], body.name, body.kind)
+                return _table_out(conn.execute("UPDATE tables SET dav_slug = %s WHERE id = %s RETURNING *", (str(t["id"]), t["id"])).fetchone())
         book = body.kind == "contacts"
         if body.new_calendar_name:
             try:
@@ -54,7 +55,7 @@ def create_table(body: TableIn, user=User):
         t = store.create_table(conn, user["id"], base["id"], body.name, body.kind,
                                body.account_id if body.kind != "generic" else None, calendar_url)
     if body.kind != "generic":
-        store.schedule_sync(t["id"], 0)
+        sync.schedule(t["id"], 0)
     return t
 
 
@@ -63,6 +64,7 @@ def get_table(table_id: str, user=User):
     with connection() as conn:
         t = store.get_table(conn, table_id, user["id"])
         eng = Engine(conn)
+        sync.sync_if_stale(conn, t)  # linked to another server: catch up with what changed there (a phone's edits)
         token = eng.token(table_id) if t["kind"] != "remote" else None  # before the records: see Engine.changes
         records = store.list_records(conn, table_id, eng)
         refs = eng.refs(table_id, eng.records(table_id))
@@ -264,7 +266,14 @@ def order_fields(table_id: str, body: FieldOrder, user=User):
 
 
 def _dav_info(conn, t):
-    """For a synced table: which account, whether it's Probyte's own server, and whether another table uses the same collection."""
+    """For a calendar or contacts table: where it is (Probyte's own server, or which account), and whether another
+    table uses the same collection."""
+    if store.is_served(t):
+        items = conn.execute("SELECT count(*) AS n FROM records WHERE table_id = %s AND NOT deleted", (t["id"],)).fetchone()["n"]
+        owner = conn.execute("SELECT username FROM users WHERE id = %s", (t["user_id"],)).fetchone()
+        return {"account": "Probyte", "builtin": True, "shared": False, "items": items,
+                "collection": "address book" if t["kind"] == "contacts" else "calendar",
+                "path": f"/dav/{owner['username']}/{t['dav_slug']}/"}
     if not store.is_synced(t):
         return None
     a = conn.execute("SELECT name, is_builtin FROM caldav_accounts WHERE id = %s", (t["account_id"],)).fetchone()
@@ -291,6 +300,8 @@ def _delete_on_server(conn, t) -> str:
     info = _dav_info(conn, t)
     if not info:
         return "none"
+    if store.is_served(t):
+        return f"deleted the {info['collection']}"  # it was the table itself
     if info["shared"]:
         return "kept (another table uses the same " + info["collection"] + ")"
     a = conn.execute("SELECT * FROM caldav_accounts WHERE id = %s", (t["account_id"],)).fetchone()
@@ -394,7 +405,7 @@ def restore_table(table_id: str, user=User):
         conn.execute("UPDATE tables SET trashed_at = NULL, trash_delete_on_server = false WHERE id = %s", (table_id,))
         t = store.get_table(conn, table_id)
         if store.is_synced(t) or (t["kind"] == "files" and t["storage_id"]):
-            store.schedule_sync(table_id, 0, conn=conn)  # catch up with what changed on the server meanwhile
+            sync.schedule(table_id, 0, conn=conn)  # catch up with what changed on the server meanwhile
     return {"ok": True}
 
 

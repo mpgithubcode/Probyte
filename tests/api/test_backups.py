@@ -27,6 +27,6 @@ def test_backups_for_the_admin_only(admin, user):
     r = admin.get(API + f"/admin/backups/{new['name']}/download")
     assert r.status_code == 200
     names = tarfile.open(fileobj=io.BytesIO(r.content)).getnames()
-    assert {f"{new['name']}/{f}" for f in ("database.dump", "calendars.tar.gz", "attachments.tar.gz", "manifest.json")} <= set(names)
+    assert {f"{new['name']}/{f}" for f in ("database.dump", "attachments.tar.gz", "manifest.json")} <= set(names)
     assert admin.get(API + "/admin/backups/../../etc/passwd/download").status_code == 404
     assert user.get(API + f"/admin/backups/{new['name']}/download").status_code == 403

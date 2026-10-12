@@ -56,12 +56,13 @@ def test_tables_go_to_the_trash_and_come_back(user):
     assert res["trashed"] is True
     assert user.get(API + f"/tables/{t['id']}").status_code == 404
     assert all(x["id"] != t["id"] for x in user.workspace()["tables"])
-    # the calendar is still on the server while it's in the trash
-    assert requests.request("PROPFIND", t["calendar_url"], auth=user.dav_auth(), headers={"Depth": "0"}).status_code == 207
+    # in the trash, the calendar is gone from phones too; restored, it's back
+    assert requests.request("PROPFIND", t["calendar_url"], auth=user.dav_auth(), headers={"Depth": "0"}).status_code == 404
     tr = user.j("GET", "/trash")["tables"]
     assert tr[0]["id"] == t["id"] and tr[0]["records"] == 1 and tr[0]["trash_delete_on_server"] is True
     user.j("POST", f"/trash/tables/{t['id']}/restore")
     assert [r["data"][F["summary"]] for r in user.records(t["id"])] == ["Post letter"]
+    assert requests.request("PROPFIND", t["calendar_url"], auth=user.dav_auth(), headers={"Depth": "0"}).status_code == 207
     # deleting for good from the trash removes the calendar too
     user.j("DELETE", f"/tables/{t['id']}")
     assert user.j("DELETE", f"/trash/tables/{t['id']}")["server"] == "deleted the calendar"

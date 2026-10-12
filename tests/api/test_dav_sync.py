@@ -1,4 +1,5 @@
-"""Two-way sync with the bundled Radicale: tasks, events, repeats, statuses, contacts."""
+"""Calendars and contacts on Probyte's own CalDAV/CardDAV server, as a phone sees them: tasks, events, repeats,
+statuses, contacts. (user.sync() is a no-op for these tables: there is nothing to sync.)"""
 import re
 import time
 
@@ -91,29 +92,28 @@ def test_contacts_round_trip_keeps_unknown_properties(user):
     card = ("BEGIN:VCARD\r\nVERSION:3.0\r\nN:Turing;Alan;;;\r\nFN:Alan Turing\r\nTEL;type=CELL:+44 1\r\nTEL;type=HOME:+44 2\r\n"
             "PHOTO;ENCODING=b;TYPE=JPEG:AAAA\r\nUID:PHONE-1\r\nEND:VCARD\r\n")
     import requests
-    from conftest import RADICALE
-    path = t["calendar_url"].replace(RADICALE, "") + "PHONE-1.vcf"
-    requests.put(RADICALE + path, data=card, auth=user.dav_auth(), headers={"Content-Type": "text/vcard"})
+    path = t["calendar_url"] + "PHONE-1.vcf"
+    assert requests.put(path, data=card, auth=user.dav_auth(), headers={"Content-Type": "text/vcard"}).status_code == 201
     user.sync(t["id"])
     alan = next(r for r in user.records(t["id"]) if r["data"].get(F["fn"]) == "Alan Turing")
     user.j("PATCH", f"/records/{alan['id']}", json={"data": {F["org"]: "Bletchley Park"}})
     user.sync(t["id"])
-    body = requests.get(RADICALE + path, auth=user.dav_auth()).text
+    body = requests.get(path, auth=user.dav_auth()).text
     assert "ORG:Bletchley Park" in body and "PHOTO" in body and "+44 2" in body
 
 
 def test_edits_reach_the_server_without_sync_now(user):
-    """Every write queues a push job in its own transaction; the worker delivers it within seconds."""
+    """What's written in Probyte (the app, the API) is what a phone gets next: there's no push to wait for."""
     t = user.table("tasks", "Auto push")
     F = user.fields(t["id"])
     user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Pushed from the app"}})
     key = user.j("POST", "/keys", json={"name": "push", "scope": "write"})["key"]
     requests.post(f"{BASE}/api/v1/tables/{t['id']}/records", headers={"Authorization": f"Bearer {key}"},
                   json={"fields": {"Title": "Pushed via API"}}).raise_for_status()
-    deadline = time.time() + 20
+    deadline = time.time() + 2
     while time.time() < deadline:
         bodies = " ".join(b for _, b in user.server_items(t["calendar_url"]))
         if "Pushed from the app" in bodies and "Pushed via API" in bodies:
             return
         time.sleep(1)
-    raise AssertionError("edits were not pushed to the DAV server")
+    raise AssertionError("edits were not on the DAV server")

@@ -24,11 +24,13 @@ def _recent(key: str, now: float) -> list[float]:
     return hits
 
 
-def address(request: Request | None) -> str:
+def address(request: Request | str | None) -> str:
+    if isinstance(request, str):
+        return request or "unknown"
     return (request.client.host if request and request.client else None) or "unknown"
 
 
-def check(account: str, request: Request | None):
+def check(account: str, request: Request | str | None):
     """Raise 429 when this account or address has failed too often lately."""
     now = time.time()
     with _lock:
@@ -40,7 +42,7 @@ def check(account: str, request: Request | None):
                                     headers={"Retry-After": str(wait)})
 
 
-def failed(account: str, request: Request | None):
+def failed(account: str, request: Request | str | None):
     now = time.time()
     with _lock:
         for key in (f"a:{account}", f"ip:{address(request)}"):

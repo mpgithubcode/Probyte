@@ -1,10 +1,12 @@
-"""Two-way sync between a Probyte table and a DAV collection: tasks/events with a CalDAV calendar,
-contacts with a CardDAV address book.
+"""Two-way sync between a Probyte table and a collection on another DAV server (Nextcloud, iCloud, Google…):
+tasks/events with a CalDAV calendar, contacts with a CardDAV address book. (Tables on Probyte's own server need
+none of this: phones read and write them directly, see dav/server.py.)
 
 Incremental: when the collection's change tag (CTag / sync-token) is the same as last time, nothing is
 downloaded; otherwise only items whose ETag changed are fetched. Conflict policy: a record edited locally
 since the last sync (sync_status = 'dirty') wins; otherwise the server copy wins.
-Runs in the worker (job "sync_table"), or directly for "Sync now".
+Runs in the worker (job "sync_table"): a few seconds after a local edit (on_record_change, through the change feed),
+when someone opens the table (sync_if_stale), every SYNC_INTERVAL, or directly for "Sync now".
 """
 import logging
 import os
@@ -12,20 +14,20 @@ from urllib.parse import urljoin
 
 import caldav
 
+from app.core import events, jobs
+from app.core.db import Jsonb, connection
+from app.core.secretbox import unseal
 from app.data import audit
-from app.core import jobs
-from app.formats import vcard
-from app.adapters import webhooks
+from app.data.store import DAV_KINDS, get_fields, get_table, insert_record, is_synced
 from app.dav.carddav import CardDAV
 from app.dav.client import TIMEOUT as DAV_TIMEOUT, Collection, check_url, path_of
-from app.core.db import Jsonb, connection
-from app.formats.ical import build_ical, component_kind, from_mixed, ical_to_values, to_mixed
-from app.core.secretbox import unseal
-from app.data.store import DAV_KINDS, apply_task_auto, ensure_choices, get_fields, get_table, insert_record
+from app.dav.items import Mapper, build_body, item_name, parse_item
 
 log = logging.getLogger("probyte.sync")
 
 SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "300"))      # seconds between background syncs; 0 disables
+AUTO_PUSH_DELAY = float(os.environ.get("AUTO_PUSH_DELAY", "2"))  # seconds after an edit before it is pushed; <0 disables
+STALE_AFTER = float(os.environ.get("SYNC_ON_OPEN_AFTER", "20"))  # opening a table syncs it when its last sync is older
 
 
 # ---------------------------------------------------------------- accounts: discovery
@@ -63,33 +65,11 @@ def create_calendar(account, name: str, components: list[str]) -> str:
     return str(cal.url)
 
 
-# ---------------------------------------------------------------- item <-> values per table kind
-
-def _safe(uid: str) -> str:
-    return "".join(c if c.isalnum() or c in "-_.@" else "_" for c in uid)
-
-
-def parse_item(kind: str, url: str, raw: str):
-    """(uid, values) of a server item, or (None, None) when it isn't the kind of item this table holds."""
-    if kind == "contacts":
-        uid, vals = vcard.card_to_values(raw)
-        return uid or f"href:{url.rstrip('/').rsplit('/', 1)[-1]}", vals  # a few clients write cards without a UID
-    if kind == "mixed":
-        obj_kind = component_kind(raw)
-        uid, vals = ical_to_values(obj_kind, raw)
-        return (uid, to_mixed(obj_kind, vals)) if uid else (None, None)
-    uid, vals = ical_to_values(kind, raw)
-    return (uid, vals) if uid else (None, None)
-
+# ---------------------------------------------------------------- items
 
 def build_item(kind: str, collection_url: str, uid: str, vals: dict, url: str | None, raw: str | None) -> tuple[str, str]:
     """(item URL, body) to write for a record."""
-    if kind == "contacts":
-        if uid.startswith("href:") and raw:
-            uid = vcard.Card(raw).get("UID") or uid[5:].removesuffix(".vcf")
-        return url or urljoin(collection_url, _safe(uid) + ".vcf"), vcard.build_vcard(uid, vals, raw)
-    obj_kind, vals = from_mixed(vals) if kind == "mixed" else (kind, vals)
-    return url or urljoin(collection_url, _safe(uid) + ".ics"), build_ical(obj_kind, uid, vals, raw)
+    return url or urljoin(collection_url, item_name(kind, uid)), build_body(kind, uid, vals, raw)
 
 
 # ---------------------------------------------------------------- sync
@@ -124,8 +104,8 @@ def _sync(table_id: str, full: bool) -> dict:
         if table["kind"] == "files":
             from app.files import catalog as files
             return files.sync(table, stats, full)
-        if table["kind"] not in DAV_KINDS:
-            return stats
+        if table["kind"] not in DAV_KINDS or table.get("dav_slug"):
+            return stats  # on Probyte's own server: nothing to sync
         if not table["account_id"] or not table["calendar_url"]:
             raise ValueError("Table is not linked to an address book" if table["kind"] == "contacts"
                              else "Table is not linked to a CalDAV calendar")
@@ -136,41 +116,10 @@ def _sync(table_id: str, full: bool) -> dict:
         has_local = conn.execute("SELECT EXISTS (SELECT 1 FROM records WHERE table_id = %s AND (sync_status = 'dirty' OR deleted)) AS e",
                                  (table_id,)).fetchone()["e"]
     kind = table["kind"]
-    by_key = {f["system_key"]: f for f in fields if f["system_key"]}
     sync_state = dict(table.get("sync_state") or {})
     url = table["calendar_url"] if table["calendar_url"].endswith("/") else table["calendar_url"] + "/"
     coll = Collection(url, account["username"] or None, unseal(account["password"]) or None,
                       "addressbook" if kind == "contacts" else "calendar")
-
-    def to_data(vals: dict, base: dict) -> dict:
-        data = dict(base)
-        vals = dict(vals)
-        # Many clients drop unknown properties; don't let a missing X-PROBYTE-STARTED wipe a local value.
-        if vals.get("started") is None and "started" in by_key and base.get(str(by_key["started"]["id"])):
-            vals.pop("started")
-        changed_at = vals.pop("last_modified", None)
-        if vals.get("status") == "Completed" and "completed" in by_key:
-            cid, sid = str(by_key["completed"]["id"]), str(by_key["status"]["id"]) if "status" in by_key else None
-            if base.get(cid) and base.get(sid) == "Completed":
-                vals.pop("completed", None)  # already done here: keep when that was
-            elif base:
-                # Done on another device since the last sync. Some clients (iOS Reminders) put the reminder's
-                # scheduled time in COMPLETED, so use when the change was made instead.
-                vals["completed"] = changed_at or vals.get("completed")
-        for key, val in vals.items():
-            f = by_key.get(key)
-            if f:
-                ensure_choices(conn, f, val)
-                data[str(f["id"])] = val
-        # Status changed on another device: fill the task dates the server doesn't carry.
-        if "status" in by_key:
-            st = str(by_key["status"]["id"])
-            explicit = {str(by_key[k]["id"]) for k in ("completed",) if k in by_key and vals.get(k)}
-            apply_task_auto(table, fields, base if base else {st: "To Do"}, data, {st: data.get(st), **{k: data[k] for k in explicit}})
-        return data
-
-    def from_data(data: dict) -> dict:
-        return {key: data.get(str(f["id"])) for key, f in by_key.items()}
 
     # ---- pull: only when the collection changed, and only the items that changed
     state = coll.state()
@@ -186,6 +135,7 @@ def _sync(table_id: str, full: bool) -> dict:
             todo = [u for u, e in etags.items()
                     if (by_path.get(path_of(u)) or {}).get("caldav_etag") != e and ignored.get(path_of(u)) != e]
             fetched = coll.fetch(todo) if todo else {}
+            mapper = Mapper(conn, table, fields)
             stats["fetched"] = len(fetched)
             for item_url, (etag, raw) in fetched.items():
                 p = path_of(item_url)
@@ -199,23 +149,23 @@ def _sync(table_id: str, full: bool) -> dict:
                     continue
                 rec = by_uid.get(uid)
                 if rec is None:
-                    new = insert_record(conn, table_id, to_data(vals, {}), caldav_uid=uid, caldav_href=item_url, caldav_raw=raw)
+                    new = insert_record(conn, table_id, mapper.to_data(vals, {}), caldav_uid=uid, caldav_href=item_url, caldav_raw=raw)
                     conn.execute("UPDATE records SET caldav_etag = %s WHERE id = %s", (etag, new["id"]))
                     audit.note(conn, table_id, new["id"], "created")
-                    webhooks.emit(conn, table_id, "record.created", new["id"])
+                    events.record_changed(conn, table, "record.created", new["id"], source="sync")
                     by_uid[uid] = {**new, "caldav_etag": etag}
                     stats["pulled"] += 1
                 elif rec["deleted"] or rec["sync_status"] == "dirty":
                     conn.execute("UPDATE records SET caldav_href = %s WHERE id = %s", (item_url, rec["id"]))  # local edit wins
                 elif rec["caldav_raw"] != raw:
                     # Only if nobody edited it here since we read it: a newer local edit wins (and is pushed next).
-                    new_data = to_data(vals, rec["data"])
+                    new_data = mapper.to_data(vals, rec["data"])
                     cur = conn.execute("UPDATE records SET data = %s, caldav_href = %s, caldav_raw = %s, caldav_etag = %s, updated_at = now() "
                                        "WHERE id = %s AND updated_at = %s AND sync_status = 'synced' AND NOT deleted",
                                        (Jsonb(new_data), item_url, raw, etag, rec["id"], rec["updated_at"]))
                     if cur.rowcount:
                         audit.note(conn, table_id, rec["id"], "updated", rec["data"], new_data, fields)
-                        webhooks.emit(conn, table_id, "record.updated", rec["id"])
+                        events.record_changed(conn, table, "record.updated", rec["id"], source="sync")
                         stats["updated"] += 1
                 else:
                     conn.execute("UPDATE records SET caldav_href = %s, caldav_etag = %s WHERE id = %s", (item_url, etag, rec["id"]))
@@ -227,7 +177,7 @@ def _sync(table_id: str, full: bool) -> dict:
                                        (rec["id"], rec["updated_at"]))  # edited here meanwhile: keep it (it's pushed again)
                     if cur.rowcount:
                         audit.note(conn, table_id, rec["id"], "deleted")
-                        webhooks.emit(conn, table_id, "record.deleted", rec["id"])
+                        events.record_changed(conn, table, "record.deleted", rec["id"], source="sync")
                         stats["removed"] += 1
             sync_state["ignored"] = {p: e for p, e in ignored.items() if p in present}
 
@@ -244,7 +194,7 @@ def _sync(table_id: str, full: bool) -> dict:
                         conn.execute("DELETE FROM records WHERE id = %s", (rec["id"],))
                     stats["deleted"] += 1
                     continue
-                item_url, body = build_item(kind, url, rec["caldav_uid"], from_data(rec["data"]), rec["caldav_href"], rec["caldav_raw"])
+                item_url, body = build_item(kind, url, rec["caldav_uid"], Mapper(None, table, fields).from_data(rec["data"]), rec["caldav_href"], rec["caldav_raw"])
                 etag = coll.put(item_url, body)
                 with connection() as conn:
                     # Only mark synced if nobody edited the record while we were pushing.
@@ -265,6 +215,31 @@ def _sync(table_id: str, full: bool) -> dict:
 
 
 # ---------------------------------------------------------------- scheduling (through the job queue)
+
+def schedule(table_id, delay: float | None = None, conn=None):
+    """Sync a table soon (debounced). With `conn`, the job is queued in that transaction, so it only exists once
+    the change that asked for it is committed."""
+    delay = AUTO_PUSH_DELAY if delay is None else delay
+    if delay < 0:
+        return
+    jobs.enqueue(conn, "sync_table", {"table_id": str(table_id)}, key=f"sync:{table_id}", delay=delay, max_attempts=3)
+
+
+def on_record_change(conn, table, event, record_id, source):
+    """Change feed: a record of a table linked to another server changed here; push it there shortly."""
+    if source != "sync" and is_synced(table):
+        schedule(table["id"], conn=conn)
+
+
+def sync_if_stale(conn, table):
+    """Someone opened the table: catch up with the other server now if the last sync is a while ago (the check is
+    one request when nothing changed there), so what was just changed on a phone shows up."""
+    if not is_synced(table) and not (table["kind"] == "files" and table.get("storage_id")):
+        return
+    last = table.get("last_synced_at")
+    if last is None or (conn.execute("SELECT now() - %s > make_interval(secs => %s) AS stale", (last, STALE_AFTER)).fetchone()["stale"]):
+        schedule(table["id"], 0, conn=conn)
+
 
 @jobs.handler("sync_table")
 def _job_sync(payload):

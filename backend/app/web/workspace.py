@@ -165,6 +165,8 @@ def test_account(body: AccountTest, user=User):
 def account_calendars(account_id: str, user=User):
     with connection() as conn:
         a = _own_account(conn, account_id, user)
+    if a["is_builtin"]:
+        return []  # on Probyte's own server each table is its own calendar
     try:
         return sync.list_calendars(a)
     except Exception as e:
@@ -175,6 +177,8 @@ def account_calendars(account_id: str, user=User):
 def account_addressbooks(account_id: str, user=User):
     with connection() as conn:
         a = _own_account(conn, account_id, user)
+    if a["is_builtin"]:
+        return []
     try:
         return sync.list_addressbooks(a)
     except Exception as e:

@@ -8,7 +8,6 @@ import requests
 
 BASE = os.environ.get("PROBYTE_URL", "http://app:8000").rstrip("/")
 API = BASE + "/api"
-RADICALE = os.environ.get("RADICALE_URL", "http://radicale:5232").rstrip("/")
 # test storage servers (tests/docker-compose.storage.yml); overridable to run the suite outside Docker
 S3_URL = os.environ.get("TEST_S3_URL", "http://s3:9000")
 WEBDAV_URL = os.environ.get("TEST_WEBDAV_URL", "http://webdav:8080/")
@@ -48,11 +47,17 @@ class Client(requests.Session):
         return d["username"], d["password"]
 
     def table(self, kind="generic", name=None, **extra):
+        """A table; a calendar or contacts one is on Probyte's own CalDAV/CardDAV server unless an account is given.
+        Its "calendar_url" is then the collection's full address there."""
         body = {"name": name or f"{kind} {uuid.uuid4().hex[:6]}", "kind": kind, "base_id": self.base_id, **extra}
         if kind in ("tasks", "events", "mixed", "contacts") and "account_id" not in extra:
             body["account_id"] = self.builtin["id"]
             body.setdefault("new_calendar_name", body["name"])
-        return self.j("POST", "/tables", json=body)
+        t = self.j("POST", "/tables", json=body)
+        dav = self.j("GET", f"/tables/{t['id']}")["dav"] if kind in ("tasks", "events", "mixed", "contacts") else None
+        if dav and dav.get("path"):
+            t["calendar_url"] = BASE + dav["path"]
+        return t
 
     def fields(self, table_id):
         """{system_key or field name: field id}"""
@@ -73,17 +78,21 @@ class Client(requests.Session):
         return self.j("POST", f"/tables/{table_id}/sync")
 
     def server_items(self, collection_url):
-        """[(href path, body)] of every item in a DAV collection, read straight from the test Radicale."""
+        """[(href path, body)] of every item in a DAV collection, read the way a phone does."""
         auth = self.dav_auth()
         listing = requests.request("PROPFIND", collection_url, auth=auth, headers={"Depth": "1"}).text
         hrefs = [h for h in re.findall(r"href>([^<]+\.(?:ics|vcf))<", listing)]
-        return [(h, requests.get(RADICALE + h, auth=auth).text) for h in hrefs]
+        root = collection_url.split("/", 3)
+        origin = "/".join(root[:3])
+        return [(h, requests.get(origin + h, auth=auth).text) for h in hrefs]
 
     def server_item(self, collection_url, text):
         return next((h, b) for h, b in self.server_items(collection_url) if text in b)
 
     def put_item(self, href, body):
-        r = requests.put(RADICALE + href, data=body.encode(), auth=self.dav_auth(), headers={"Content-Type": "text/calendar"})
+        """Write an item the way a phone does (href: a path on the server, or a full address)."""
+        r = requests.put(href if href.startswith("http") else BASE + href, data=body.encode(), auth=self.dav_auth(),
+                         headers={"Content-Type": "text/calendar"})
         assert r.status_code in (200, 201, 204), r.status_code
 
 

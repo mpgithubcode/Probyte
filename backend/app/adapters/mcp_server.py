@@ -250,9 +250,9 @@ if STATIC_TOKEN and len(STATIC_TOKEN) < 16:
 
 def _static_user():
     with connection() as conn:
-        u = (conn.execute("SELECT id, username, is_admin, radicale_hash FROM users WHERE username = %s", (STATIC_USER,)).fetchone()
+        u = (conn.execute("SELECT id, username, is_admin FROM users WHERE username = %s", (STATIC_USER,)).fetchone()
              if STATIC_USER else
-             conn.execute("SELECT id, username, is_admin, radicale_hash FROM users ORDER BY is_admin DESC, created_at LIMIT 1").fetchone())
+             conn.execute("SELECT id, username, is_admin FROM users ORDER BY is_admin DESC, created_at LIMIT 1").fetchone())
     if not u:
         raise HTTPException(401, f"MCP_BEARER_USER '{STATIC_USER}' doesn't exist")
     return dict(u) | {"api_key": True, "api_scope": STATIC_SCOPE, "api_key_id": "env", "actor": f"{u['username']} via the MCP token"}

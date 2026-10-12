@@ -1,5 +1,7 @@
-"""The FastAPI app: startup, middleware, the API routers (routes/, shares, OAuth, MCP, /api/v1), the built
-frontend, and the pass-through to the bundled Radicale."""
+"""The web program: startup, middleware, and the HTTP faces of the components (the app's own API in web/, sign-in
+and OAuth, public links, REST v1, MCP, feeds, Probyte's CalDAV/CardDAV server) plus the built frontend.
+
+    uvicorn app.main:app"""
 import logging
 import os
 import threading
@@ -13,21 +15,16 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.dav import devices as builtin_dav
-from app.adapters import contacts
-from app import extensions
-from app.adapters import feeds
-from app.files import catalog as files
-from app.adapters import live, mcp_server
-from app.identity import oauth
-from app import office
-from app.adapters import rest_v1
-from app.sharing import links as shares
-from app.data import store, templates
-from app.web import admin
-from app.identity import routes as auth_routes
-from app.web import records, tables, views, workspace
+from app import wiring  # noqa: F401  (connects the components: before anything writes)
+from app import extensions, office
+from app.adapters import contacts, feeds, live, mcp_server, rest_v1
 from app.core.db import connection, init_db
+from app.data import store, templates
+from app.dav import server as dav_server
+from app.files import catalog as files
+from app.identity import oauth, routes as auth_routes
+from app.sharing import links as shares
+from app.web import admin, records, tables, views, workspace
 
 logging.basicConfig(level=logging.INFO)
 
@@ -37,7 +34,6 @@ async def lifespan(app: FastAPI):
     init_db()
     with connection() as conn:
         store.ensure_system_fields(conn)
-    builtin_dav.sync_on_startup()
     stop = threading.Event()
     if os.environ.get("RUN_WORKER", "").lower() == "embedded":  # single-container setups: run the worker in here too
         from app import worker
@@ -128,18 +124,39 @@ app.include_router(mcp_server.router)
 app.mount("/api/v1", rest_v1.v1)
 
 
-# ======================================================================== frontend + CalDAV pass-through
+# ======================================================================== CalDAV / CardDAV, and the frontend
 #
-# The web app only uses "/", "/assets/*" and "/api/*" (navigation is in the #fragment). Everything
-# else, and every non-GET method such as PROPFIND / REPORT, goes to the bundled Radicale, so a
-# phone can be pointed at the same address as the web app.
+# Phones find the calendar server at /.well-known/caldav (and carddav) and use /dav/… Devices set up when calendars
+# lived in the bundled Radicale use the root (/<username>/…), so DAV methods anywhere else reach it too. The web app
+# only uses "/", "/assets/*" and "/api/*" (navigation is in the #fragment).
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
-@app.api_route("/{path:path}", methods=builtin_dav.DAV_METHODS, include_in_schema=False)
+async def _dav(request: Request, prefix: str, path: str):
+    body = await request.body()
+    status, headers, data = await run_in_threadpool(
+        dav_server.handle, request.method, prefix, path, {k.lower(): v for k, v in request.headers.items()}, body,
+        request.client.host if request.client else "")
+    return RawResponse(content=data, status_code=status, headers=headers)
+
+
+@app.api_route("/.well-known/{service}", methods=dav_server.METHODS, include_in_schema=False)
+async def well_known(service: str, request: Request):
+    if service not in ("caldav", "carddav"):
+        raise HTTPException(404)
+    return RawResponse(status_code=301, headers={"Location": "/dav/"})
+
+
+@app.api_route("/dav", methods=dav_server.METHODS, include_in_schema=False)
+@app.api_route("/dav/{path:path}", methods=dav_server.METHODS, include_in_schema=False)
+async def dav(request: Request, path: str = ""):
+    return await _dav(request, "/dav", path)
+
+
+@app.api_route("/{path:path}", methods=dav_server.METHODS, include_in_schema=False)
 async def frontend_or_dav(path: str, request: Request):
     if path.startswith("api/"):
         raise HTTPException(404)
@@ -149,16 +166,6 @@ async def frontend_or_dav(path: str, request: Request):
             return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
         if f.is_file() and f.is_relative_to(STATIC_DIR):  # sw.js and other files from frontend/public
             return FileResponse(f, headers={"Cache-Control": "no-cache"} if path == "sw.js" else None)
-    if not builtin_dav.enabled():
-        if not STATIC_DIR.exists() or request.method not in ("GET", "HEAD"):
-            raise HTTPException(404)
-        return FileResponse(STATIC_DIR / "index.html")
-    body = await request.body()
-    status, headers, data = await run_in_threadpool(
-        builtin_dav.forward, request.method, path, request.url.query, dict(request.headers), body,
-        request.client.host if request.client else "", request.url.scheme,
-    )
-    resp = RawResponse(content=data, status_code=status)
-    for k, v in headers:
-        resp.headers.append(k, v)
-    return resp
+        if "authorization" not in request.headers and "text/html" in request.headers.get("accept", ""):
+            return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})  # a browser, not a device
+    return await _dav(request, "", path)

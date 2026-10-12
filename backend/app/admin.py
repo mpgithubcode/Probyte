@@ -4,7 +4,7 @@
     docker compose exec app python -m app.admin create-user <username> [--admin]   (when sign-up is off)
     docker compose exec worker python -m app.admin backup
     docker compose exec worker python -m app.admin backups
-    docker compose run --rm worker python -m app.admin restore <name>     (with app, worker and radicale stopped)
+    docker compose run --rm worker python -m app.admin restore <name>     (with the app and worker stopped)
 
 Login passwords are stored only as scrypt hashes, so a forgotten one can't be looked up; this sets a new random
 password, prints it once, and signs that user out everywhere. Change it afterwards in Settings → Account.
@@ -14,8 +14,10 @@ import sys
 
 from fastapi import HTTPException
 
-from app.identity import auth
+from app import wiring  # noqa: F401  (connects the components: before anything writes)
 from app.core.db import connection, init_db
+from app.dav import devices
+from app.identity import auth
 
 
 def reset_password(username: str) -> str:
@@ -30,7 +32,6 @@ def reset_password(username: str) -> str:
 
 
 def create_user(username: str, admin: bool, password: str | None = None) -> str:
-    from app.dav import devices as builtin_dav
     password = password or secrets.token_urlsafe(12)
     try:
         username = auth.validate_credentials(username, password)
@@ -41,8 +42,7 @@ def create_user(username: str, admin: bool, password: str | None = None) -> str:
             raise SystemExit(f"{username} already exists")
         u = conn.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (%s,%s,%s) RETURNING id",
                          (username, auth.hash_password(password), admin)).fetchone()
-        if builtin_dav.enabled():
-            builtin_dav.provision(conn, u["id"])
+        devices.provision(conn, u["id"])
     return password
 
 
@@ -66,7 +66,7 @@ def main(argv: list[str]) -> None:
             print(f"{b['name']}  {b['total'] / 1e6:8.1f} MB  {b['counts']['records']} records")
     elif cmd == "restore" and len(argv) in (2, 3):
         if "--yes" not in argv:
-            print(f"This replaces ALL current data with the backup {argv[1]}. Stop the app, worker and radicale first.")
+            print(f"This replaces ALL current data with the backup {argv[1]}. Stop the app and worker first.")
             if input("Type RESTORE to continue: ").strip() != "RESTORE":
                 raise SystemExit("Cancelled")
         backup.restore(argv[1])

@@ -14,6 +14,7 @@ import re
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
+from app.core import events
 from app.data import audit, store
 from app.formats import vcard
 from app.core.db import connection
@@ -149,13 +150,11 @@ def import_texts(table_id: str, texts: list[tuple[str, str]], existing: str, use
             data = store.apply_defaults([f for f in fields if not f.get("system_key")], data, user["id"])
             r = store.insert_record(conn, table_id, data, user_id=user["id"], caldav_uid=uid, caldav_raw=raw, sync_status="dirty")
             audit.note(conn, table_id, r["id"], "created")
-            store._changed(conn, table, "record.created", r["id"])  # webhooks, and a push to the address book
+            events.record_changed(conn, table, "record.created", r["id"])
             by_uid[uid] = r
             for k in _key(vals):
                 by_key.setdefault(k, r)
             created += 1
-        if created or updated:
-            store.schedule_sync(table_id, 1, conn=conn)
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:20], "error_count": len(errors)}
 
 

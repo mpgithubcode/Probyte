@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.identity import auth
-from app.dav import devices as builtin_dav
+from app.dav import devices
 from app.core import ratelimit
 from app.data import store
 from app.core.db import Jsonb, connection
@@ -46,8 +46,7 @@ def register(body: Credentials, request: Request, response: Response):
             # Data created before multi-user support belongs to the first account.
             for t in ("caldav_accounts", "tables", "combos"):
                 conn.execute(f"UPDATE {t} SET user_id = %s WHERE user_id IS NULL", (user["id"],))
-        if builtin_dav.enabled():
-            builtin_dav.provision(conn, user["id"])
+        devices.provision(conn, user["id"])
         auth.start_session(conn, user["id"], request, response)
     return auth.public_user(user)
 
@@ -110,7 +109,7 @@ def change_password(body: PasswordChange, request: Request, response: Response, 
     return {"ok": True}
 
 
-# ======================================================================== built-in CalDAV (bundled Radicale)
+# ======================================================================== device login for calendars and contacts (dav/)
 
 def _own_address(request: Request) -> str:
     from app.identity.oauth import public_base
@@ -120,7 +119,7 @@ def _own_address(request: Request) -> str:
 @router.get("/api/dav")
 def dav_info(request: Request, user=User):
     with connection() as conn:
-        return builtin_dav.info(conn, user["id"], _own_address(request))
+        return devices.info(conn, user["id"], _own_address(request))
 
 
 @router.post("/api/dav/check")
@@ -130,17 +129,15 @@ def dav_check(request: Request, user=User):
         acc = conn.execute("SELECT username, password FROM caldav_accounts WHERE user_id = %s AND is_builtin", (user["id"],)).fetchone()
     if not acc:
         raise HTTPException(400, "Enable your CalDAV login first")
-    return builtin_dav.check_public(acc["username"], unseal(acc["password"]), _own_address(request))
+    return devices.check_public(acc["username"], unseal(acc["password"]), _own_address(request))
 
 
 @router.post("/api/dav/reset")
 def dav_reset(request: Request, user=User):
-    """Create the user's Radicale login, or replace its device password."""
-    if not builtin_dav.enabled():
-        raise HTTPException(400, "The built-in CalDAV server is not configured")
+    """Replace the user's device password (devices set up with the old one stop syncing)."""
     with connection() as conn:
-        builtin_dav.provision(conn, user["id"])
-        return builtin_dav.info(conn, user["id"], _own_address(request))
+        devices.provision(conn, user["id"])
+        return devices.info(conn, user["id"], _own_address(request))
 
 
 # ======================================================================== API keys

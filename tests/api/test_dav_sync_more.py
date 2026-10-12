@@ -1,9 +1,9 @@
-"""More two-way sync cases: deletions both ways, conflicts, items made on phones, kind changes, shared calendars."""
+"""More calendar cases: deletions both ways, conflicts, items made on phones, kind changes, other servers."""
 import uuid
 
 import requests
 
-from conftest import API, RADICALE
+from conftest import API, BASE
 
 
 def ics(uid, body):
@@ -11,7 +11,7 @@ def ics(uid, body):
 
 
 def put(user, t, uid, body):
-    path = t["calendar_url"].replace(RADICALE, "") + f"{uid}.ics"
+    path = t["calendar_url"] + f"{uid}.ics"
     user.put_item(path, ics(uid, body))
     return path
 
@@ -31,7 +31,7 @@ def test_deletions_both_ways(user):
     bodies = " ".join(b for _, b in user.server_items(t["calendar_url"]))
     assert "Delete me here" not in bodies and "Delete me on the phone" in bodies
     href, _ = user.server_item(t["calendar_url"], "Delete me on the phone")
-    assert requests.delete(RADICALE + href, auth=user.dav_auth()).status_code in (200, 204)
+    assert requests.delete(BASE + href, auth=user.dav_auth()).status_code in (200, 204)
     user.sync(t["id"])
     assert user.records(t["id"]) == []
 
@@ -98,39 +98,44 @@ def test_changing_type_turns_a_task_into_an_event(user):
     assert len(items) == 1 and "BEGIN:VEVENT" in items[0] and "BEGIN:VTODO" not in items[0]
 
 
-def test_two_tables_on_one_calendar_and_linking_an_existing_one(user):
-    t = user.table("tasks", "First")
-    F = user.fields(t["id"])
-    user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Shared task"}})
-    user.sync(t["id"])
-    second = user.j("POST", "/tables", json={"name": "Second", "kind": "tasks", "base_id": user.base_id,
-                                             "account_id": user.builtin["id"], "calendar_url": t["calendar_url"]})
-    user.sync(second["id"])
-    F2 = user.fields(second["id"])
-    assert [r["data"][F2["summary"]] for r in user.records(second["id"])] == ["Shared task"]
-    res = user.j("DELETE", f"/tables/{second['id']}")
-    assert "kept" in str(res).lower() or res.get("server") != "deleted the calendar"
-    assert requests.request("PROPFIND", t["calendar_url"], auth=user.dav_auth(), headers={"Depth": "0"}).status_code == 207
-    cals = user.j("GET", f"/accounts/{user.builtin['id']}/calendars")
-    assert any(c["url"].rstrip("/") == t["calendar_url"].rstrip("/") for c in cals)
+def test_each_table_is_its_own_calendar_on_the_phone(user):
+    first, second = user.table("tasks", "First"), user.table("contacts", "Second")
+    listing = requests.request("PROPFIND", f"{BASE}/dav/{user.dav_auth()[0]}/", auth=user.dav_auth(), headers={"Depth": "1"}).text
+    assert "<d:displayname>First</d:displayname>" in listing and "<d:displayname>Second</d:displayname>" in listing
+    assert "VTODO" in listing and "addressbook" in listing
+    assert user.j("GET", f"/accounts/{user.builtin['id']}/calendars") == []   # nothing to link: a new table is a new calendar
+    user.j("DELETE", f"/tables/{first['id']}")                                  # in the trash: gone from the phone
+    assert requests.request("PROPFIND", first["calendar_url"], auth=user.dav_auth(), headers={"Depth": "0"}).status_code == 404
+    assert requests.request("PROPFIND", second["calendar_url"], auth=user.dav_auth(), headers={"Depth": "0"}).status_code == 207
+
+
+def external(user, kind="events", name="External"):
+    """A table synced with another CalDAV server: here Probyte's own, through an account added by hand, so the
+    sync talks to a real server (and the "phone" side is a table of its own)."""
+    login, pw = user.dav_auth()
+    acct = user.j("POST", "/accounts", json={"name": "Other server", "url": f"{BASE}/dav/", "username": login, "password": pw})
+    t = user.j("POST", "/tables", json={"name": name, "kind": kind, "base_id": user.base_id, "account_id": acct["id"],
+                                        "new_calendar_name": name})
+    return acct, t
 
 
 def test_external_account_sync(user):
-    """An account added by hand (here: the test Radicale with this user's login) syncs like the built-in one."""
-    name, pw = user.dav_auth()
-    acct = user.j("POST", "/accounts", json={"name": "Other server", "url": f"{RADICALE}/", "username": name, "password": pw})
-    t = user.j("POST", "/tables", json={"name": "External", "kind": "events", "base_id": user.base_id, "account_id": acct["id"],
-                                        "new_calendar_name": "External"})
+    acct, t = external(user)
     F = user.fields(t["id"])
     user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Remote meeting", F["dtstart"]: "2026-10-12T09:00:00Z",
                                                                 F["dtend"]: "2026-10-12T10:00:00Z"}})
     user.sync(t["id"])
     assert "SUMMARY:Remote meeting" in user.server_item(t["calendar_url"], "Remote meeting")[1]
+    # changed on the other server: pulled in by the next sync, which opening the table starts when it's a while ago
+    href, body = user.server_item(t["calendar_url"], "Remote meeting")
+    user.put_item(href, body.replace("SUMMARY:Remote meeting", "SUMMARY:Moved meeting"))
+    user.sync(t["id"])
+    assert [r["data"][F["summary"]] for r in user.records(t["id"])] == ["Moved meeting"]
     assert user.delete(API + f"/accounts/{acct['id']}").status_code in (200, 400)   # in use: refused, or tables keep working
 
 
 def test_sync_status_is_reported(user):
-    t = user.table("tasks", "Status")
+    _, t = external(user, "tasks", "Status")
     user.sync(t["id"])
     info = user.j("GET", f"/tables/{t['id']}")["table"]
     assert info["last_synced_at"] and not info.get("last_sync_error")

@@ -1,5 +1,9 @@
-"""Data access helpers shared by the API routes and the CalDAV sync engine."""
-import os
+"""The record store: bases, tables, fields, views and records, and the rules every write follows (field types,
+required / unique values, defaults, links kept two-way, what tasks and events do when their status changes).
+
+Every record write ends in events.record_changed (app/core/events.py); the store doesn't know who listens.
+Its public interface is this module; the web API, REST v1, MCP, public links, imports, the DAV server and the sync
+all write through it."""
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -8,15 +12,12 @@ from app.calc import formula as F
 from app.identity.auth import api_bases
 from app.calc.compute import COMPUTED_TYPES, FIELD_TYPES, FILTER_OPS, Engine
 from app.core.db import Jsonb
-from app.data import audit, fieldformats
-from app.core import jobs
-from app.data import recur
-from app.adapters import webhooks
+from app.core import events
+from app.data import audit, fieldformats, recur
 from app.formats.ical import DEFAULT_TZ, LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, component_kind, ical_to_values, is_date_only, new_uid
 
 SELECT_TYPES = ("single_select", "multi_select")
-DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables synced with a CalDAV calendar / CardDAV address book
-AUTO_PUSH_DELAY = float(os.environ.get("AUTO_PUSH_DELAY", "2"))  # seconds after an edit before it is pushed; <0 disables
+DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables that are a calendar / address book (CalDAV, CardDAV)
 # A record's primary (title) field must hold plain text.
 PRIMARY_TYPES = {"text", "long_text", "number", "url", "email", "phone", "single_select", "date", "autonumber", "formula"}
 
@@ -622,23 +623,17 @@ def _remove_link(conn, rid, field_id, target, table_id=None):
 
 
 def is_synced(table) -> bool:
-    return table["kind"] in DAV_KINDS and bool(table["account_id"]) and bool(table["calendar_url"])
+    """Linked to a collection on another DAV server (and synced with it)."""
+    return table["kind"] in DAV_KINDS and bool(table.get("account_id")) and bool(table.get("calendar_url"))
 
 
-def schedule_sync(table_id, delay: float | None = None, conn=None):
-    """Sync a table soon (debounced), e.g. to push local edits shortly after they happen. With `conn`, the job
-    is queued in that transaction, so it only exists once the edit is committed."""
-    delay = AUTO_PUSH_DELAY if delay is None else delay
-    if delay < 0:
-        return
-    jobs.enqueue(conn, "sync_table", {"table_id": str(table_id)}, key=f"sync:{table_id}", delay=delay, max_attempts=3)
+def is_served(table) -> bool:
+    """On Probyte's own CalDAV/CardDAV server (phones read and write it directly)."""
+    return table["kind"] in DAV_KINDS and bool(table.get("dav_slug"))
 
 
-def _changed(conn, table, event, record_id):
-    """Every local record write ends here: tell webhooks, and push the change to the DAV server."""
-    webhooks.emit(conn, table["id"], event, record_id)
-    if is_synced(table):
-        schedule_sync(table["id"], conn=conn)
+def _changed(conn, table, event, record_id, source="app"):
+    events.record_changed(conn, table, event, record_id, source)
 
 
 def insert_record(conn, table_id, data, *, user_id=None, caldav_uid=None, caldav_href=None, caldav_raw=None, sync_status="synced",
@@ -783,7 +778,7 @@ def advance_recurring(table, keys, old, data, patch):
     return history
 
 
-def delete_record(conn, record_id, user_id=None):
+def delete_record(conn, record_id, user_id=None, source="app"):
     r = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted", (record_id,)).fetchone() or not_found("Record not found")
     table = get_table(conn, r["table_id"], user_id)
     # a copy goes to the trash (30 days), so the record can be restored
@@ -797,12 +792,12 @@ def delete_record(conn, record_id, user_id=None):
         fid = str(f["id"])
         for row in conn.execute("SELECT id FROM records WHERE data -> %s @> %s", (fid, Jsonb([str(record_id)]))).fetchall():
             _remove_link(conn, row["id"], fid, record_id)
-    if r["caldav_href"]:
+    if r["caldav_href"] and not is_served(table):  # mirrors something elsewhere: kept until it's deleted there too
         conn.execute("UPDATE records SET deleted = true, updated_at = now() WHERE id = %s", (record_id,))
     else:
         conn.execute("DELETE FROM records WHERE id = %s", (record_id,))
     audit.note(conn, r["table_id"], record_id, "deleted")
-    _changed(conn, table, "record.deleted", record_id)
+    _changed(conn, table, "record.deleted", record_id, source)
     return table
 
 
@@ -812,7 +807,7 @@ def restore_record(conn, record_id, user_id=None):
     table = get_table(conn, t["table_id"], user_id)
     fields = get_fields(conn, t["table_id"])
     live = conn.execute("SELECT * FROM records WHERE id = %s", (record_id,)).fetchone()
-    if live:  # deleted here but not yet on the server: just un-delete it
+    if live:  # deleted here but not yet on the other server: just un-delete it
         conn.execute("UPDATE records SET deleted = false, sync_status = %s, updated_at = now() WHERE id = %s",
                      ("dirty" if table["kind"] in DAV_KINDS else "synced", record_id))
     else:
