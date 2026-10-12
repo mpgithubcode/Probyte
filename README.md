@@ -86,7 +86,7 @@ Each user's work is organised as **bases → tables**. A base groups related tab
    **Contacts** tables work the same way over **CardDAV**: a table bound to an address book syncs vCards both ways (name, company, job title, email, phone, address, birthday, website, notes, groups). The same accounts are used; for providers with a separate contacts address (iCloud: `https://contacts.icloud.com/`), set the optional *Contacts (CardDAV) URL* on the account.
 2. **Combined databases.** You can show several databases together as one: for example, tasks and events on a single calendar. Fields are lined up through a mapping (Title ↔ Title, Due ↔ End, Tags ↔ Tags…), and edits made in the combined view are written back to the source database.
 
-3. **A built-in CalDAV server for phones.** Probyte ships with Radicale and creates a login on it for every user. A user adds that login on their iPhone, and their Probyte calendars show up in the Calendar app (events) and the Reminders app (tasks). Added as a CardDAV account too, their Contacts tables show up in the Contacts app.
+3. **Probyte is a CalDAV / CardDAV server for phones.** Every user has a device login. Added on an iPhone, their Probyte calendars show up in the Calendar app (events) and the Reminders app (tasks); added as a CardDAV account too, their Contacts tables show up in the Contacts app. There's nothing in between to sync: a change made on the phone is in Probyte the moment the phone sends it, and a change made in Probyte is on the phone the next time it refreshes (it asks with a sync-token, so it gets only what changed). Lists and calendars made on the phone become tables.
 
 Every database and combined database can have any number of Notion-style views, each with its own filters, sort, hidden fields and grouping:
 
@@ -346,7 +346,7 @@ Completed At syncs with the standard iCalendar `COMPLETED` property, so phones s
 curl -fsSL https://raw.githubusercontent.com/mpgithubcode/Probyte/main/deploy/install.sh | sh
 ```
 
-**Or by hand:** put [`deploy/docker-compose.yml`](deploy/docker-compose.yml) in an empty folder and run `docker compose up -d`. That's three containers: **probyte** (the web app, background worker and calendar / contacts server together), **db** (PostgreSQL; its password is generated on the first start) and **office** (Word / PowerPoint previews; delete it from the file if you don't need them). Everything is kept in two volumes, `probyte-data` and `pgdata`.
+**Or by hand:** put [`deploy/docker-compose.yml`](deploy/docker-compose.yml) in an empty folder and run `docker compose up -d`. That's three containers: **probyte** (the web app, which is also the calendar / contacts server, and the background worker), **db** (PostgreSQL; its password is generated on the first start) and **office** (Word / PowerPoint previews; delete it from the file if you don't need them). Everything is kept in two volumes, `probyte-data` and `pgdata`.
 
 Optional settings go in a `.env` file next to it (see [`deploy/.env.example`](deploy/.env.example)): the port, your time zone, your public address (`PUBLIC_URL`), sign-ups, backups. Upgrade with `docker compose pull && docker compose up -d` (database changes are applied on start); pin a version with `PROBYTE_VERSION=0.2.0`. Admin commands run inside the container, e.g. `docker compose exec probyte python -m app.admin reset-password alex`.
 
@@ -357,42 +357,41 @@ cp .env.example .env    # then edit it
 docker compose up -d --build
 ```
 
-The source setup runs the same parts as separate containers (easier to develop and debug): `app` (web app and API), `worker` (calendar and file syncs, webhook deliveries, previews and cleanup, from a job queue in Postgres), `db` (Postgres), `radicale` (the bundled CalDAV/CardDAV server) and `office` (converts Word / PowerPoint files to PDF for previews; internal only). Database migrations run automatically on start.
+The source setup runs the same parts as separate containers (easier to develop and debug): `app` (web app, API and the CalDAV/CardDAV server), `worker` (syncs with other calendar and file servers, webhook deliveries, previews, backups and cleanup, from a job queue in Postgres), `db` (Postgres) and `office` (converts Word / PowerPoint files to PDF for previews; internal only). Database migrations run automatically on start.
 
 Open http://localhost:8080 and create an account. The first account becomes the admin, and any data created before multi-user support belongs to it. Each user only sees their own databases, combined databases and CalDAV accounts.
 
-Every new user automatically gets a **Probyte CalDAV** account, which is their login on the bundled Radicale. To sync with a phone:
+Every user has a **Probyte** account: their device login for Probyte's own calendar server. To use it on a phone:
 
-1. In Probyte, click **+ (Databases)**, choose **Tasks & events** (or Tasks / Events), keep the account set to **Probyte CalDAV**, and create a new calendar.
+1. In Probyte, click **+ (Databases)** and choose **Tasks & events** (or Tasks / Events) with the account set to **Probyte**. The table is the calendar.
 2. Open **your name (bottom left) → Sync with your phone**. It shows the server address, username and a generated device password.
 3. On the iPhone go to **Settings → Apps → Calendar → Calendar Accounts → Add Account → Other → Add CalDAV Account**, enter those three values, and turn on Calendars and Reminders.
 
-For contacts, create a table with **New table → Contacts** on the **Probyte CalDAV** account, then on the iPhone go to **Settings → Apps → Contacts → Contacts Accounts → Add Account → Other → Add CardDAV Account** and enter the same three values. (Android: DAVx⁵ syncs calendars, tasks and contacts with one login.)
+For contacts, create a table with **New table → Contacts** on the **Probyte** account, then on the iPhone go to **Settings → Apps → Contacts → Contacts Accounts → Add Account → Other → Add CardDAV Account** and enter the same three values. (Android: DAVx⁵ syncs calendars, tasks and contacts with one login.)
 
 The device password is separate from the Probyte login password, and you can regenerate it at any time from the same screen.
 
 ### Reverse proxy
 
-**One address is enough.** Probyte passes calendar requests (`PROPFIND`, `REPORT`, `/.well-known/caldav`, `/<username>/…`) through to the bundled Radicale. Point your proxy at Probyte (`app:8000`, published on `PROBYTE_PORT`) and phones can use that same address. Set `RADICALE_PUBLIC_URL` to it so the Settings screen shows the right server.
+**One address is enough.** Probyte answers calendar requests itself: phones find it at `/.well-known/caldav` and `/.well-known/carddav`, and use `/dav/…` (devices set up before 0.9 use `/<username>/…`, which keeps working). Point your proxy at Probyte (`app:8000`, published on `PROBYTE_PORT`) and phones use that same address.
 
-- **Turn off single sign-on for this address** (Pangolin "Platform SSO", Authelia, Authentik, Cloudflare Access…). Phones can only send a username and password, so an SSO login wall blocks them before they reach Probyte. Probyte and Radicale each do their own login.
+- **Turn off single sign-on for `/.well-known/` and `/dav/`** (Pangolin "Platform SSO", Authelia, Authentik, Cloudflare Access…), and for the root paths if devices set up before 0.9 use them. Phones can only send a username and password, so an SSO login wall blocks them before they reach Probyte. Probyte does its own login there.
 - The proxy must pass `X-Forwarded-Proto`. Probyte then marks its session cookie `Secure` on HTTPS.
 - **AI assistants and automation tools** also need to reach `/mcp`, `/oauth/…`, `/.well-known/oauth-…` and `/api/v1/…` without an SSO wall (they bring their own API key or OAuth token). Don't buffer `/mcp/sse` if you use the older SSE transport. Set `PUBLIC_URL` if the address Probyte sees isn't the public one.
 - **Settings → Sync with your phone → Test connection** checks the public address the same way a phone does, and explains what's wrong if it fails.
-- You can still give Radicale its own hostname (`radicale:5232`, published on `RADICALE_PORT`) if you prefer. Otherwise you can stop publishing that port.
 
 ### Configuration (env vars / `.env`)
 
 | Variable            | Default | Meaning |
 |---------------------|---------|---------|
 | `PROBYTE_PORT`      | `8080`  | Host port for the web UI |
-| `RADICALE_PORT`     | `5232`  | Host port for the bundled CalDAV server |
-| `RADICALE_PUBLIC_URL` | –     | Public URL of the bundled CalDAV server, shown to users for phone setup |
 | `ALLOW_SIGNUP`      | `true`  | Let anyone who can reach the site create an account. The first account can always be created. |
 | `POSTGRES_PASSWORD` | `probyte` | Database password |
 | `DEFAULT_TZ`        | `UTC`   | Timezone used for floating CalDAV times and all-day dates. Set this to your own timezone, e.g. `Europe/Berlin`. |
-| `SYNC_INTERVAL`     | `300`   | Seconds between background syncs of every CalDAV and files database (`0` = off) |
-| `AUTO_PUSH_DELAY`   | `2`     | Seconds after a local edit before it is pushed to the server (`-1` = only push on sync) |
+| `SYNC_INTERVAL`     | `120`   | Seconds between background syncs of tables linked to another CalDAV/CardDAV server, and of files tables (`0` = off). Tables on Probyte's own server need none. |
+| `SYNC_ON_OPEN_AFTER` | `20`   | Opening a table linked to another server syncs it when its last sync is older than this (seconds) |
+| `AUTO_PUSH_DELAY`   | `2`     | Seconds after a local edit before it is pushed to another server (`-1` = only push on sync) |
+| `RADICALE_DATA_DIR` | –       | Only when upgrading from 0.8 or earlier: where the bundled Radicale kept its calendars, if not in the usual place (see Upgrading to 0.9) |
 | `WORKER_THREADS`    | `4`     | Jobs the worker runs at once |
 | `RUN_WORKER`        | –       | `embedded` runs the worker inside the web app (single-container setups without the `worker` service) |
 | `FILES_MAX_UPLOAD_MB` | `2048` | Largest file that can be uploaded to a files table (S3 / WebDAV) |
@@ -411,13 +410,32 @@ The device password is separate from the Probyte login password, and you can reg
 | `BACKUP_KEEP`       | `14`    | How many backups to keep |
 | `PROBYTE_SECRET_KEY` | –      | Key that encrypts stored account passwords; empty = a key file made on the `keys` volume on first start |
 
+### Upgrading to 0.9
+
+Up to 0.8, calendars and contacts for phones lived in a bundled Radicale that Probyte synced with every few minutes.
+From 0.9 Probyte is the calendar server itself, and the move happens on its own at the first start:
+
+- Tables on the built-in account become calendars and address books of Probyte's own server, with the same addresses,
+  item names and device passwords, so **phones keep working without being set up again**. They download every item
+  once (the server's tags changed), then carry on.
+- What phones changed in Radicale since its last sync is brought in from Radicale's files: edits, new items, deletions
+  (to the trash), and calendars or lists made on a phone (as new tables). An edit made in Probyte since that sync wins,
+  as it did before. Docker Hub setup: nothing to do (the files are in the `probyte-data` volume). From source: the
+  worker reads the `radicale-data` volume, still listed in docker-compose.yml for this.
+- If your proxy sent phones to Radicale's own port or hostname (5232), point it at Probyte instead (see Reverse proxy).
+  The `radicale` service, `RADICALE_PORT` and `RADICALE_PUBLIC_URL` are gone.
+
 ## How sync works
 
-- **Incremental:** syncs run in the worker. When the calendar's change tag (CTag / sync-token) is unchanged, nothing is downloaded; otherwise only the items whose ETag changed are fetched (multiget). A table syncs every `SYNC_INTERVAL`, a couple of seconds after a local edit, and on **Sync**.
+**Tables on Probyte's own server** (the Probyte account) don't sync: Probyte *is* their calendar server. Phones and apps read and write the records themselves, over CalDAV and CardDAV. Each record keeps the item as a phone last wrote it, so alarms, attendees and other properties Probyte doesn't show survive edits made here. A phone that asks what changed gets only that (sync-token), and a phone that deletes an item sends its record to the trash. Moving to Probyte's own server from the Radicale bundled with 0.8 and earlier happens on its own (see Upgrading to 0.9).
+
+**Tables linked to another server** (Nextcloud, iCloud, Fastmail…) sync with it:
+
+- **Incremental:** syncs run in the worker. When the calendar's change tag (CTag / sync-token) is unchanged, nothing is downloaded; otherwise only what changed is asked for (sync-collection when the server keeps sync-tokens, otherwise the items whose ETag changed) and fetched (multiget). A table syncs every `SYNC_INTERVAL`, when it's opened (if its last sync is older than `SYNC_ON_OPEN_AFTER`), a couple of seconds after a local edit, and on **Sync now**.
 - **Pull:** every remote object is compared with the copy stored at the last sync. New objects are imported, changed ones update the record, and records whose object was deleted on the server are removed.
 - **Push:** records edited in Probyte (marked with an orange dot in the grid) are written back. Unknown iCalendar properties such as alarms, recurrence rules and attendees are kept, because Probyte only rewrites the properties it manages.
 - **Conflicts:** if a record was edited locally since the last sync, the local edit wins. Otherwise the server copy wins.
-- Deleting a record also deletes it on the server. Deleting a *table* also deletes its data on the server: on Probyte's own server the whole calendar / address book is removed (phones lose it too); for other accounts you can tick "also delete its items" (the calendar itself stays). If another table uses the same calendar, the server data is kept.
+- Deleting a record also deletes it on the server. Deleting a *table* leaves the other server's data unless you tick "also delete its items" (the calendar itself stays); if another table uses the same calendar, the server data is kept. (A table on Probyte's own server *is* the calendar: phones stop showing it while it's in the trash.)
 - You can add your own extra fields to a synced table. They are stored only in Probyte. The synced fields (Title, Status, Due, …, marked with a lock in the grid) are **locked**: they can't be renamed, changed or deleted, only hidden in a view.
 - Tasks have a **Completed** checkbox that decides whether the task is done on the server: ticking it sets Status to Completed (and Completed At), unticking sets it back to To Do, and changing Status updates the box. Events have the same column, ticked automatically once the event has ended.
 - **Completed At** is when the task was completed. When another device completes a task, Probyte records the time of that change (some apps, like iOS Reminders, write the reminder's scheduled time into `COMPLETED`).
@@ -446,14 +464,16 @@ For contacts, Probyte manages the preferred (or first) email, phone and address.
 
 In a **tasks & events** database, *Type* chooses the component. *End / Due* is written as `DUE` for tasks and as `DTEND` for events. Changing a record's Type turns the server object from a VTODO into a VEVENT (or back). A record created in the calendar view starts as an Event; anywhere else it starts as a Task.
 
-**iCloud:** iCloud calendars work over CalDAV with an app-specific password (`https://caldav.icloud.com/`), but only for events. Since iOS 13, iCloud Reminders no longer use CalDAV. To get tasks onto an iPhone, use the built-in Probyte CalDAV account, or another CalDAV server such as Nextcloud or Fastmail.
+**iCloud:** iCloud calendars work over CalDAV with an app-specific password (`https://caldav.icloud.com/`), but only for events. Since iOS 13, iCloud Reminders no longer use CalDAV. To get tasks onto an iPhone, use the Probyte account (Probyte's own server), or another CalDAV server such as Nextcloud or Fastmail.
 
 ## How it stays fast
 
 - **Computed values are cached.** Formulas, lookups and rollups are calculated when a table is read, then kept in memory against a per-table version that database triggers move on every change. When only some records changed, just those are read and recalculated. Writing a record calculates only that record.
 - **Live updates instead of reloading.** The database announces every change (`NOTIFY`); the web app relays it to open pages over `/api/events`, and pages fetch only the changed records (`/api/tables/{id}/changes`). Changes from phones, the API, assistants and other tabs appear within a second or two. Tables you've opened are kept in memory, so switching back is instant.
 - **Small downloads.** API responses are gzipped (a 50,000-row table is about 3 MB), and each view and dialog loads only when first used.
-- **Background work is queued.** Sync, webhooks and cleanup are jobs in Postgres run by the worker: they survive restarts, retry with backoff, and never slow down a request.
+- **Phones talk to the data directly.** Probyte is the calendar server, so there's no sync between it and the phone: a change made on the phone is a record write, and a phone asking "anything new?" costs one indexed lookup and gets only what changed (CTag and sync-token from the same row versions the web app uses). Device logins are checked once and remembered for a few minutes, so a sync doesn't pay for a password hash on every request.
+- **Other servers are asked for changes only.** Tables linked to Nextcloud, iCloud and the like ask for what changed since the last sync-token (when the server keeps them), sync when they're opened, and push an edit two seconds after it's made.
+- **Background work is queued.** Syncs with other servers, webhooks and cleanup are jobs in Postgres run by the worker: they survive restarts, retry with backoff, and never slow down a request.
 
 Rough timings on a small server (`scripts/test.sh bench`):
 
@@ -489,13 +509,13 @@ scripts/test.sh screens    # refresh the README's screenshots and GIFs (docs/scr
 KEEP_STACK=1 scripts/test.sh ...   # leave the test stack running afterwards to inspect it
 ```
 
-Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale, plus throwaway S3 and WebDAV servers from `tests/docker-compose.storage.yml`), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
+Tests run against a separate copy of the stack (Compose project `probyte-test`, port 18080, its own database, plus throwaway S3 and WebDAV servers and a stand-in Document Server from `tests/docker-compose.storage.yml`), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
 
-What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); files tables on S3 and WebDAV (uploads, previews, renames, outside changes, the trash); Blueprint takeoff (a made-up drawing set: sheets, scales, legends, finds by label and symbol, review, measuring, exports); ONLYOFFICE editing (against a stand-in Document Server; `ONLYOFFICE_TEST_URL` runs `tests/office` against a real one); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
+What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; the CalDAV/CardDAV server as phones use it (discovery, sync-tokens, preconditions, calendars made on a device, the old Radicale paths) and two-way sync with other servers (phones' items, conflicts, deletions, repeats, time zones); files tables on S3 and WebDAV (uploads, previews, renames, outside changes, the trash); Blueprint takeoff (a made-up drawing set: sheets, scales, legends, finds by label and symbol, review, measuring, exports); ONLYOFFICE editing (against a stand-in Document Server; `ONLYOFFICE_TEST_URL` runs `tests/office` against a real one); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
 
 ### Backups
 
-The worker backs up the database, the calendars and contacts, and uploaded files every `BACKUP_INTERVAL` hours into the `backups` volume (one folder per backup, the newest `BACKUP_KEEP` kept). The admin account sees them under **Settings → Backups**, with **Back up now** and a **Download** for each. Keep copies somewhere else too: download one now and then, or replace the `backups` volume in docker-compose.yml with a folder on another disk (`- /mnt/usb/probyte-backups:/backups`).
+The worker backs up the database (which holds the calendars and contacts) and uploaded files every `BACKUP_INTERVAL` hours into the `backups` volume (one folder per backup, the newest `BACKUP_KEEP` kept). The admin account sees them under **Settings → Backups**, with **Back up now** and a **Download** for each. Keep copies somewhere else too: download one now and then, or replace the `backups` volume in docker-compose.yml with a folder on another disk (`- /mnt/usb/probyte-backups:/backups`).
 
 ```bash
 docker compose exec worker python -m app.admin backup        # one now
@@ -505,7 +525,7 @@ docker compose exec worker python -m app.admin backups       # list them
 To restore one (it replaces everything with the backup):
 
 ```bash
-docker compose stop app worker radicale
+docker compose stop app worker
 docker compose run --rm worker python -m app.admin restore probyte-20261011-030000
 docker compose up -d
 ```
@@ -530,58 +550,44 @@ It prints a new random password and signs that user out everywhere; change it af
 
 ### Database changes
 
-Add a numbered file to `backend/app/migrations/`: `NNNN_name.sql`, or `NNNN_name.py` with a `run(conn)` function. Each runs once, in order, when the app or worker starts.
+Add a numbered file to `backend/app/core/migrations/`: `NNNN_name.sql`, or `NNNN_name.py` with a `run(conn)` function. Each runs once, in order, when the app or worker starts.
 
 ### Layout
 
+The backend is a set of components, each doing one job behind a small interface; a component only uses the ones
+listed above it (`python -m app.tools.layers` checks this). Every record write, from anywhere, ends in one call to
+the change feed (`core/events.py`), and the components that react to changes subscribe to it (`app/wiring.py`):
+the record store doesn't know who listens.
+
 ```
 backend/app/
-  main.py         the FastAPI app: middleware, routers, the built frontend, the pass-through to Radicale
-  routes/         the web app's JSON API: auth, workspace (bases, accounts), tables & fields, records, views & combos
-  live.py         live updates: /api/events (Server-Sent Events) fed by Postgres LISTEN/NOTIFY
-  worker.py       the worker process (python -m app.worker): job threads + periodic schedule
-  jobs.py         durable job queue in Postgres (debounced, retried, SKIP LOCKED)
-  values.py       turning input into stored values: API writes, imports, field type changes
-  auth.py         accounts (scrypt password hashes) and cookie sessions
-  builtin_dav.py  per-user logins on the bundled Radicale (writes its htpasswd file)
-  store.py        tables / fields / records / links / combined-database data access; every record write
-                  ends in store._changed (webhook event + DAV push queued in the same transaction)
-  compute.py      computed fields (formula, lookup, rollup, conditional, system fields), the shared cache,
-                  and change tokens for /changes
-  formula.py      Teable-style formula language: parser, functions, type inference
-  attachments.py  file uploads for attachment fields
-  remote.py       linked tables: reading/writing another Probyte's public link (local fast path or HTTP)
-  recordops.py    record writes for every table kind (local, CalDAV, linked)
-  shares.py       public links (owner management, visitor API, PWA manifest/icons)
-  sync.py      CalDAV/CardDAV two-way sync (incremental: CTag/sync-token + ETags), run as worker jobs
-  dav.py       WebDAV plumbing shared by CalDAV and CardDAV (multistatus, collection state, multiget)
-  apiv1.py     public API core (tables by name, value conversion, queries, batch writes, upsert)
-  rest_v1.py   REST API v1 at /api/v1 (+ OpenAPI and docs)
-  mcp_server.py  MCP server at /mcp (Streamable HTTP + SSE)
-  oauth.py     OAuth 2.1 for MCP clients (discovery, registration, consent page, tokens)
-  webhooks.py  record events → signed POSTs to user URLs
-  ical.py      record <-> VTODO/VEVENT conversion, CalDAV system fields
-  recur.py     repeat rules: validation, next occurrence for repeating tasks
-  carddav.py   CardDAV address book discovery and creation
-  vcard.py     record <-> vCard conversion that keeps unmanaged properties
-  migrate.py   runs migrations/ (numbered .sql / .py files, each once; recorded in schema_migrations)
-  migrations/  0001 baseline schema, data fixes, jobs + sync state, table/row versions, live changes, settings,
-               encrypted secrets, trash, record history, view settings cleanup, icons + calendar feeds, field rules
-  feeds.py     calendar subscription links (/ics/<token>.ics)
-  files.py     files tables: sync with the storage, uploads, renames / moves, previews, streaming, storage connections
-  filestore.py the S3 and WebDAV drivers behind files tables
-  backup.py    backups (pg_dump + calendars + files) and restoring them
-  secretbox.py encryption of stored passwords (key outside the database)
-  ratelimit.py slowing down password guessing
-  audit.py     record history (who changed what)
-  admin.py     command line: reset-password, create-user, backup, backups, restore
-  office.py    ONLYOFFICE editing: sessions, the Document Server's callbacks, the relay at /office-ds/
-  extensions/  optional parts (each a package with its router at /api/x/<id>/ and its own migrations/);
-               takeoff/ is Blueprint takeoff: drawings.py (sheets, scales, legends, words), symbols.py (finding symbols), api.py
+  main.py, worker.py, admin.py   the three programs: the web server, the job worker, the admin command line
+  wiring.py       connects the components: who reacts to a record change (DAV server, sync, webhooks)
+  tools/          command-line tools for the parts that work on their own: formula, items (iCalendar / vCard),
+                  takeoff (sheets, legends, symbol finds of a PDF), layers (the dependency check)
+
+  core/           infrastructure: the database pool, migrations/, the job queue (Postgres, SKIP LOCKED), the change
+                  feed (events.py), who's acting (context.py), encrypted secrets, rate limits, the WebDAV client
+  formats/        pure conversions: iCalendar (ical.py), vCard, repeat rules, field formats (phone numbers…)
+  calc/           the formula language, computed fields and their cache (compute.py), view filters and sorts
+  identity/       accounts, sessions, API keys (auth.py), OAuth 2.1 for AI assistants, the sign-in routes
+  data/           the record store (store.py: bases, tables, fields, records, links, rules, combined databases),
+                  value conversion for imports and the API, record history (audit.py), vCard import/export
+  blobs/          bytes: uploaded attachments, and the S3 / WebDAV drivers of files tables
+  files/          files tables (catalog.py): the storage as records, uploads, moves, previews, streaming
+  dav/            calendars and contacts: Probyte's own CalDAV/CardDAV server (server.py), device logins,
+                  record <-> item mapping (items.py), sync with other servers (sync.py), the one-time Radicale import
+  sharing/        public links (links.py), linked tables from any Probyte (linked.py), record writes for every
+                  table kind (recordops.py)
+  office/         ONLYOFFICE editing: settings, JWT, the Document Server client, sessions, the relay at /office-ds/
+  ops/            backups and restoring them
+  adapters/       other ways in and out: REST v1 (+ apiv1.py, its core), MCP, webhooks, calendar feeds, live updates
+  web/            the web app's own JSON API (workspace, tables & fields, records, views & combos, templates, admin)
+  extensions/     optional parts (each a package with its router at /api/x/<id>/ and its own migrations/);
+                  takeoff/ is Blueprint takeoff: drawings.py (sheets, scales, legends, words), symbols.py (finding symbols), api.py
 deploy/        the Docker Hub setup: docker-compose.yml (no source needed), install.sh (one-line installer), .env.example
-docker/        the image's entrypoint (one-container mode: app + worker + Radicale) and that Radicale's config
+docker/        the image's entrypoint (one-container mode: app + worker)
 .github/workflows/docker.yml   builds and pushes the images to Docker Hub when a release is tagged
-radicale/      bundled Radicale image: htpasswd auth, owner-only rights
 office/        document converter for file previews (LibreOffice without a GUI behind a tiny HTTP service; internal only)
 frontend/src/
   App.tsx                    shell + hash routing
@@ -599,9 +605,8 @@ Records are stored as JSONB keyed by field id. A combined database stores only i
 
 - Signed-in users can't share bases with each other yet; use public links to let others in. There is no admin user-management screen; set `ALLOW_SIGNUP=false` once everyone has signed up.
 - Dragging calendar items is a mouse/trackpad feature. On phones, tap a day to list its items, and open a record to change its date. Board cards have a **Move to** button on touch screens.
-- Password guessing is slowed down: after 5 wrong passwords an account (or a password-protected public link) is locked for 15 minutes, and one address gets 20 tries in that time, across sign-in, the AI-assistant consent page and password changes. Radicale also delays failed phone logins.
+- Password guessing is slowed down: after 5 wrong passwords an account (or a password-protected public link) is locked for 15 minutes, and one address gets 20 tries in that time, across sign-in, phones' device logins, the AI-assistant consent page and password changes.
 - Probyte login passwords are hashed; passwords it must reuse are encrypted (see Backups for the key).
-- Don't change `RADICALE_URL` (the internal address) after creating databases on the built-in account. Their calendar URLs are stored with it.
 
 ## License
 
