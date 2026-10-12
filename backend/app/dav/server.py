@@ -31,7 +31,7 @@ from xml.etree import ElementTree as ET
 import psycopg
 from fastapi import HTTPException
 
-from app.core import events, ratelimit
+from app.core import events, jobs, ratelimit
 from app.core.db import connection, Jsonb
 from app.data import audit, store
 from app.dav import devices
@@ -187,14 +187,20 @@ def _render(conn, table, mapper, r):
 
 
 def on_record_change(conn, table, event, record_id, source):
-    """Change feed: a record of a served table was changed in Probyte; its item is rendered now, so the next
-    request from a phone gets it (with a new ETag and sync-token)."""
+    """Change feed: a record of a served table was changed in Probyte. Its item is rendered by a job a moment later
+    (one job for a burst of changes: an import of thousands of events doesn't render each as it's written), and in
+    any case before a phone is answered (render_pending), so a phone never sees a stale item."""
     if event == "record.deleted" or source == "dav" or not table.get("dav_slug") or table.get("kind") not in store.DAV_KINDS:
         return
-    r = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted", (record_id,)).fetchone()
-    if r and (r["sync_status"] == "dirty" or r["caldav_raw"] is None or r["caldav_href"] is None or r["caldav_uid"] is None):
-        full = table if "data_version" in table else store.get_table(conn, table["id"])
-        _render(conn, full, Mapper(conn, full, store.get_fields(conn, full["id"])), r)
+    jobs.enqueue(conn, "dav_render", {"table_id": str(table["id"])}, key=f"dav_render:{table['id']}", delay=0.5)
+
+
+@jobs.handler("dav_render")
+def _render_job(payload):
+    with connection() as conn:
+        t = conn.execute("SELECT * FROM tables WHERE id = %s", (payload["table_id"],)).fetchone()
+        if t and t["dav_slug"]:
+            render_pending(conn, t)
 
 
 def find_item(conn, t, name, with_body=True, lock=False):

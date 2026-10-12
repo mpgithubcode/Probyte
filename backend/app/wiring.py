@@ -1,7 +1,7 @@
 """Connects the components through the change feed (app/core/events.py). Every program (main, worker, admin)
 imports this first; it's the one place that says who reacts to a record change.
 
-    record write ──► events.record_changed ──┬──► dav.server     the item a phone downloads is rendered now
+    record write ──► events.record_changed ──┬──► dav.server     the item a phone downloads is rendered (debounced)
                                              ├──► dav.sync       a push to the linked CalDAV/CardDAV server is queued
                                              └──► webhooks       a delivery is queued
 

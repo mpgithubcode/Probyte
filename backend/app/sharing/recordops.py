@@ -11,16 +11,17 @@ def _table(conn, table_id, user_id):
     return store.get_table(conn, table_id, user_id)
 
 
-def create(conn, table_id, data: dict, user_id, anonymous=False, link_table_id=None):
-    """Returns (record id, table). link_table_id: for a linked combined database, which of its tables to add to."""
-    t = _table(conn, table_id, user_id)
+def create(conn, table_id, data: dict, user_id, anonymous=False, link_table_id=None, *, table=None, fields=None):
+    """Returns (record id, table). link_table_id: for a linked combined database, which of its tables to add to.
+    table / fields: already loaded by the caller (many records at once: an import, a paste)."""
+    t = table or _table(conn, table_id, user_id)
     if t["kind"] == "remote":
         return remote.create(conn, t, data, link_table_id)["id"], t
     if t["kind"] == "files":
         from app.files import catalog as files
         r, t = files.create(conn, t, data, user_id)
     else:
-        r, t = store.create_record(conn, table_id, data, user_id)
+        r, t = store.create_record(conn, table_id, data, user_id, table=t, fields=fields)
     if anonymous:
         conn.execute("UPDATE records SET created_by = NULL, updated_by = NULL WHERE id = %s", (r["id"],))
     return r["id"], t

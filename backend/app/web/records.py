@@ -194,7 +194,7 @@ def import_rows(table_id: str, body: ImportIn, user=User):
                     raise HTTPException(400, f"{f['name']} can't be filled from a file")
             targets.append(f)
         lookups = values.Lookups(conn)
-        created, errors = 0, []
+        created, errors, live_fields = 0, [], None
         for n, row in enumerate(body.rows, start=1):
             data = {}
             for f, cell in zip(targets, row):
@@ -205,9 +205,11 @@ def import_rows(table_id: str, body: ImportIn, user=User):
                     data[str(f["id"])] = v
             if not data:
                 continue
+            if live_fields is None:  # once for the whole file (choices added on the way are kept in it)
+                live_fields = store.get_fields(conn, table_id)
             try:
                 with conn.transaction():
-                    recordops.create(conn, table_id, data, user["id"])
+                    recordops.create(conn, table_id, data, user["id"], table=table, fields=live_fields)
                 created += 1
             except HTTPException as e:
                 errors.append(f"Row {n}: {e.detail}")

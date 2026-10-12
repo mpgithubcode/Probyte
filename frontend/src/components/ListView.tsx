@@ -136,7 +136,7 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
               {zone("start").map((p) => cell(p, r))}
               <span className="list-title">
                 <span className="list-title-text">{recordTitle(fields, r)}</span>
-                {r.sync_status === "dirty" && <span className="dirty-dot static" title="Not yet synced to CalDAV" />}
+                {r.sync_status === "dirty" && !ds.dav?.builtin && <span className="dirty-dot static" title="Not yet synced to CalDAV" />}
               </span>
               {zone("left").map((p) => cell(p, r))}
               <span />

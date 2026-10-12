@@ -22,6 +22,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
   const tkind = ds.kind === "table" ? nativeKind(ds.table) : source?.kind;  // a linked table: what its source is
   const files = tkind === "files";
   const caldav = tkind !== "generic" && tkind !== "remote" && !files;
+  const ownServer = ds.kind === "table" && !!ds.dav?.builtin;  // on Probyte's own CalDAV server: nothing is ever pending
   // files tables: the file itself, shown at the top
   const fileF = files ? fields.find((f) => f.system_key === "file") : undefined;
   const fileItem = fileF ? (rec.data[fileF.id] as Attachment[] | undefined)?.[0] : undefined;
@@ -45,7 +46,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
         {!can.delete ? null : confirm ? (
           <>
             <span className="muted">{files ? "Delete this file? It's deleted from the storage when the trash is emptied."
-              : `Delete this record${caldav ? " (also from the CalDAV server)" : ""}?`}</span>
+              : `Delete this record${caldav ? (ownServer ? " (also from phones)" : " (also from the CalDAV server)") : ""}?`}</span>
             <button className="btn danger" onClick={onDelete}>Delete</button>
             <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
           </>
@@ -53,7 +54,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
           <button className="btn danger-ghost" onClick={() => setConfirm(true)}><Icon name="trash" size={14} /> Delete</button>
         )}
         <span className="spacer" />
-        {caldav && <span className="muted">{rec.sync_status === "dirty" ? "● Pending sync" : "✓ Synced"}</span>}
+        {caldav && !ownServer && <span className="muted">{rec.sync_status === "dirty" ? "● Pending sync" : "✓ Synced"}</span>}
       </>}>
       {fileItem && (
         <div className="record-file">

@@ -647,11 +647,12 @@ def insert_record(conn, table_id, data, *, user_id=None, caldav_uid=None, caldav
     ).fetchone()
 
 
-def create_record(conn, table_id, data: dict, user_id=None):
-    table = get_table(conn, table_id, user_id)
+def create_record(conn, table_id, data: dict, user_id=None, *, table=None, fields=None):
+    """table / fields: already loaded (and checked) by the caller, e.g. once for a whole import."""
+    table = table or get_table(conn, table_id, user_id)
     if table["kind"] == "remote":
         bad("Records of a linked table are written through its link")
-    fields = get_fields(conn, table_id)
+    fields = fields if fields is not None else get_fields(conn, table_id)
     data = normalize_data(conn, table, fields, apply_defaults(fields, data or {}, user_id), user_id)
     check_rules(conn, table_id, fields, data, {str(f["id"]) for f in fields})
     if table["kind"] in ("tasks", "mixed"):

@@ -377,7 +377,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
                   )}
                   <span className="num">{row.n}</span>
                   <button className="expand" title="Open record" onClick={(e) => { e.stopPropagation(); ops.open(r); }}><Icon name="expand" size={13} /></button>
-                  {r.sync_status === "dirty" && <span className="dirty-dot" title="Not yet synced to CalDAV" />}
+                  {r.sync_status === "dirty" && !ds.dav?.builtin && <span className="dirty-dot" title="Not yet synced to CalDAV" />}
                 </td>
                 {visible.map((f) => cell(r, f))}
                 <td />
