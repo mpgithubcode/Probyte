@@ -5,7 +5,23 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://probyte:probyte@localhost:5432/probyte")
+def _database_url() -> str:
+    """DATABASE_URL, or one made from POSTGRES_HOST / POSTGRES_PASSWORD (or POSTGRES_PASSWORD_FILE: the Docker Hub setup
+    generates the password on first start and shares it with the database through a small volume)."""
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    from urllib.parse import quote
+    pw_file = os.environ.get("POSTGRES_PASSWORD_FILE", "")
+    if pw_file and os.path.exists(pw_file):  # the generated one wins over a POSTGRES_PASSWORD left in a .env
+        password = open(pw_file).read().strip()
+    else:
+        password = os.environ.get("POSTGRES_PASSWORD", "")
+    user, name = os.environ.get("POSTGRES_USER", "probyte"), os.environ.get("POSTGRES_DB", "probyte")
+    host = os.environ.get("POSTGRES_HOST", "localhost")
+    return f"postgresql://{quote(user)}:{quote(password or 'probyte')}@{host}:5432/{quote(name)}"
+
+
+DATABASE_URL = _database_url()
 
 # A sync holds two connections while it runs (its per-table lock, and its work), so the worker sizes this to its threads.
 POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))

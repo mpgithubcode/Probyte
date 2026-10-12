@@ -70,12 +70,13 @@ def provision(conn, user_id) -> str:
     return password
 
 
-def info(conn, user_id) -> dict:
+def info(conn, user_id, fallback_url: str | None = None) -> dict:
+    """fallback_url: Probyte's own address, used when RADICALE_PUBLIC_URL isn't set (Probyte passes calendar traffic on)."""
     acc = conn.execute("SELECT username, password FROM caldav_accounts WHERE user_id = %s AND is_builtin", (user_id,)).fetchone()
     return {
         "enabled": enabled(),
         "provisioned": bool(acc),
-        "public_url": RADICALE_PUBLIC_URL or None,
+        "public_url": RADICALE_PUBLIC_URL or fallback_url or None,
         "username": acc["username"] if acc else None,
         "password": unseal(acc["password"]) if acc else None,
     }
@@ -112,15 +113,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # follow redirects ourselves so PROPFIND stays PROPFIND
 
 
-def check_public(username: str, password: str) -> dict:
+def check_public(username: str, password: str, fallback_url: str | None = None) -> dict:
     """Do what a phone does: PROPFIND <public url>/.well-known/caldav with the user's device login.
 
     Returns {"ok": bool, "problem": str|None, "detail": str} with a human explanation.
     """
-    if not RADICALE_PUBLIC_URL:
+    public = RADICALE_PUBLIC_URL or fallback_url or ""
+    if not public:
         return {"ok": False, "problem": "no_public_url",
                 "detail": "RADICALE_PUBLIC_URL isn't set, so Probyte doesn't know the address phones should use."}
-    url = urljoin(RADICALE_PUBLIC_URL.rstrip("/") + "/", ".well-known/caldav")
+    url = urljoin(public.rstrip("/") + "/", ".well-known/caldav")
     auth = "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode()
     opener = urllib.request.build_opener(_NoRedirect)
     for _ in range(5):
@@ -133,7 +135,7 @@ def check_public(username: str, password: str) -> dict:
             status, headers = e.code, e.headers
         except Exception as e:
             return {"ok": False, "problem": "unreachable",
-                    "detail": f"The server couldn't reach {RADICALE_PUBLIC_URL} ({e}). Check the address and your "
+                    "detail": f"The server couldn't reach {public} ({e}). Check the address and your "
                               "reverse proxy. (Some setups can't reach their own public address from inside; "
                               "if your phone can open it in a browser, try adding the account anyway.)"}
         if status in (301, 302, 303, 307, 308) and headers.get("Location"):

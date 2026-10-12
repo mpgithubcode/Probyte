@@ -12,3 +12,4 @@ orjson==3.10.7
 cryptography==43.0.3
 boto3==1.35.36
 pillow-heif==0.18.0
+radicale==3.5.10

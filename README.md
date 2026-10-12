@@ -38,17 +38,13 @@ One `docker compose up`, plain PostgreSQL, live updates in every open window, an
 
 ### Up and running
 
-Ready-made images are on Docker Hub ([probyte](https://hub.docker.com/r/mpgithubcode/probyte), [probyte-radicale](https://hub.docker.com/r/mpgithubcode/probyte-radicale), [probyte-office](https://hub.docker.com/r/mpgithubcode/probyte-office)), so all you need is Docker:
+One command, on any machine with Docker:
 
 ```bash
-mkdir probyte && cd probyte
-curl -fsSLO https://raw.githubusercontent.com/mpgithubcode/Probyte/main/deploy/docker-compose.yml
-curl -fsSL -o .env https://raw.githubusercontent.com/mpgithubcode/Probyte/main/.env.example
-nano .env               # set a database password
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/mpgithubcode/Probyte/main/deploy/install.sh | sh
 ```
 
-Open http://localhost:8080 and create an account: the first one is the admin. [Full setup ↓](#quick-start)
+It makes a `probyte` folder, starts Probyte from the [Docker Hub images](https://hub.docker.com/r/mpgithubcode/probyte) and prints the address: open it and create an account (the first one is the admin). Nothing to configure: the database password is generated, and phones sync through Probyte's own address. Run it again to upgrade. [More ways ↓](#quick-start)
 
 ## Screenshots
 
@@ -279,13 +275,15 @@ Completed At syncs with the standard iCalendar `COMPLETED` property, so phones s
 
 ## Quick start
 
-**From Docker Hub** (no source code needed): download [`deploy/docker-compose.yml`](deploy/docker-compose.yml) and [`.env.example`](.env.example) (as `.env`) into an empty folder, set `POSTGRES_PASSWORD` in `.env`, and start it:
+**One command** (Docker Hub images, nothing to configure):
 
 ```bash
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/mpgithubcode/Probyte/main/deploy/install.sh | sh
 ```
 
-Upgrade with `docker compose pull && docker compose up -d` (database changes are applied on start; make a backup first). The images are tagged `latest` and by version (`0.1.0`, `0.1`); set `PROBYTE_VERSION=0.1.0` in `.env` to stay on one.
+**Or by hand:** put [`deploy/docker-compose.yml`](deploy/docker-compose.yml) in an empty folder and run `docker compose up -d`. That's three containers: **probyte** (the web app, background worker and calendar / contacts server together), **db** (PostgreSQL; its password is generated on the first start) and **office** (Word / PowerPoint previews; delete it from the file if you don't need them). Everything is kept in two volumes, `probyte-data` and `pgdata`.
+
+Optional settings go in a `.env` file next to it (see [`deploy/.env.example`](deploy/.env.example)): the port, your time zone, your public address (`PUBLIC_URL`), sign-ups, backups. Upgrade with `docker compose pull && docker compose up -d` (database changes are applied on start); pin a version with `PROBYTE_VERSION=0.2.0`. Admin commands run inside the container, e.g. `docker compose exec probyte python -m app.admin reset-password alex`.
 
 **From source** (to change the code): clone the repository, then
 
@@ -294,7 +292,7 @@ cp .env.example .env    # then edit it
 docker compose up -d --build
 ```
 
-This starts five containers: `app` (web app and API), `worker` (calendar and file syncs, webhook deliveries, previews and cleanup, from a job queue in Postgres), `db` (Postgres), `radicale` (the bundled CalDAV/CardDAV server) and `office` (converts Word / PowerPoint files to PDF for previews; internal only). Database migrations run automatically on start.
+The source setup runs the same parts as separate containers (easier to develop and debug): `app` (web app and API), `worker` (calendar and file syncs, webhook deliveries, previews and cleanup, from a job queue in Postgres), `db` (Postgres), `radicale` (the bundled CalDAV/CardDAV server) and `office` (converts Word / PowerPoint files to PDF for previews; internal only). Database migrations run automatically on start.
 
 Open http://localhost:8080 and create an account. The first account becomes the admin, and any data created before multi-user support belongs to it. Each user only sees their own databases, combined databases and CalDAV accounts.
 
@@ -512,7 +510,8 @@ backend/app/
   ratelimit.py slowing down password guessing
   audit.py     record history (who changed what)
   admin.py     command line: reset-password, create-user, backup, backups, restore
-deploy/        docker-compose.yml that runs the published Docker Hub images (no source needed)
+deploy/        the Docker Hub setup: docker-compose.yml (no source needed), install.sh (one-line installer), .env.example
+docker/        the image's entrypoint (one-container mode: app + worker + Radicale) and that Radicale's config
 .github/workflows/docker.yml   builds and pushes the images to Docker Hub when a release is tagged
 radicale/      bundled Radicale image: htpasswd auth, owner-only rights
 office/        document converter for file previews (LibreOffice without a GUI behind a tiny HTTP service; internal only)

@@ -109,30 +109,35 @@ def change_password(body: PasswordChange, request: Request, response: Response, 
 
 # ======================================================================== built-in CalDAV (bundled Radicale)
 
+def _own_address(request: Request) -> str:
+    from ..oauth import public_base
+    return public_base(request).rstrip("/") + "/"
+
+
 @router.get("/api/dav")
-def dav_info(user=User):
+def dav_info(request: Request, user=User):
     with connection() as conn:
-        return builtin_dav.info(conn, user["id"])
+        return builtin_dav.info(conn, user["id"], _own_address(request))
 
 
 @router.post("/api/dav/check")
-def dav_check(user=User):
+def dav_check(request: Request, user=User):
     """Test the public CalDAV address the way a phone would."""
     with connection() as conn:
         acc = conn.execute("SELECT username, password FROM caldav_accounts WHERE user_id = %s AND is_builtin", (user["id"],)).fetchone()
     if not acc:
         raise HTTPException(400, "Enable your CalDAV login first")
-    return builtin_dav.check_public(acc["username"], unseal(acc["password"]))
+    return builtin_dav.check_public(acc["username"], unseal(acc["password"]), _own_address(request))
 
 
 @router.post("/api/dav/reset")
-def dav_reset(user=User):
+def dav_reset(request: Request, user=User):
     """Create the user's Radicale login, or replace its device password."""
     if not builtin_dav.enabled():
         raise HTTPException(400, "The built-in CalDAV server is not configured")
     with connection() as conn:
         builtin_dav.provision(conn, user["id"])
-        return builtin_dav.info(conn, user["id"])
+        return builtin_dav.info(conn, user["id"], _own_address(request))
 
 
 # ======================================================================== API keys

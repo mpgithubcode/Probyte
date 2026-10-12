@@ -29,6 +29,8 @@ async def lifespan(app: FastAPI):
     stop = threading.Event()
     if os.environ.get("RUN_WORKER", "").lower() == "embedded":  # single-container setups: run the worker in here too
         from . import worker
+        from .db import pool
+        pool.resize(pool.min_size, pool.max_size + worker.THREADS * 2 + 4)  # room for the worker's syncs next to web requests
         worker.start(stop)
     yield
     stop.set()

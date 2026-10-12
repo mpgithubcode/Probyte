@@ -6,6 +6,7 @@ changed, nothing inside has. Collection.etags() lists every item with its ETag, 
 need downloading with Collection.fetch() (a calendar-multiget / addressbook-multiget REPORT).
 """
 import ipaddress
+import os
 import socket
 from urllib.parse import unquote, urljoin, urlparse
 from xml.etree import ElementTree as ET
@@ -29,6 +30,9 @@ def check_url(url: str) -> str:
     p = urlparse(url)
     if p.scheme not in ("http", "https") or not p.hostname:
         raise DavError("Enter the server address, starting with https://")
+    builtin = urlparse(os.environ.get("RADICALE_URL", ""))
+    if builtin.hostname and (p.scheme, p.hostname, p.port) == (builtin.scheme, builtin.hostname, builtin.port):
+        return url  # the bundled server set up by whoever runs Probyte (127.0.0.1 in the one-container setup)
     try:
         addrs = {ai[4][0] for ai in socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80))}
     except (socket.gaierror, UnicodeError):
