@@ -19,12 +19,12 @@ from app import wiring  # noqa: F401  (connects the components: before anything 
 from app import extensions, office
 from app.adapters import contacts, feeds, live, mcp_server, rest_v1
 from app.core.db import connection, init_db
-from app.data import store, templates
+from app.data import store
 from app.dav import server as dav_server
 from app.files import catalog as files
 from app.identity import oauth, routes as auth_routes
 from app.sharing import links as shares
-from app.web import admin, records, tables, views, workspace
+from app.web import admin, records, tables, templates, views, workspace
 
 logging.basicConfig(level=logging.INFO)
 

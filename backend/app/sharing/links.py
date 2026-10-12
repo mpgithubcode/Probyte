@@ -24,7 +24,7 @@ from app.core import ratelimit
 from app.data import store
 from app.calc.compute import COMPUTED_TYPES, Engine
 from app.core.db import Jsonb, app_secret, connection
-from app.web.common import FastJSON
+from app.core.http import FastJSON
 from app.calc.viewfilter import apply_view
 
 router = APIRouter()

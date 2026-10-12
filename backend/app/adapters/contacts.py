@@ -18,7 +18,7 @@ from app.core import events
 from app.data import audit, store
 from app.formats import vcard
 from app.core.db import connection
-from app.web.common import User
+from app.identity.auth import User
 
 router = APIRouter()
 MAX_BYTES = 25 * 1024 * 1024

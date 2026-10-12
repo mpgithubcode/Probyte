@@ -18,7 +18,7 @@ from app.calc.compute import Engine
 from app.core.db import connection
 from app.formats.ical import as_date, parse_value_dt
 from app.identity.oauth import public_base
-from app.web.common import User
+from app.identity.auth import User
 from app.calc.viewfilter import apply_view, display_text
 
 router = APIRouter()

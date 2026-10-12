@@ -1,53 +1,20 @@
 """Request models and helpers shared by the route modules."""
-import json
-import uuid
-from datetime import date, datetime
 from typing import Any, Literal
 
-import orjson
-from fastapi import Depends
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.sharing import linked as remote
 from app.data import store
-from app.identity.auth import current_user
+from app.core.http import FastJSON  # noqa: F401  (used by the route modules)
+from app.identity.auth import User  # noqa: F401
 from app.calc.compute import Engine
 
 
-def _json_default(o):
-    if isinstance(o, (datetime, date)):
-        return o.isoformat()
-    if isinstance(o, uuid.UUID):
-        return str(o)
-    raise TypeError(f"Not JSON serialisable: {type(o).__name__}")
-
-
-class FastJSON(JSONResponse):
-    """orjson with UUID/datetime support: many times quicker than FastAPI's generic encoder for big tables."""
-
-    def render(self, content) -> bytes:
-        try:
-            return orjson.dumps(content, default=_json_default, option=orjson.OPT_NON_STR_KEYS)
-        except TypeError:  # e.g. integers beyond 64 bits
-            return json.dumps(content, default=_json_default, ensure_ascii=False, separators=(",", ":")).encode()
-
 COMPONENTS = {"tasks": ["VTODO"], "events": ["VEVENT"], "mixed": ["VEVENT", "VTODO"]}
 
-User = Depends(current_user)
 
 
 # ======================================================================== models
-
-class Credentials(BaseModel):
-    username: str
-    password: str
-
-
-class PasswordChange(BaseModel):
-    current_password: str
-    new_password: str
-
 
 class AccountIn(BaseModel):
     name: str

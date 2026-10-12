@@ -12,9 +12,20 @@ from app.core import ratelimit
 from app.data import store
 from app.core.db import Jsonb, connection
 from app.core.secretbox import unseal
-from app.web.common import Credentials, PasswordChange, User
+from app.identity.auth import User
 
 router = APIRouter()
+
+
+class Credentials(BaseModel):
+    username: str
+    password: str
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
 
 
 # ======================================================================== auth

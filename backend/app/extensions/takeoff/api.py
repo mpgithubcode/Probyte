@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from app.files import catalog as files
 from app.data import store
 from app.core.db import connection
-from app.web.common import User
+from app.identity.auth import User
 from app.extensions.takeoff import drawings, symbols
 
 router = APIRouter()

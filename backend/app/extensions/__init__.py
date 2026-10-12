@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.db import connection
-from app.web.common import User
+from app.identity.auth import User
 
 log = logging.getLogger("probyte.extensions")
 

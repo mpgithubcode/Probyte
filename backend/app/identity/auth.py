@@ -8,7 +8,7 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import HTTPException, Request, Response
+from fastapi import Depends, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
 from app.data import audit
@@ -156,3 +156,6 @@ async def current_user(request: Request) -> dict:
 
 def public_user(u: dict) -> dict:
     return {"id": u["id"], "username": u["username"], "is_admin": u["is_admin"]}
+
+
+User = Depends(current_user)  # in a route's parameters: the signed-in user (session cookie or API key)

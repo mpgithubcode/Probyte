@@ -36,7 +36,7 @@ from app.blobs.attachments import ATTACH_DIR
 from app.calc.compute import FILE_READONLY as READONLY_KEYS
 from app.core.db import Jsonb, connection
 from app.blobs.filestore import StorageError, clean_rel, driver, guess_mime, norm_prefix
-from app.web.common import User
+from app.identity.auth import User
 from app.core.secretbox import seal
 
 log = logging.getLogger("probyte.files")

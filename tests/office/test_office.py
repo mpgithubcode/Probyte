@@ -12,11 +12,11 @@ import pytest
 import requests
 from playwright.sync_api import expect, sync_playwright
 
-from conftest import API, BASE, Client
+from conftest import API, BASE, Client, S3_URL
 
-FAKE = "http://fakeoffice:8000"
+FAKE = os.environ.get("TEST_FAKEOFFICE_URL", "http://fakeoffice:8000")  # the stand-in Document Server
 SECRET = "fake-office-secret-123"
-S3 = {"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
+S3 = {"kind": "s3", "endpoint": S3_URL, "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
 
 
 def sign(payload, secret=SECRET):
@@ -46,7 +46,7 @@ def wait(check, timeout=20):
 def admin():
     name, pw = os.environ["PROBYTE_ADMIN"].split(":")
     a = Client(name, pw)
-    a.j("PUT", "/office/settings", json={"url": FAKE, "secret": SECRET, "probyte_url": "http://app:8000", "server_url": ""})
+    a.j("PUT", "/office/settings", json={"url": FAKE, "secret": SECRET, "probyte_url": BASE, "server_url": ""})
     yield a
     a.j("PUT", "/office/settings", json={"url": "", "secret": "", "probyte_url": "", "server_url": ""})  # the other tests run without
 
@@ -92,13 +92,13 @@ def test_settings_are_for_the_admin_and_are_checked(admin):
     assert s["url"] == FAKE and s["has_secret"] and "secret" not in s
     assert admin.j("POST", "/office/settings/test") == {"ok": True, "version": "fake-8.2"}
     # a wrong secret: the Document Server refuses the signature
-    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": "wrong-secret-0000", "probyte_url": "http://app:8000"})
+    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": "wrong-secret-0000", "probyte_url": BASE})
     r = admin.post(API + "/office/settings/test")
     assert r.status_code == 400 and "secret" in r.json()["detail"]
-    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://app:8000"})  # None: keep it
+    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": BASE})  # None: keep it
     r = admin.post(API + "/office/settings/test")
     assert r.status_code == 400  # still the wrong one
-    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": SECRET, "probyte_url": "http://app:8000"})
+    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": SECRET, "probyte_url": BASE})
     assert admin.j("POST", "/office/settings/test")["ok"]
     assert admin.put(API + "/office/settings", json={"url": "javascript:alert(1)"}).status_code == 400
     st = other.j("GET", "/office/status")
@@ -110,12 +110,12 @@ def test_sessions_are_signed_and_only_for_the_owner(doc):
     s = u.j("POST", "/office/sessions", json={"record_id": rec["id"], "mode": "edit"})
     c = s["config"]
     # browsers load the editor through Probyte (the relay), wherever the Document Server is
-    assert s["mode"] == "edit" and s["api_url"] == "http://app:8000/office-ds/web-apps/apps/api/documents/api.js"
+    assert s["mode"] == "edit" and s["api_url"] == BASE + "/office-ds/web-apps/apps/api/documents/api.js"
     assert "DocsAPI" in requests.get(s["api_url"]).text
     assert c["documentType"] == "word" and c["document"]["fileType"] == "txt" and c["editorConfig"]["mode"] == "edit"
     signed = claims(c["token"])
     assert signed["document"]["url"] == c["document"]["url"] and signed["editorConfig"]["callbackUrl"] == c["editorConfig"]["callbackUrl"]
-    assert c["document"]["url"].startswith("http://app:8000/api/office/file/")
+    assert c["document"]["url"].startswith(BASE + "/api/office/file/")
     # the file address works without a login (the Document Server has none) but only with the session's token
     assert requests.get(c["document"]["url"]).content == b"first draft"
     assert requests.get(c["document"]["url"][:-4] + "abcd").status_code == 404
@@ -134,7 +134,7 @@ def test_sessions_are_signed_and_only_for_the_owner(doc):
 
 def test_relay_and_direct_mode(admin, doc):
     u, t, rec = doc
-    relay = "http://app:8000/office-ds"
+    relay = BASE + "/office-ds"
     assert requests.get(relay + "/healthcheck").text == "true"
     # the Document Server's service worker is replaced by one that removes itself (a stale one kept the editor from loading)
     sw = requests.get(relay + "/document_editor_service_worker.js")
@@ -144,18 +144,18 @@ def test_relay_and_direct_mode(admin, doc):
         assert requests.post(relay + path, json={"c": "version"}).status_code == 404, path
     # directly: browsers load it from its own address, and the relay is off
     try:
-        admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://app:8000", "via_probyte": False})
+        admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": BASE, "via_probyte": False})
         assert admin.j("GET", "/office/settings")["via_probyte"] is False
         s = u.j("POST", "/office/sessions", json={"record_id": rec["id"]})
         assert s["api_url"] == FAKE + "/web-apps/apps/api/documents/api.js"
         assert requests.get(relay + "/healthcheck").status_code == 404
     finally:
-        admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://app:8000", "via_probyte": True})
+        admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": BASE, "via_probyte": True})
     # the settings test checks that the Document Server can download from Probyte, too
     admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://nowhere.invalid:8000"})
     r = admin.post(API + "/office/settings/test")
     assert r.status_code == 400 and "can't download files from Probyte" in r.json()["detail"]
-    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://app:8000"})
+    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": BASE})
     assert admin.j("POST", "/office/settings/test")["ok"]
 
 
@@ -346,7 +346,7 @@ def share(user, t, **perms):
 
 def link(viewer, s, view):
     return viewer.j("POST", "/tables", json={"name": "Linked", "kind": "remote", "base_id": viewer.base_id,
-                                             "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+                                             "remote": {"url": f"{BASE}/s/{s['token']}", "view_id": view["id"]}})
 
 
 def linked_item(viewer, lt, name):
@@ -536,8 +536,8 @@ def test_a_failed_download_is_tried_again_with_a_new_key(doc):
 def test_protocol_and_certificate_settings(admin, doc):
     """Network settings: the protocol the Document Server is told browsers use, and an HTTPS Document Server with a
     self-signed certificate."""
-    relay = "http://app:8000/office-ds"
-    base = {"url": FAKE, "secret": None, "probyte_url": "http://app:8000"}
+    relay = BASE + "/office-ds"
+    base = {"url": FAKE, "secret": None, "probyte_url": BASE}
     try:
         # automatic: as it arrives (here http; behind an HTTPS proxy, https)
         assert requests.get(relay + "/fake/headers").json()["x-forwarded-proto"] == "http"

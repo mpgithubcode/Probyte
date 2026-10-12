@@ -227,4 +227,4 @@ if os.path.exists("/cert.pem"):  # the same over HTTPS, with a self-signed certi
     ctx.load_cert_chain("/cert.pem", "/key.pem")
     tls.socket = ctx.wrap_socket(tls.socket, server_side=True)
     threading.Thread(target=tls.serve_forever, daemon=True).start()
-ThreadingHTTPServer(("0.0.0.0", 8000), H).serve_forever()
+ThreadingHTTPServer((os.environ.get("FAKE_HOST", "0.0.0.0"), int(os.environ.get("FAKE_PORT", "8000"))), H).serve_forever()
