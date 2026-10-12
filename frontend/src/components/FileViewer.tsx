@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
-import { attachmentUrl, editableKind, fetchBytes, fileExt, imageUrl, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
+import { attachmentUrl, editableKind, fetchBytes, fileExt, imageUrl, isSvg, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
 import type { Attachment, Field, Rec } from "../types";
 import { formatBytes, isEditable } from "../util";
 import { CellValue, FieldInput } from "./Cells";
@@ -226,7 +226,9 @@ function FileBody({ item, kind, editing, draft, onDraft, onText }: {
 }) {
   const url = attachmentUrl(item);
   switch (kind) {
-    case "image": return <ImageView item={item} />;
+    case "image":
+      if (isSvg(item)) return <SvgView item={item} editing={editing} draft={draft} onDraft={onDraft} onText={onText} />;
+      return <ImageView item={item} />;
     case "pdf": return item.file || item.url ? <Pdf src={url} name={item.name} /> : <BlobPdf url={attachmentUrl(item, true)} name={item.name} />;
     case "video": return <div className="viewer-media"><video src={url} controls autoPlay={false} preload="metadata" /></div>;
     case "audio": return <div className="viewer-media audio"><span className="viewer-ext big">{fileExt(item.name)}</span><audio src={url} controls preload="metadata" /></div>;
@@ -245,6 +247,27 @@ function ImageView({ item }: { item: Attachment }) {
       <img src={imageUrl(item)} alt={item.name} />
     </div>
   );
+}
+
+/** An SVG: the picture; editing shows its code (saved back as the file). */
+function SvgView({ item, editing, draft, onDraft, onText }: {
+  item: Attachment; editing: boolean; draft: string | null; onDraft: (s: string) => void; onText: (s: string | null) => void;
+}) {
+  useEffect(() => {
+    onText(null);
+    if (!item.file) return;
+    let live = true;
+    fetchBytes(textUrl(item)).then((b) => live && onText(new TextDecoder().decode(b))).catch(() => undefined);
+    return () => { live = false; };
+  }, [item.id]);
+  if (editing) {
+    return (
+      <div className="viewer-doc code">
+        <textarea className="viewer-code-edit" autoFocus spellCheck={false} value={draft ?? ""} onChange={(e) => onDraft(e.target.value)} />
+      </div>
+    );
+  }
+  return <div className="viewer-image svg"><img src={attachmentUrl(item)} alt={item.name} /></div>;
 }
 
 /** A PDF attachment (served as a download): read it, then show it. */

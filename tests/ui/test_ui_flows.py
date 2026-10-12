@@ -1269,3 +1269,29 @@ def test_templates_for_tables_and_views(browser, table_user):
     assert body["kind"] == "table" and body["name"] == "Job tracker" and any(f["name"] == "Invoice total" for f in body["fields"])
     assert dl.value.suggested_filename.endswith(".probyte-table.json")
     assert not pg.errors, pg.errors
+
+
+def test_svg_files_show_as_pictures(browser):
+    u = Client()
+    t = u.table("files", "Logos", storage={"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket", "username": "testkey",
+                "secret": "testsecret12345"}, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#ef4444"/></svg>'
+    rec = u.post(f"{API}/tables/{t['id']}/files", files=[("files", ("logo.svg", svg, "image/svg+xml"))]).json()["records"][0]
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    thumb = pg.locator(".grid tbody .thumb img")
+    expect(thumb).to_have_count(1)
+    eventually(lambda: thumb.evaluate("i => i.complete && i.naturalWidth > 0") or None)      # drawn as a picture
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rec['id']}")
+    img = pg.locator(".viewer .viewer-image.svg img")
+    expect(img).to_be_visible()
+    eventually(lambda: img.evaluate("i => i.naturalWidth") == 40 or None)
+    # its code can still be edited
+    pg.click(".viewer-bar button:has-text('Edit')")
+    expect(pg.locator(".viewer-code-edit")).to_have_value(re.compile("<rect"))
+    pg.fill(".viewer-code-edit", svg.decode().replace("#ef4444", "#22c55e"))
+    pg.click(".viewer-bar button:has-text('Save')")
+    expect(img).to_be_visible()
+    assert "#22c55e" in u.get(API + f"/files/{rec['id']}/content").text
+    assert not pg.errors, pg.errors

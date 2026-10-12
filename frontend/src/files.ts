@@ -8,7 +8,9 @@ export const setAttachmentBase = (base: string) => {
   fileBase = base.replace(/attachments$/, "files");
 };
 
-export const isImage = (a: Attachment) => /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(a.mime);
+export const isSvg = (a: Attachment) => a.mime === "image/svg+xml" || /\.svg$/i.test(a.name);
+/** Shown as a picture (SVGs too: served so that nothing in them can run). */
+export const isImage = (a: Attachment) => /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(a.mime) || isSvg(a);
 /** iPhone photos: shown through a JPEG the server makes (most browsers can't show HEIC). */
 export const isHeic = (a: Attachment) => !!a.file && (/^image\/hei[cf]$/.test(a.mime) || /\.hei[cf]$/i.test(a.name));
 
@@ -17,8 +19,8 @@ export const attachmentUrl = (a: Attachment, download = false) => a.file
   : `${a.url ?? `${attachmentBase}/${a.id}`}${download ? "?download=1" : ""}`;  // linked tables carry their own proxy URL
 
 /** The small preview image, if there is one (a file's size in the URL: a new version gets a new preview). */
-export const thumbUrl = (a: Attachment) => a.file
-  ? (a.thumb ? `${fileBase}/${a.id}/thumb?s=${a.size}` : null)
+export const thumbUrl = (a: Attachment) => isSvg(a) ? attachmentUrl(a)   // an SVG is its own preview, sharp at any size
+  : a.file ? (a.thumb ? `${fileBase}/${a.id}/thumb?s=${a.size}` : null)
   : isImage(a) ? attachmentUrl(a) : null;
 
 export const textUrl = (a: Attachment) => (a.file ? `${fileBase}/${a.id}/content?text=1` : attachmentUrl(a, true));
@@ -55,7 +57,7 @@ export function viewKind(a: Attachment): ViewKind {
 }
 
 /** Can be edited in the viewer (files of files tables only). */
-export const editableKind = (a: Attachment) => !!a.file && (viewKind(a) === "markdown" || viewKind(a) === "text")
+export const editableKind = (a: Attachment) => !!a.file && (viewKind(a) === "markdown" || viewKind(a) === "text" || isSvg(a))
   && !["csv", "tsv"].includes(fileExt(a.name));
 
 /** Still used by thumbnails: something to open (else the click downloads). */

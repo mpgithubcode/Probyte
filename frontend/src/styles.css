@@ -1330,3 +1330,6 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .template-icon.sm { font-size: 18px; }
 .template-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .templates-panel { display: flex; flex-direction: column; gap: 6px; }
+/* SVGs are often dark drawings on a transparent background: give them a light page in the viewer and on cards */
+.viewer-image.svg img { background: #fff; padding: 24px; border-radius: 6px; min-width: min(320px, 80%); }
+.thumb img, .file-card img { background: #fff; }

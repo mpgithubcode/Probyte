@@ -12,7 +12,9 @@ ATTACH_DIR = Path(os.environ.get("ATTACHMENTS_DIR", "/data/attachments"))
 MAX_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "25")) * 1024 * 1024
 # Only plain raster images are shown inline; everything else (HTML, SVG, PDF…) downloads, so an
 # uploaded file can never run script on Probyte's origin.
-INLINE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"}
+INLINE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/svg+xml"}
+# SVG can hold script: it's shown inline only under a sandbox policy, so nothing in it runs (in an <img> it never does)
+SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox"
 
 
 def _clean_name(name: str | None) -> str:
@@ -54,7 +56,7 @@ def serve(conn, user_id, attachment_id, download: bool):
         content_disposition_type="inline" if inline else "attachment",
         headers={
             "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; img-src 'self'; sandbox",
+            "Content-Security-Policy": SVG_CSP if a["mime"] == "image/svg+xml" else "default-src 'none'; img-src 'self'; sandbox",
             "Cache-Control": "private, max-age=86400",
         },
     )

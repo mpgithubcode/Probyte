@@ -226,3 +226,28 @@ def test_covers_for_text_and_files_added_before(user):
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     doc = upload(user, t, ("old.docx", open(os.path.join(here, "fixtures", "report.docx"), "rb").read(), "application/octet-stream"))[0]
     wait(lambda: user.get(API + f"/files/{doc['id']}/thumb").status_code == 200, timeout=60)
+
+
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="18" fill="#3b82f6"/>' \
+      b'<script>alert(document.cookie)</script></svg>'
+
+
+def test_svg_is_shown_as_a_picture_safely(user):
+    t = user.table("files", "Pictures", storage=S3, storage_prefix=f"p{uuid.uuid4().hex[:8]}")
+    F = user.fields(t["id"])
+    rec = upload(user, t, ("logo.svg", SVG, "image/svg+xml"))[0]
+    item = rec["data"][F["file"]][0]
+    assert item["view"] == "image" and rec["data"][F["kind"]] == "Image"
+    r = user.get(API + f"/files/{rec['id']}/content")
+    assert r.headers["content-type"].startswith("image/svg+xml") and "inline" in r.headers["content-disposition"]
+    csp = r.headers["content-security-policy"]
+    assert "sandbox" in csp and "script" not in csp and "default-src 'none'" in csp   # the script inside can't run
+    # the code is still there for editing
+    assert user.get(API + f"/files/{rec['id']}/content", params={"text": 1}).headers["content-type"].startswith("text/plain")
+    # no "text page" cover: the picture is its own
+    wait(lambda: (user.record(t["id"], rec["id"])["data"][F["file"]][0].get("previewed")))
+    assert not user.record(t["id"], rec["id"])["data"][F["file"]][0].get("thumb")
+    # attachments too
+    a = user.post(API + "/attachments", files={"file": ("icon.svg", SVG, "image/svg+xml")}).json()
+    r = user.get(API + f"/attachments/{a['id']}")
+    assert r.headers["content-type"].startswith("image/svg+xml") and "sandbox" in r.headers["content-security-policy"]

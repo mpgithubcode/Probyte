@@ -111,9 +111,17 @@ def _drop_cache(rid):
         p.unlink(missing_ok=True)
 
 
+# SVG pictures are served with a policy that blocks any script inside them (a sandbox), so they can be shown as images
+SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox"
+
+
+def is_svg(mime: str, name: str) -> bool:
+    return mime == "image/svg+xml" or _ext(name) == "svg"
+
+
 def view_of(mime: str, name: str) -> str | None:
     """How the browser shows the file: image, pdf, video, audio, text (its source, never rendered) or not at all."""
-    if mime in _RASTER:
+    if mime in _RASTER or is_svg(mime, name):
         return "image"
     if mime == "application/pdf":
         return "pdf"
@@ -547,7 +555,7 @@ def _job_preview(payload):
         elif is_text(mime, path):
             raw = drv.read(path, TEXT_CHARS * 4)
             text = raw.decode("utf-8", "replace")[:TEXT_CHARS]
-            if text.strip() and "\x00" not in text[:2000]:
+            if text.strip() and "\x00" not in text[:2000] and not is_svg(mime, path):
                 thumb = _text_thumb(text, rid, path)
     except FileNotFoundError:
         return
@@ -588,12 +596,14 @@ def stream(table, rec, keys, *, download=False, as_text=False, rng: str | None =
     view = view_of(mime, name)
     # no-cache: a file edited or replaced here (or in the storage) shows its new contents at once
     h = {**headers, "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"}
-    if as_text and view == "text":
+    if as_text and (view == "text" or is_text(mime, name)):
         media, h["Content-Disposition"] = "text/plain; charset=utf-8", _disposition("inline", name)
         h["Content-Security-Policy"] = "default-src 'none'; sandbox"
     elif view in ("image", "video", "audio", "pdf") and not download:
         media, h["Content-Disposition"] = mime, _disposition("inline", name)
-        if view != "pdf":  # a sandbox stops the browser's PDF viewer; PDFs can't reach Probyte's pages anyway
+        if is_svg(mime, name):
+            media, h["Content-Security-Policy"] = "image/svg+xml", SVG_CSP
+        elif view != "pdf":  # a sandbox stops the browser's PDF viewer; PDFs can't reach Probyte's pages anyway
             h["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; media-src 'self'; sandbox"
     else:
         media, h["Content-Disposition"] = "application/octet-stream", _disposition("attachment", name)
@@ -715,7 +725,7 @@ def save_text(record_id: str, body: TextIn, user=User):
     with connection() as conn:
         _, rec, keys = _own_record(conn, record_id, user["id"])
     item = (rec["data"].get(keys["file"]) or [{}])[0]
-    if view_of(item.get("mime") or "", item.get("name") or "") != "text":
+    if not is_text(item.get("mime") or "", item.get("name") or ""):  # text, code, Markdown, SVG
         raise HTTPException(400, "Only text files can be edited here")
     if len(body.text) > 5 * 1024 * 1024:
         raise HTTPException(413, "That's too much text to save here")
