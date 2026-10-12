@@ -7,6 +7,7 @@ import type { Tab as SettingsTab } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import type { User, Workspace } from "./types";
 import { onToast, type Toast } from "./toast";
+import { SCREENS, useExtensions, type ExtensionInfo } from "./extensions";
 import { setWeekStart } from "./util";
 
 const ComboModal = lazy(() => import("./components/ComboModal").then((m) => ({ default: m.ComboModal })));
@@ -16,6 +17,13 @@ const TrashModal = lazy(() => import("./components/TrashModal").then((m) => ({ d
 const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
 
 interface Route { kind: "table" | "combo"; id: string; viewId?: string; record?: string }
+
+/** An extension's screen: #/x/<id>/<its own path> */
+interface ExtRoute { ext: string; path: string }
+function parseExt(): ExtRoute | null {
+  const m = location.hash.match(/^#\/x\/([^/?]+)\/?(.*)$/);
+  return m ? { ext: m[1], path: m[2] } : null;
+}
 
 function parseHash(): Route | null {
   const m = location.hash.match(/^#\/(table|combo)\/([^/?]+)(?:\/([^/?]+))?(?:\?record=([^&]+))?/);
@@ -47,6 +55,8 @@ export default function App() {
 function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogout: () => void; onUserChanged: (u: User) => void }) {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [route, setRoute] = useState<Route | null>(parseHash);
+  const [extRoute, setExtRoute] = useState<ExtRoute | null>(parseExt);
+  const extensions = useExtensions();
   const [modal, setModal] = useState<"table" | "combo" | "settings" | "trash" | "search" | null>(null);
   // Ctrl/⌘ K: search everything
   useEffect(() => {
@@ -69,7 +79,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
 
   useEffect(() => { loadWs(); }, [loadWs]);
   useEffect(() => {
-    const onHash = () => setRoute(parseHash());
+    const onHash = () => { setRoute(parseHash()); setExtRoute(parseExt()); };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -90,8 +100,8 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
 
   // Open the first database when nothing is selected.
   useEffect(() => {
-    if (ws && !route && ws.tables[0]) go({ kind: "table", id: ws.tables[0].id });
-  }, [ws, route]);
+    if (ws && !route && !extRoute && ws.tables[0]) go({ kind: "table", id: ws.tables[0].id });
+  }, [ws, route, extRoute]);
 
   const onError = useCallback((m: string) => setToast(m), []);
 
@@ -103,9 +113,12 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
         onOpen={(kind, id) => { go({ kind, id }); setDrawer(false); }}
         onNewTable={(b) => openModal("table", b)} onNewCombo={(b) => openModal("combo", b)}
         onSettings={() => openSettings()}
-        onLogout={logout} onChanged={loadWs} onError={onError} onTrash={() => { setModal("trash"); setDrawer(false); }} onSearch={() => { setModal("search"); setDrawer(false); }} />
+        onLogout={logout} onChanged={loadWs} onError={onError} onTrash={() => { setModal("trash"); setDrawer(false); }} onSearch={() => { setModal("search"); setDrawer(false); }}
+        extensions={extensions} activeExtension={extRoute?.ext} onOpenExtension={(id) => { location.hash = `/x/${id}`; setDrawer(false); }} />
 
-      {route ? (
+      {extRoute ? (
+        <ExtensionPage key={extRoute.ext} route={extRoute} extensions={extensions} onMenu={() => setDrawer(true)} onError={onError} onWorkspaceChanged={loadWs} />
+      ) : route ? (
         <DatasetPage key={`${route.kind}:${route.id}`} kind={route.kind} id={route.id} viewId={route.viewId} tables={ws.tables} me={user} openRecord={route.record}
           hiddenInSidebar={!!(route.kind === "table" ? ws.tables : ws.combos).find((x) => x.id === route.id)?.hidden}
           bases={ws.bases} onMenu={() => setDrawer(true)}
@@ -149,5 +162,27 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
         </div>
       )}
     </div>
+  );
+}
+
+function ExtensionPage({ route, extensions, onMenu, onError, onWorkspaceChanged }: {
+  route: ExtRoute; extensions: ExtensionInfo[]; onMenu: () => void; onError: (m: string) => void; onWorkspaceChanged: () => void;
+}) {
+  const Screen = route.ext in SCREENS ? SCREENS[route.ext] : undefined;
+  const info = extensions.find((e) => e.id === route.ext);
+  if (!Screen || (extensions.length && !info?.enabled)) {
+    return (
+      <div className="welcome">
+        <button className="icon-btn menu-btn welcome-menu" onClick={onMenu} aria-label="Menu"><Icon name="menu" size={20} /></button>
+        <h1>{info?.name ?? "Extension"}</h1>
+        <p>{Screen ? "This extension is switched off. The server's admin can switch it on in Settings → Extensions." : "There's no such extension."}</p>
+      </div>
+    );
+  }
+  return (
+    <Suspense fallback={<div className="boot">Loading {info?.name ?? ""}…</div>}>
+      <Screen path={route.path} go={(p) => { location.hash = `/x/${route.ext}${p ? `/${p}` : ""}`; }} onMenu={onMenu} onError={onError}
+        onWorkspaceChanged={onWorkspaceChanged} />
+    </Suspense>
   );
 }

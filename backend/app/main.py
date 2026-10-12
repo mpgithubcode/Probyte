@@ -13,7 +13,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import builtin_dav, contacts, feeds, files, live, mcp_server, oauth, office, rest_v1, shares, store, templates
+from . import builtin_dav, contacts, extensions, feeds, files, live, mcp_server, oauth, office, rest_v1, shares, store, templates
 from .routes import admin, auth as auth_routes, records, tables, views, workspace
 from .db import connection, init_db
 
@@ -110,6 +110,7 @@ for r in (auth_routes, workspace, tables, records, views, live, admin, feeds, fi
     app.include_router(r.router)
 
 app.include_router(shares.router)
+extensions.mount(app)
 app.include_router(oauth.router)
 app.include_router(mcp_server.router)
 app.mount("/api/v1", rest_v1.v1)

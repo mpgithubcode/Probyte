@@ -1374,3 +1374,8 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .th-inner .th-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell-content > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
 .cell-content > .chips { display: flex; flex-wrap: nowrap; }
+
+/* extensions: the sidebar section and Settings → Extensions */
+.side-extensions { margin-top: 8px; }
+.ext-card .list-card-head { align-items: flex-start; }
+.ext-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; }

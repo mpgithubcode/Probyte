@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Base, User, Workspace } from "../types";
 import { PALETTE } from "../util";
+import type { ExtensionInfo } from "../extensions";
 import { Icon, tableIcon } from "./Icon";
 import { nativeKind } from "../util";
 import { Popover } from "./Overlay";
@@ -12,7 +13,9 @@ function loadCollapsed(): Set<string> {
   try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]")); } catch { return new Set(); }
 }
 
-export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, onNewCombo, onSettings, onTrash, onSearch, onLogout, onChanged, onError }: {
+export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, onNewCombo, onSettings, onTrash, onSearch, onLogout, onChanged, onError,
+  extensions = [], activeExtension, onOpenExtension }: {
+  extensions?: ExtensionInfo[]; activeExtension?: string; onOpenExtension?: (id: string) => void;
   onTrash: () => void;
   onSearch: () => void;
   ws: Workspace;
@@ -158,6 +161,17 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
               </div>
             );
           })}
+          {extensions.some((e) => e.enabled) && (
+            <div className="side-extensions">
+              <div className="side-head"><span>Extensions</span></div>
+              {extensions.filter((e) => e.enabled).map((e) => (
+                <button key={e.id} className={`side-item ${activeExtension === e.id ? "active" : ""}`} onClick={() => onOpenExtension?.(e.id)} title={e.description}>
+                  <Icon name={e.icon} size={15} />
+                  <span className="side-name">{e.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="side-user">

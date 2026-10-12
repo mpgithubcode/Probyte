@@ -35,6 +35,6 @@ docker rm -f probyte-test-runner >/dev/null 2>&1 || true
 docker create --name probyte-test-runner --network probyte-test_default -w /work \
   -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 -e PROBYTE_ADMIN=testadmin:test-admin-pass-1 \
   -e ONLYOFFICE_TEST_URL="${ONLYOFFICE_TEST_URL:-}" -e ONLYOFFICE_TEST_SECRET="${ONLYOFFICE_TEST_SECRET:-}" "$PLAYWRIGHT_IMAGE" \
-  bash -c "pip install -q pytest requests playwright==1.48.0 'psycopg[binary]' 2>/dev/null && $cmd $target $args" >/dev/null
+  bash -c "pip install -q pytest requests playwright==1.48.0 'psycopg[binary]' pymupdf==1.24.10 2>/dev/null && $cmd $target $args" >/dev/null
 docker cp tests probyte-test-runner:/work/tests >/dev/null
 docker start -a probyte-test-runner

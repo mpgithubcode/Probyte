@@ -214,6 +214,24 @@ Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (t
 
 Under **Network settings**, give *Probyte's address for the Document Server* (`http://probyte:8000` in the same Compose file, or `http://<this machine's IP>:<Probyte's port>` when the Document Server runs in another stack) when it can't use Probyte's public address. (In *Directly* mode, a Probyte served over HTTPS needs the Document Server on HTTPS too: browsers don't load an HTTP editor into an HTTPS page.)
 
+## Extensions
+
+Optional parts of Probyte, switched on by the server's admin in **Settings → Extensions** (off by default). An extension that's on shows in everyone's sidebar under **Extensions**; switched off, it's hidden and its data is kept. Each one is a package in `backend/app/extensions/<id>/` (its API at `/api/x/<id>/`, its own database migrations) with its screens in `frontend/src/extensions/<id>/`, loaded only when opened.
+
+### Blueprint takeoff
+
+Count, measure and list what's on a PDF drawing set, for estimates and takeoff sheets. Automatic results are always **suggestions**: you check them, correct them, accept or reject them, and only what's accepted is in the takeoff.
+
+1. **Upload the drawing set** (or pick a PDF from a files table). Every page is read: its **sheet number** and **title** (from the title block and the drawing index on the cover), its **discipline** (E… electrical, A… architectural, M… mechanical, FA/FP/LS…) and the **scales** written on it (`1/4" = 1'-0"`, `1" = 20'`, `1:100`), the plan's first.
+2. **Choose the sheets** (Sheets tab): include a whole discipline at once (e.g. all electrical sheets), correct a number, title or scale, and tick each sheet once it's right. A sheet whose scale is missing or wrong (a half-size print) is **calibrated** by clicking both ends of a known dimension.
+3. **Items from the legends** (Items tab): **Read legends on this sheet** finds legends and schedules (light fixture schedules, symbol legends) and lists their entries with their symbol, their **label** (the fixture type written on the plan: A, B, EM-2, C48) and the schedule's other columns (manufacturer, catalog number, wattage…). Correct and choose them, and they become items. A legend that isn't a ruled table is boxed by hand (**Box a legend**). Items can also be added by hand: things to count, runs (length) and areas.
+4. **Find them on the sheets**: by **label** (the label standing alone on the plan; the same word in a sentence of the notes doesn't count) or by **symbol** (its picture from the legend, found turned any of four ways and a little larger or smaller, with a likeness setting). Finds appear dashed on the sheets: click one to accept (A) or reject (R) it, accept all on a sheet, or every find at least 90% alike; **Next to review** steps through them. Legends and areas you box (notes, details) are left out of finds.
+5. **Count and measure by hand**: click to count; click along a run or around an area (double-click to finish, Shift for straight lines). Lengths and areas use the sheet's scale; runs can add a length to every run (drops, makeup).
+6. **Search** the sheets' text (GFCI, WP, EM-2…), go to each hit, and count the hits as an item.
+7. **The takeoff** (Takeoff tab): each item's quantity by sheet and in all, waste % (counts rounded up), unit cost and extended cost. Export it as **CSV**, as the **drawing set marked up** (each mark in its item's color, with a key of quantities on every sheet), or into a **Probyte table** (to price, share and track it like any other table). Schedules on a sheet (panel, fixture, door schedules) can be copied into Probyte tables too.
+
+Works best with drawing sets exported from CAD (they have real text and lines). Scanned drawings have no text: their labels and scales can't be read (count, calibrate and measure by hand; symbols can still be found). The drawing sets are kept in the data volume (`attachments/takeoff/`).
+
 ## Linked tables (from any Probyte server)
 
 **A linked table behaves like the table it links to.** A linked files table opens files in the full-screen viewer with their details, uploads files (with **Upload** instead of New), and replaces and edits them; a linked contacts table imports and downloads vCards; a linked tasks & events table knows which field is a task's status or an event's start (the record panel, calendars and task rules work as in the source), and fields keep their formats (currency, dates…), descriptions and rules. Everything goes through the link, so it can only do what the link's owner allowed (view, add, edit, delete). In the sidebar, a small link mark shows which tables are linked.
@@ -463,7 +481,7 @@ KEEP_STACK=1 scripts/test.sh ...   # leave the test stack running afterwards to 
 
 Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale, plus throwaway S3 and WebDAV servers from `tests/docker-compose.storage.yml`), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
 
-What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); files tables on S3 and WebDAV (uploads, previews, renames, outside changes, the trash); ONLYOFFICE editing (against a stand-in Document Server; `ONLYOFFICE_TEST_URL` runs `tests/office` against a real one); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
+What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); files tables on S3 and WebDAV (uploads, previews, renames, outside changes, the trash); Blueprint takeoff (a made-up drawing set: sheets, scales, legends, finds by label and symbol, review, measuring, exports); ONLYOFFICE editing (against a stand-in Document Server; `ONLYOFFICE_TEST_URL` runs `tests/office` against a real one); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
 
 ### Backups
 
@@ -547,6 +565,9 @@ backend/app/
   ratelimit.py slowing down password guessing
   audit.py     record history (who changed what)
   admin.py     command line: reset-password, create-user, backup, backups, restore
+  office.py    ONLYOFFICE editing: sessions, the Document Server's callbacks, the relay at /office-ds/
+  extensions/  optional parts (each a package with its router at /api/x/<id>/ and its own migrations/);
+               takeoff/ is Blueprint takeoff: drawings.py (sheets, scales, legends, words), symbols.py (finding symbols), api.py
 deploy/        the Docker Hub setup: docker-compose.yml (no source needed), install.sh (one-line installer), .env.example
 docker/        the image's entrypoint (one-container mode: app + worker + Radicale) and that Radicale's config
 .github/workflows/docker.yml   builds and pushes the images to Docker Hub when a release is tagged
@@ -557,6 +578,7 @@ frontend/src/
   data.ts                    in-memory dataset cache, incremental refresh (/changes), live event stream
   components/DatasetPage.tsx one database / combined database: views, toolbar, record ops
   components/*View.tsx       grid, kanban, calendar, timeline, list, gallery, chart (each loaded on first use)
+  extensions/                the extensions' screens (#/x/<id>), each loaded when opened; takeoff/ is Blueprint takeoff
 tests/         api/ (pytest), ui/ (Playwright), bench/ (timings), screens/ (README pictures),
                filter_cases.json (filter/sort cases the browser and the server must agree on); run with scripts/test.sh
 ```
