@@ -5,9 +5,9 @@ Used for public links, so records a view filters out never leave the server, and
 import re
 from functools import cmp_to_key
 
-from app.formats import fieldformats
 from app.calc import formula as F
 from app.calc.compute import Engine
+from app.formats import fieldformats
 
 
 def display_text(eng: Engine, f, v) -> str:

@@ -3,11 +3,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from app.sharing import linked as remote
-from app.data import store
-from app.core.http import FastJSON  # noqa: F401  (used by the route modules)
-from app.identity.auth import User  # noqa: F401
 from app.calc.compute import Engine
+from app.core.http import FastJSON  # noqa: F401  (used by the route modules)
+from app.data import store
+from app.identity.auth import User  # noqa: F401
+from app.sharing import linked as remote
 
 
 COMPONENTS = {"tasks": ["VTODO"], "events": ["VEVENT"], "mixed": ["VEVENT", "VTODO"]}

@@ -32,10 +32,10 @@ import psycopg
 from fastapi import HTTPException
 
 from app.core import events, ratelimit
-from app.core.db import Jsonb, connection
+from app.core.db import connection, Jsonb
 from app.data import audit, store
 from app.dav import devices
-from app.dav.items import Mapper, etag as make_etag, item_name, parse_item
+from app.dav.items import etag as make_etag, item_name, Mapper, parse_item
 from app.formats import ical, vcard
 
 log = logging.getLogger("probyte.dav.server")

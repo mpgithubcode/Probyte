@@ -14,8 +14,8 @@ import psycopg
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
+from app.core.db import connection, DATABASE_URL
 from app.identity.auth import current_user
-from app.core.db import DATABASE_URL, connection
 
 log = logging.getLogger("probyte.live")
 router = APIRouter()

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app.core.db import DATABASE_URL, connection
+from app.core.db import connection, DATABASE_URL
 
 log = logging.getLogger("probyte.jobs")
 

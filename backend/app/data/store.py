@@ -9,14 +9,13 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from app.calc import formula as F
-from app.calc.compute import COMPUTED_TYPES, FIELD_TYPES, FILTER_OPS, Engine
-from app.core.db import Jsonb
+from app.calc.compute import COMPUTED_TYPES, Engine, FIELD_TYPES, FILTER_OPS
 from app.core import events
 from app.core.context import api_bases
+from app.core.db import Jsonb
 from app.data import audit
-from app.formats import fieldformats
-from app.formats import recur
-from app.formats.ical import DEFAULT_TZ, LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, component_kind, ical_to_values, is_date_only, new_uid
+from app.formats import fieldformats, recur
+from app.formats.ical import component_kind, DEFAULT_TZ, ical_to_values, is_date_only, LOCAL_KEYS, new_uid, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS
 
 SELECT_TYPES = ("single_select", "multi_select")
 DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables that are a calendar / address book (CalDAV, CardDAV)

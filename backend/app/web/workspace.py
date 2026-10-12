@@ -5,13 +5,12 @@ from fastapi import APIRouter, HTTPException
 
 from app.core import webdav as dav
 from app.core.context import api_bases
-from app.data import store
-from app.dav import devices
-from app.dav import sync
 from app.core.db import connection
-from app.formats.ical import PALETTE
 from app.core.secretbox import seal, unseal
-from app.web.common import AccountIn, AccountTest, BaseIn, BasePatch, User, _account_public, _own_account, _table_out
+from app.data import store
+from app.dav import devices, sync
+from app.formats.ical import PALETTE
+from app.web.common import _account_public, _own_account, _table_out, AccountIn, AccountTest, BaseIn, BasePatch, User
 
 router = APIRouter()
 

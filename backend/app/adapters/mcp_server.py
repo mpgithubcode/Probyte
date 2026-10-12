@@ -17,11 +17,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from app.core.context import api_bases
 from app.adapters import apiv1
+from app.core.context import api_bases
+from app.core.db import connection
 from app.data import audit
 from app.identity import auth
-from app.core.db import connection
 
 log = logging.getLogger("probyte.mcp")
 router = APIRouter()

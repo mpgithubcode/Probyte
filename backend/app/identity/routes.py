@@ -6,9 +6,9 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from app.identity import auth
 from app.core import ratelimit
-from app.core.db import Jsonb, connection
+from app.core.db import connection, Jsonb
+from app.identity import auth
 from app.identity.auth import User
 
 router = APIRouter()

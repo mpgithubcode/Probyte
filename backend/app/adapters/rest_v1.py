@@ -11,11 +11,10 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPBearer
 from pydantic import BaseModel, Field
 
-from app.adapters import apiv1
-from app.identity import auth
-from app.adapters import webhooks
-from app.core.db import Jsonb, connection
+from app.adapters import apiv1, webhooks
+from app.core.db import connection, Jsonb
 from app.core.secretbox import seal, unseal
+from app.identity import auth
 
 DESCRIPTION = """
 Read and write your Probyte bases, tables and records from scripts and automation tools

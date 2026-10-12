@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 from app.core import jobs
-from app.core.db import Jsonb, connection
+from app.core.db import connection, Jsonb
 from app.data import audit, store
 from app.dav import server
 

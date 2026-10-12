@@ -15,7 +15,7 @@ from app.core.db import connection
 from app.data import audit, store
 from app.files import catalog as files
 from app.office import docserver
-from app.office.config import CONVERT, CONVERTED_DIR, EDITABLE, doc_type, settings
+from app.office.config import CONVERT, CONVERTED_DIR, doc_type, EDITABLE, settings
 from app.office.jwt import sign, verify
 
 log = logging.getLogger("probyte.office")

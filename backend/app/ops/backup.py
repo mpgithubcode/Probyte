@@ -23,9 +23,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.core import jobs
 from app.blobs.attachments import ATTACH_DIR
-from app.core.db import DATABASE_URL, connection
+from app.core import jobs
+from app.core.db import connection, DATABASE_URL
 
 log = logging.getLogger("probyte.backup")
 

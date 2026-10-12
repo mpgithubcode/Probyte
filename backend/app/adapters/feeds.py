@@ -15,13 +15,13 @@ from pydantic import BaseModel
 
 from app.data import store
 
-from app.formats import recur
 from app.calc.compute import Engine
-from app.core.db import connection
-from app.formats.ical import as_date, parse_value_dt
-from app.identity.oauth import public_base
-from app.identity.auth import User
 from app.calc.viewfilter import apply_view, display_text
+from app.core.db import connection
+from app.formats import recur
+from app.formats.ical import as_date, parse_value_dt
+from app.identity.auth import User
+from app.identity.oauth import public_base
 
 router = APIRouter()
 

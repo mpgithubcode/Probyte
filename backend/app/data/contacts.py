@@ -15,9 +15,9 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from app.core import events
+from app.core.db import connection
 from app.data import audit, store
 from app.formats import vcard
-from app.core.db import connection
 from app.identity.auth import User
 
 router = APIRouter()

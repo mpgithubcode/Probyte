@@ -5,7 +5,7 @@ from urllib.parse import unquote, urljoin
 
 import requests
 
-from app.core.webdav import CARD, D, NS, DavClient, DavError, q, xml_text
+from app.core.webdav import CARD, D, DavClient, DavError, NS, q, xml_text
 
 CardDAVError = DavError
 

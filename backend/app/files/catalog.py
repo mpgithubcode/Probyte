@@ -29,15 +29,14 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from app.core import events, jobs
-from app.data import audit
-from app.data import store
 from app.blobs.attachments import ATTACH_DIR
+from app.blobs.filestore import clean_rel, driver, guess_mime, norm_prefix, StorageError
 from app.calc.compute import FILE_READONLY as READONLY_KEYS
-from app.core.db import Jsonb, connection
-from app.blobs.filestore import StorageError, clean_rel, driver, guess_mime, norm_prefix
-from app.identity.auth import User
+from app.core import events, jobs
+from app.core.db import connection, Jsonb
 from app.core.secretbox import seal
+from app.data import audit, store
+from app.identity.auth import User
 
 log = logging.getLogger("probyte.files")
 router = APIRouter()

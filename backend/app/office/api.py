@@ -14,7 +14,7 @@ from app.files import catalog as files
 from app.identity.auth import User
 from app.identity.oauth import public_base
 from app.office import config, docserver, sessions
-from app.office.config import CONVERT, CONVERTED_DIR, EDITABLE, PDF, PREFIX, SLIDE, WORD, CELL
+from app.office.config import CELL, CONVERT, CONVERTED_DIR, EDITABLE, PDF, PREFIX, SLIDE, WORD
 
 router = APIRouter()
 

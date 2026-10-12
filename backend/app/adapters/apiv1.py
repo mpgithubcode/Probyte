@@ -9,13 +9,11 @@ import re
 
 from fastapi import HTTPException
 
-from app.sharing import linked as remote
-from app.data import store
-from app.sharing import recordops
-from app.dav import sync
-from app.data import values as values_
-from app.calc.compute import COMPUTED_TYPES, FILTER_OPS, Engine
+from app.calc.compute import COMPUTED_TYPES, Engine, FILTER_OPS
 from app.calc.viewfilter import apply_view, display_text, view_filter, view_sorts
+from app.data import store, values as values_
+from app.dav import sync
+from app.sharing import linked as remote, recordops
 
 MAX_LIMIT = 1000
 MAX_BATCH = 1000

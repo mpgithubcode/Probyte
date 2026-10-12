@@ -3,8 +3,8 @@
 Local writes go through store; writes to a linked table are forwarded to its source link,
 which enforces that link's permissions.
 """
-from app.sharing import linked as remote
 from app.data import store
+from app.sharing import linked as remote
 
 
 def _table(conn, table_id, user_id):

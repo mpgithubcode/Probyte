@@ -18,9 +18,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from app.identity import auth
 from app.core import ratelimit
-from app.core.db import Jsonb, app_secret, connection
+from app.core.db import app_secret, connection, Jsonb
+from app.identity import auth
 
 router = APIRouter()
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")

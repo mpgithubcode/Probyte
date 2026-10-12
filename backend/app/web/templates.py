@@ -29,12 +29,12 @@ from pydantic import BaseModel
 
 from app.data import store
 
-from app.sharing import recordops
-from app.calc.compute import COMPUTED_TYPES, FIELD_TYPES, Engine
-from app.core.db import Jsonb, connection
-from app.identity.auth import User
-from app.web.common import _own_view
+from app.calc.compute import COMPUTED_TYPES, Engine, FIELD_TYPES
 from app.calc.viewfilter import normalize_config
+from app.core.db import connection, Jsonb
+from app.identity.auth import User
+from app.sharing import recordops
+from app.web.common import _own_view
 
 router = APIRouter()
 VERSION = 1
