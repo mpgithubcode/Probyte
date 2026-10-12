@@ -4,20 +4,24 @@ import { debounce } from "../util";
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
 
-interface Hit { base: string; table: string; table_id: string; id: string; title: string; matched_field: string; match: string }
+interface Hit { base: string; table: string; table_id: string; id: string; title: string; matched_field: string; match: string; linked?: boolean }
 
 /** Ctrl/⌘ K: find records in every table (titles and any other field), and open one. */
 export function SearchModal({ onClose, onOpen }: { onClose: () => void; onOpen: (tableId: string, recordId: string) => void }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[] | null>(null);
+  const [skipped, setSkipped] = useState<string[]>([]);
+  const [searching, setSearching] = useState(false);
   const [at, setAt] = useState(0);
   const [error, setError] = useState("");
   const latest = useRef("");
   const run = useRef(debounce((text: string) => {
-    if (!text.trim()) { setHits(null); return; }
-    api.get<{ results: Hit[] }>(`/v1/search?q=${encodeURIComponent(text)}&limit=50`)
-      .then((r) => { if (latest.current === text) { setHits(r.results); setAt(0); } })
-      .catch((e) => setError(e.message));
+    if (!text.trim()) { setHits(null); setSkipped([]); return; }
+    setSearching(true);
+    api.get<{ results: Hit[]; skipped?: string[] }>(`/v1/search?q=${encodeURIComponent(text)}&limit=50`)
+      .then((r) => { if (latest.current === text) { setHits(r.results); setSkipped(r.skipped ?? []); setAt(0); } })
+      .catch((e) => setError(e.message))
+      .finally(() => { if (latest.current === text) setSearching(false); });
   }, 200)).current;
   useEffect(() => { latest.current = q; setError(""); run(q); }, [q, run]);
 
@@ -35,13 +39,15 @@ export function SearchModal({ onClose, onOpen }: { onClose: () => void; onOpen: 
             }} />
         </div>
         {error && <div className="error">{error}</div>}
-        {hits && !hits.length && <p className="muted">Nothing found for “{q}”.</p>}
+        {searching && !hits && <p className="muted small"><Icon name="sync" size={13} className="spin" /> Searching, linked tables too…</p>}
+        {hits && !hits.length && !searching && <p className="muted">Nothing found for “{q}”.</p>}
+        {!!skipped.length && <p className="muted small">Not searched (their source didn't answer in time): {skipped.join(", ")}</p>}
         <div className="search-hits" role="listbox">
           {hits?.map((h, i) => (
             <button key={h.id} role="option" aria-selected={i === at} className={`search-hit ${i === at ? "active" : ""}`}
               onMouseEnter={() => setAt(i)} onClick={() => pick(h)}>
               <span className="search-hit-title">{h.title || "Untitled"}</span>
-              <span className="muted small">{h.base} › {h.table}
+              <span className="muted small">{h.linked && <Icon name="link" size={11} />} {h.base} › {h.table}
                 {h.matched_field && h.match !== h.title && <> · {h.matched_field}: <i>{h.match}</i></>}</span>
             </button>
           ))}

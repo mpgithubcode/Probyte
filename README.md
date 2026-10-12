@@ -128,7 +128,9 @@ Every database and combined database can have any number of Notion-style views, 
 
 **Keyboard, copy and paste (Table view).** Click a cell to select it; move with the arrow keys and Tab; start typing to replace its value, or press Enter / F2 (or double-click) to edit it; Delete clears it, Space ticks a checkbox, Escape leaves the cell. In the grid, Enter saves long text too (Shift+Enter for a new line). Ctrl/⌘ C copies the cell, or the ticked rows as a block; Ctrl/⌘ V pastes a block copied from Excel, Google Sheets or Numbers starting at the selected cell, converting each value to its field's type and adding rows if the block runs past the end.
 
-**Search everything.** Ctrl/⌘ K (or the 🔍 in the sidebar) finds records in every table, by title or any other field, and opens the one you pick.
+**Search everything.** Ctrl/⌘ K (or the 🔍 in the sidebar) finds records in every table, linked tables from other servers included, by title or any other field (title matches first), and opens the one you pick. Linked tables are read from their sources in parallel for up to a few seconds; one whose source doesn't answer is listed as not searched.
+
+**Bases** can be reordered by dragging them in the sidebar, or with **Move up** / **Move down** in a base's ⋯ menu.
 
 **Undo and the trash.** Deleting a record, deleting or editing several at once, or deleting a table shows **Undo** for a few seconds. Deleted records and tables also stay in the **Trash** (sidebar, bottom) for 30 days, where you can restore them or delete them for good. A deleted table's calendar on the server is only removed when the trash is emptied, so restoring a table brings back everything, phones included.
 

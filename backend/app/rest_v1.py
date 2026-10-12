@@ -240,7 +240,10 @@ def delete_records(table: str, body: DeleteIn, base: str | None = None, user=Use
 
 @v1.get("/search", tags=["Records"], summary="Find records in every table")
 def search(q: str, limit: int = Query(20, ge=1, le=200), user=User):
-    return {"results": _run(apiv1.search_all, user, q, limit)}
+    """Linked tables are searched too; `skipped` lists any whose source didn't answer in time."""
+    with connection() as conn:
+        results, skipped = apiv1.search_everything(conn, user, q, limit)
+    return {"results": results, "skipped": skipped}
 
 
 # ---------------------------------------------------------------- webhooks

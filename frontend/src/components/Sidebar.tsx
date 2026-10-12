@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Base, User, Workspace } from "../types";
 import { PALETTE } from "../util";
@@ -33,6 +33,19 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());  // bases whose hidden tables are shown
   const is = (kind: string, id: string) => active?.kind === kind && active.id === id;
+  // reordering bases: drag a base's header (or Move up / down in its menu); shown at once, saved in the background
+  const [dragBase, setDragBase] = useState<string | null>(null);
+  const [order, setOrder] = useState<string[] | null>(null);
+  useEffect(() => setOrder(null), [ws.bases]);
+  const bases = order ? order.map((id) => ws.bases.find((b) => b.id === id)!).filter(Boolean) : ws.bases;
+  const moveBase = (b: Base, to: number) => {
+    const ids = bases.map((x) => x.id).filter((id) => id !== b.id);
+    to = Math.max(0, Math.min(to, ids.length));
+    ids.splice(to, 0, b.id);
+    if (ids.join() === ws.bases.map((x) => x.id).join()) { setOrder(null); return; }
+    setOrder(ids);
+    patchBase(b, { position: to });
+  };
 
   const toggle = (id: string) => setCollapsed((c) => {
     const next = new Set(c);
@@ -73,7 +86,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
         </div>
 
         <div className="side-scroll">
-          {ws.bases.map((b) => {
+          {bases.map((b, bi) => {
             // hidden tables stay out of the list (unless open, or the base's hidden ones are shown)
             const reveal = showHidden.has(b.id);
             const allTables = ws.tables.filter((t) => t.base_id === b.id);
@@ -83,8 +96,22 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
             const nHidden = allTables.filter((t) => t.hidden).length + allCombos.filter((c) => c.hidden).length;
             const isCollapsed = collapsed.has(b.id);
             return (
-              <div key={b.id} className="base">
-                <div className="base-row">
+              <div key={b.id} className={`base ${dragBase === b.id ? "dragging" : ""}`}
+                onDragOver={(e) => {
+                  if (!dragBase || dragBase === b.id) return;
+                  e.preventDefault();
+                  const ids = bases.map((x) => x.id).filter((id) => id !== dragBase);
+                  ids.splice(bases.findIndex((x) => x.id === dragBase) < bi ? ids.indexOf(b.id) + 1 : ids.indexOf(b.id), 0, dragBase);
+                  setOrder(ids);
+                }}
+                onDrop={(e) => e.preventDefault()}>
+                <div className="base-row" draggable title="Drag to reorder bases"
+                  onDragStart={(e) => { setDragBase(b.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", b.id); }}
+                  onDragEnd={() => {
+                    const moved = ws.bases.find((x) => x.id === dragBase);
+                    setDragBase(null);
+                    if (moved && order) moveBase(moved, order.indexOf(moved.id));
+                  }}>
                   <button className="base-toggle" onClick={() => toggle(b.id)} aria-expanded={!isCollapsed}>
                     <span className={`chev ${isCollapsed ? "" : "open"}`}><Icon name="right" size={12} /></span>
                     <span className="base-dot" style={{ background: b.color }}>{b.name[0]?.toUpperCase()}</span>
@@ -148,6 +175,14 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
             <button className="menu-item" onClick={() => { onNewTable(menu.base.id); setMenu(null); }}><Icon name="table" size={14} /> New table</button>
             <button className="menu-item" onClick={() => { onNewCombo(menu.base.id); setMenu(null); }}><Icon name="layers" size={14} /> New combined database</button>
             <button className="menu-item" onClick={() => { setRenaming(menu.base.id); setMenu(null); }}><Icon name="edit" size={14} /> Rename</button>
+            {bases.length > 1 && (() => {
+              const i = bases.findIndex((x) => x.id === menu.base.id);
+              return (<>
+                <button className="menu-item" disabled={i <= 0} onClick={() => { moveBase(menu.base, i - 1); setMenu(null); }}><Icon name="up" size={14} /> Move up</button>
+                <button className="menu-item" disabled={i >= bases.length - 1} onClick={() => { moveBase(menu.base, i + 1); setMenu(null); }}>
+                  <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="up" size={14} /></span> Move down</button>
+              </>);
+            })()}
             <button className="menu-item" title={menu.base.id} onClick={() => {
               const id = menu.base.id;
               navigator.clipboard?.writeText(id).then(() => onError(`Copied base ID ${id}`), () => onError(id));

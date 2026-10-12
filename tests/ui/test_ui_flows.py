@@ -1331,3 +1331,46 @@ def test_files_open_on_a_public_link_and_in_a_linked_table(browser):
     expect(img).to_be_visible()
     eventually(lambda: img.evaluate("i => i.naturalWidth") == 2 or None)
     assert not pg2.errors, pg2.errors
+
+
+def test_reorder_bases(browser):
+    u = Client()
+    u.base_id  # the account's first base
+    for name in ("Home", "Work"):
+        u.j("POST", "/bases", json={"name": name})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    names = lambda: [x.strip() for x in pg.locator(".sidebar .base-name").all_text_contents()]
+    expect(pg.locator(".sidebar .base-name")).to_have_count(3)
+    first = names()[0]
+    assert names()[1:] == ["Home", "Work"]
+    # drag Work above everything
+    pg.locator(".sidebar .base", has_text="Work").locator(".base-row").drag_to(pg.locator(".sidebar .base").first.locator(".base-row"))
+    eventually(lambda: [b["name"] for b in u.workspace()["bases"]][0] == "Work" or None)
+    pg.reload()
+    expect(pg.locator(".sidebar .base-name").first).to_have_text("Work")
+    # and back down from the menu
+    pg.locator(".sidebar .base", has_text="Work").locator(".base-more").click()
+    pg.click(".popover .menu-item:has-text('Move down')")
+    eventually(lambda: [b["name"] for b in u.workspace()["bases"]] == [first, "Work", "Home"] or None)
+    expect(pg.locator(".sidebar .base-name").nth(1)).to_have_text("Work")
+    assert not pg.errors, pg.errors
+
+
+def test_search_shows_linked_table_records(browser, table_user):
+    u, t, F = table_user
+    view = u.j("GET", f"/tables/{t['id']}")["views"][0]
+    s = u.j("POST", "/shares", json={"name": "Stock", "base_id": u.base_id, "items": [{"kind": "table", "id": t["id"], "views": [view["id"]]}]})
+    v = Client()
+    lt = v.j("POST", "/tables", json={"name": "Their stock", "kind": "remote", "base_id": v.base_id,
+                                      "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+    pg = new_page(browser)
+    sign_in(pg, v)
+    pg.keyboard.press("Control+k")
+    pg.fill(".search-modal input", "shelf")
+    hit = pg.locator(".search-hit", has_text="Shelf")
+    expect(hit).to_contain_text("Their stock")
+    hit.click()
+    expect(pg.locator(".page-head h1")).to_have_text("Their stock")
+    expect(pg.locator(".modal")).to_contain_text("Shelf")
+    assert not pg.errors, pg.errors

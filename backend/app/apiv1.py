@@ -9,7 +9,7 @@ import re
 
 from fastapi import HTTPException
 
-from . import recordops, store, sync
+from . import remote, recordops, store, sync
 from . import values as values_
 from .compute import COMPUTED_TYPES, FILTER_OPS, Engine
 from .viewfilter import apply_view, display_text, view_filter, view_sorts
@@ -556,28 +556,69 @@ def create_table(conn, user, name, base=None, fields=None) -> dict:
     return table_schema(conn, user, str(t["id"]))
 
 
-def search_all(conn, user, query: str, limit: int = 20) -> list[dict]:
+REMOTE_SEARCH_SECONDS = 6   # how long a search waits for linked tables' sources (other servers)
+
+
+def _warm_linked(tables: list[dict]) -> list[str]:
+    """Load the linked tables (from their sources, in parallel, each with its own connection) so the search reads them
+    from the cache; returns the names of those that didn't answer in time (or failed)."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+    from .db import connection
+    if not tables:
+        return []
+
+    def load(t):
+        with connection() as c:
+            row = c.execute("SELECT * FROM tables WHERE id = %s", (t["id"],)).fetchone()
+            entry = remote.load(c, row)
+            return not (row.get("remote") or {}).get("error") or bool(entry["records"])
+
+    pool = ThreadPoolExecutor(max_workers=min(8, len(tables)))
+    futures = {pool.submit(load, t): t for t in tables}
+    done, _ = wait(futures, timeout=REMOTE_SEARCH_SECONDS)
+    pool.shutdown(wait=False)  # a slow source keeps loading in the background (cached for next time)
+    return [futures[f]["name"] for f in futures if f not in done or f.exception() or not f.result()]
+
+
+def search_everything(conn, user, query: str, limit: int = 20) -> tuple[list[dict], list[str]]:
+    """Records in every table, linked tables included (titles first). Returns (hits, linked tables not searched)."""
     q = (query or "").strip().lower()
     if not q:
         bad("Say what to search for")
+    bases = list_bases(conn, user)
+    linked = [t for b in bases for t in b["tables"] if t["kind"] == "remote"]
+    skipped = _warm_linked(linked)
     eng = Engine(conn)
-    out = []
-    for b in list_bases(conn, user):
+    hits = []
+    for b in bases:
         for t in b["tables"]:
-            if t["kind"] == "remote":
+            if t["name"] in skipped and t["kind"] == "remote":
                 continue
-            fields = [f for f in eng.describe(t["id"]) if f["type"] not in HIDDEN_TYPES]
+            try:
+                fields = [f for f in eng.describe(t["id"]) if f["type"] not in HIDDEN_TYPES]
+                rows = eng.records(t["id"])
+            except HTTPException:
+                if t["kind"] == "remote":
+                    skipped.append(t["name"])
+                continue
             prim = next((f for f in fields if f.get("is_primary")), None)
-            for r in eng.records(t["id"]):
+            for r in rows:
                 hit = next((f for f in fields if q in display_text(eng, f, r["data"].get(str(f["id"]))).lower()), None)
-                if hit:
-                    out.append({"base": b["name"], "table": t["name"], "table_id": t["id"], "id": str(r["id"]),
-                                "title": display_text(eng, prim, r["data"].get(str(prim["id"]))) if prim else "",
-                                "matched_field": hit["name"],
-                                "match": display_text(eng, hit, r["data"].get(str(hit["id"])))[:200]})
-                    if len(out) >= limit:
-                        return out
-    return out
+                if not hit:
+                    continue
+                title = display_text(eng, prim, r["data"].get(str(prim["id"]))) if prim else ""
+                rank = 0 if title.lower().startswith(q) else 1 if q in title.lower() else 2
+                hits.append((rank, len(hits), {"base": b["name"], "table": t["name"], "table_id": t["id"], "id": str(r["id"]),
+                                               "title": title, "matched_field": hit["name"], "linked": t["kind"] == "remote",
+                                               "match": display_text(eng, hit, r["data"].get(str(hit["id"])))[:200]}))
+                if len(hits) >= 1000:
+                    break
+    hits.sort(key=lambda h: (h[0], h[1]))
+    return [h[2] for h in hits[:limit]], sorted(set(skipped))
+
+
+def search_all(conn, user, query: str, limit: int = 20) -> list[dict]:
+    return search_everything(conn, user, query, limit)[0]
 
 
 def sync_table(user, ref, base=None) -> dict:

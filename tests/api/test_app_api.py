@@ -433,3 +433,28 @@ def test_older_view_settings_are_read_in_todays_shape(user):
     assert [r["data"][F["Name"]] for r in got] == ["c", "a"]
     board = user.j("POST", f"/tables/{t['id']}/views", json={"name": "B", "type": "kanban", "config": {"groupBy": F["Status"]}})
     assert board["config"]["groupBy"] == F["Status"]                     # a board's columns stay
+
+
+def test_search_includes_linked_tables(user, other_user):
+    t = user.table(name="Suppliers")
+    F = user.fields(t["id"])
+    user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Copperline Wire Co"}})
+    s, view = make_share(user, t)
+    lt = other_user.j("POST", "/tables", json={"name": "Their suppliers", "kind": "remote", "base_id": other_user.base_id,
+                                               "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+    mine = other_user.table(name="Mine")
+    M = other_user.fields(mine["id"])
+    other_user.j("POST", f"/tables/{mine['id']}/records", json={"data": {M["Name"]: "Copper notes", M["Notes"]: "about copperline"}})
+    r = other_user.j("GET", "/v1/search", params={"q": "copperline"})
+    by_table = {h["table"]: h for h in r["results"]}
+    assert by_table["Their suppliers"]["linked"] is True and by_table["Their suppliers"]["title"] == "Copperline Wire Co"
+    assert by_table["Mine"]["linked"] is False and r["skipped"] == []
+    assert r["results"][0]["table"] == "Their suppliers"                      # a title match comes first
+    # its record opens from the result (the id is the linked table's own)
+    assert any(x["id"] == by_table["Their suppliers"]["id"] for x in other_user.records(lt["id"]))
+    # a linked table whose source is briefly unreachable is still searched (its last copy); one whose link was deleted
+    # has nothing to search and is named instead of failing the search
+    user.j("DELETE", f"/shares/{s['id']}")
+    other_user.post(API + f"/tables/{lt['id']}/refresh")
+    r = other_user.j("GET", "/v1/search", params={"q": "copperline"})
+    assert "Their suppliers" in r["skipped"] and [h["table"] for h in r["results"]] == ["Mine"]
