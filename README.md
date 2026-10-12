@@ -175,6 +175,7 @@ A **Files** table (New table → **Files**) shows the files in an **S3 bucket** 
   - **PDF**: every page, with zoom (the browser's own viewer on desktops; drawn with pdf.js on phones and elsewhere).
   - **Word, PowerPoint, OpenDocument, RTF** (.docx, .doc, .pptx, .ppt, .odt, .odp…): converted to PDF by the **office** service (LibreOffice) and shown page by page; the PDF is kept, so it opens instantly next time. Without the service, .docx files are drawn in the browser.
   - **Spreadsheets** (.xlsx, .xls, .ods, .numbers, .csv, .tsv): as a table with a tab per sheet (the first 5,000 rows).
+  - **Edit ▾** (when a Document Server is set up): **Edit in ONLYOFFICE**, right in the viewer; see [Editing documents in ONLYOFFICE](#editing-documents-in-onlyoffice).
   - **Markdown**: formatted, and edited as formatted text (**WYSIWYG**: headings, bold, lists, quotes, code, links), saved back as Markdown. **Text and code files**: shown and edited as text (Ctrl/⌘ S saves).
   - Images (click for actual size), including **SVG** drawings (shown as pictures, never run: any script inside is blocked; their code can be edited), video and audio play in place; anything else can be downloaded.
 - **Cover images**: images (iPhone HEIC photos too), PDFs, Word / PowerPoint / OpenDocument files and spreadsheets (their first page, without blank margins) and text, Markdown and code files (their first lines, as a page) get a small preview image, used in the grid, the Gallery and the viewer. Files that don't have one yet (for example added before the document converter was set up) get it at the next sync; each version is tried once. Text files (and .docx) put their first 20,000 characters in **Text**, so search finds words inside them.
@@ -183,6 +184,30 @@ A **Files** table (New table → **Files**) shows the files in an **S3 bucket** 
 - **Deleting**: a deleted record goes to the trash; its file is deleted from the storage when the trash is emptied (or after 30 days), and restoring the record keeps everything. Deleting the **table** never deletes the files.
 - Connections are saved under **Settings → File storage** (secret keys and passwords encrypted) and can be shared by several tables. Uploads are limited to `FILES_MAX_UPLOAD_MB` (default 2048) per file; your reverse proxy may have its own limit.
 - Public links that show a files table serve its files too (read-only).
+
+## Editing documents in ONLYOFFICE
+
+Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (the free Community edition works) and Word, Excel and PowerPoint files (and OpenDocument, RTF, CSV and text) in a files table can be edited inside Probyte's viewer: **Edit ▾ → Edit in ONLYOFFICE**. PDFs and older formats (.doc, .xls, .ppt) open read-only (**Open in ONLYOFFICE (read-only)**).
+
+- **Saved to your storage.** **Save** writes the document to the S3 bucket or WebDAV folder as a new version of the same file (the record, its fields and links stay), and the viewer says when it's there. ONLYOFFICE also saves on its own when everyone has closed the document.
+- **Closing with unsaved changes asks**: **Save**, **Discard** (the file stays as it was last saved) or **Keep editing**. Closing the viewer, going to another file and **Close editor** all ask; leaving the page warns too.
+- The same file open in two places is edited together (ONLYOFFICE's co-editing); one of them discarding doesn't throw away the other's changes.
+- Every exchange is signed with the Document Server's secret (JWT). The Document Server gets each file through a one-off address, and Probyte only ever downloads saved versions from the Document Server's own address.
+
+**Setting it up** (Settings → **Document editing**, admin): the Document Server's address (as browsers reach it) and its `JWT_SECRET`, then **Save and test**. Add it to your compose file (it needs about 2 GB of memory):
+
+```yaml
+  onlyoffice:
+    image: onlyoffice/documentserver:8.2.2
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: a-long-random-secret
+      ALLOW_PRIVATE_IP_ADDRESS: "true"   # lets it fetch files from Probyte over the Docker network
+    ports:
+      - "8081:80"   # or behind your reverse proxy (it uses WebSockets)
+```
+
+Under **Network settings**, give *Probyte's address for the Document Server* (`http://probyte:8000` in the same Compose file) and *the Document Server's address for Probyte* (`http://onlyoffice`) when they differ from the public ones. If Probyte is served over HTTPS, the Document Server must be too (browsers don't load an HTTP editor into an HTTPS page). Files of linked tables open in the viewer as usual but aren't edited in ONLYOFFICE.
 
 ## Linked tables (from any Probyte server)
 
@@ -433,7 +458,7 @@ KEEP_STACK=1 scripts/test.sh ...   # leave the test stack running afterwards to 
 
 Tests run against a separate copy of the stack (Compose project `probyte-test`, ports 18080/15232, its own database and Radicale, plus throwaway S3 and WebDAV servers from `tests/docker-compose.storage.yml`), never your real data. Only Docker is needed. Failed browser tests leave a screenshot in `tests/.artifacts/`.
 
-What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); files tables on S3 and WebDAV (uploads, previews, renames, outside changes, the trash); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
+What's covered: every field type, formulas, links, lookups and rollups, type changes; records, views, filters, imports, bulk edits; users kept apart; the REST API, every MCP tool, OAuth and webhooks (filters, retries); public links and linked tables; two-way calendar and contacts sync (phones' items, conflicts, deletions, repeats, time zones); files tables on S3 and WebDAV (uploads, previews, renames, outside changes, the trash); ONLYOFFICE editing (against a stand-in Document Server; `ONLYOFFICE_TEST_URL` runs `tests/office` against a real one); live updates and the computed-value cache; and the app itself in a browser on a desktop and a phone (building tables, editing, filtering, board, calendar, import/export, settings).
 
 ### Backups
 

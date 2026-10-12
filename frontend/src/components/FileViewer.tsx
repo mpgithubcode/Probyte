@@ -1,4 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { OfficeEditor, officeMode, saveOffice, startOffice, useOfficeStatus, type OfficeSession } from "./OfficeEditor";
+import { Popover, usePopover } from "./Overlay";
 import { createPortal } from "react-dom";
 import { api } from "../api";
 import { attachmentUrl, editableKind, fetchBytes, fileExt, fileWriteUrl, imageUrl, isSvg, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
@@ -58,8 +60,51 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
   const item = entry?.item;
   const editing = draft !== null;
   const dirty = editing && draft !== original;
+  // ONLYOFFICE: the open editor, whether it has changes not yet in the storage, and the "save or discard?" question
+  const officeStatus = useOfficeStatus();
+  const [office, setOffice] = useState<OfficeSession | null>(null);
+  const [officeDirty, setOfficeDirty] = useState(false);
+  const [officeNote, setOfficeNote] = useState("");
+  const [ask, setAsk] = useState<{ then: () => void } | null>(null);
+  const editMenu = usePopover();
+
+  useEffect(() => {  // leaving the page with unsaved changes in the editor
+    if (!officeDirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [officeDirty]);
+
+  const openOffice = async (mode: "edit" | "view") => {
+    editMenu.close();
+    setBusy(true); setErr(""); setOfficeNote("");
+    try { setOffice(await startOffice(item!, mode)); setOfficeDirty(false); } catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+  };
+  const saveOfficeNow = async (): Promise<boolean> => {
+    if (!office) return true;
+    setBusy(true); setErr(""); setOfficeNote("Saving…");
+    try {
+      await saveOffice(office);
+      setOfficeDirty(false); setOfficeNote("Saved");
+      setVersion((v) => v + 1);
+      return true;
+    } catch (e) { setErr((e as Error).message); setOfficeNote(""); return false; }
+    finally { setBusy(false); }
+  };
+  const endOffice = async (how: "close" | "discard") => {
+    const s = office;
+    setOffice(null); setOfficeDirty(false); setOfficeNote(""); setAsk(null);
+    if (s) await api.post(`/office/sessions/${s.session}/${how}`).catch(() => undefined);
+    setVersion((v) => v + 1);
+  };
 
   const leave = (then: () => void) => {
+    if (office) {  // the editor: unsaved changes → save, discard or keep editing
+      if (officeDirty) { setAsk({ then }); return; }
+      endOffice("close").then(then);
+      return;
+    }
     if (dirty && !window.confirm("Discard your changes to this file?")) return;
     setDraft(null); setErr(""); setConfirmDelete(false);
     then();
@@ -71,7 +116,10 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       const typing = !!t.closest("input, textarea, select, [contenteditable=true]");
-      if (e.key === "Escape" && !document.querySelector(".popover")) { e.preventDefault(); typing && editing ? leave(() => undefined) : close(); }
+      if (e.key === "Escape" && !document.querySelector(".popover") && !ask) {
+        e.preventDefault();
+        if (office) leave(() => undefined); else if (typing && editing) leave(() => undefined); else close();
+      }
       if (typing) {
         if ((e.metaKey || e.ctrlKey) && e.key === "s" && editing) { e.preventDefault(); save(); }
         return;
@@ -88,6 +136,8 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
   if (!item) return null;
   const kind = viewKind(item);
   const canEditFile = !!canEdit && editableKind(item) && item.size <= MAX_TEXT;
+  const oMode = !item.url ? officeMode(officeStatus, item) : null;   // (files of linked tables: not here)
+  const canOffice = !!oMode && (oMode === "view" || !!canEdit);
 
   async function save() {
     if (!item || draft === null) return;
@@ -125,15 +175,37 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
         </div>
         <span className="spacer" />
         {err && <span className="viewer-err" title={err}>{err}</span>}
-        {editing ? (
+        {office ? (
+          <>
+            <span className="office-badge">ONLYOFFICE{office.mode === "view" ? " · read-only" : ""}</span>
+            {officeNote && <span className="viewer-note">{officeNote}</span>}
+            {office.mode === "edit" && <button className="viewer-btn text" disabled={busy} onClick={saveOfficeNow} title="Save to the storage now">
+              <Icon name="upload" size={16} /> <span>{busy ? "Saving…" : "Save"}</span></button>}
+            <button className="viewer-btn primary" onClick={() => leave(() => undefined)}>Close editor</button>
+          </>
+        ) : editing ? (
           <>
             <button className="viewer-btn text" onClick={() => leave(() => undefined)}>Cancel</button>
             <button className="viewer-btn primary" disabled={busy || !dirty} onClick={save}>{busy ? "Saving…" : "Save"}</button>
           </>
         ) : (
           <>
-            {canEditFile && <button className="viewer-btn text" onClick={() => setDraft(original ?? "")} disabled={original === null}>
-              <Icon name="edit" size={16} /> <span>Edit</span></button>}
+            {canOffice ? <button className="viewer-btn text" onClick={editMenu.open} disabled={busy} aria-haspopup="menu">
+              <Icon name="edit" size={16} /> <span>Edit</span> ▾</button>
+              : canEditFile && <button className="viewer-btn text" disabled={busy || original === null} onClick={() => setDraft(original ?? "")}>
+                <Icon name="edit" size={16} /> <span>Edit</span></button>}
+            {editMenu.anchor && (
+              <Popover anchor={editMenu.anchor} onClose={editMenu.close} align="right" width={250} className="viewer-menu">
+                <div className="menu-list">
+                  {canEditFile && <button className="menu-item" disabled={original === null} onClick={() => { editMenu.close(); setDraft(original ?? ""); }}>
+                    <Icon name="edit" size={14} /> Edit here</button>}
+                  {canOffice && oMode === "edit" && <button className="menu-item" onClick={() => openOffice("edit")}>
+                    <Icon name="file" size={14} /> Edit in ONLYOFFICE</button>}
+                  {canOffice && <button className="menu-item" onClick={() => openOffice("view")}>
+                    <Icon name="eye" size={14} /> Open in ONLYOFFICE (read-only)</button>}
+                </div>
+              </Popover>
+            )}
             {(kind === "pdf" || kind === "image" || kind === "video" || kind === "audio") && (item.file || item.url) && (
               <a className="viewer-btn" href={attachmentUrl(item)} target="_blank" rel="noreferrer" title="Open in a new tab"><Icon name="external" size={17} /></a>
             )}
@@ -150,10 +222,30 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
       </header>
       <div className="viewer-main">
         <div className="viewer-stage">
-          {entries.length > 1 && i > 0 && !editing && <button className="viewer-nav prev" onClick={() => go(i - 1)} aria-label="Previous file"><Icon name="left" size={22} /></button>}
-          <FileBody key={`${item.id}:${item.size}:${version}`} item={item} kind={kind} editing={editing} draft={draft}
-            onDraft={setDraft} onText={setOriginal} />
-          {entries.length > 1 && i < entries.length - 1 && !editing && <button className="viewer-nav next" onClick={() => go(i + 1)} aria-label="Next file"><Icon name="right" size={22} /></button>}
+          {entries.length > 1 && i > 0 && !editing && !office && <button className="viewer-nav prev" onClick={() => go(i - 1)} aria-label="Previous file"><Icon name="left" size={22} /></button>}
+          {office
+            ? <OfficeEditor key={office.session} session={office} onModified={() => { setOfficeDirty(true); setOfficeNote("Unsaved changes"); }}
+                onError={(m) => setErr(m)} />
+            : <FileBody key={`${item.id}:${item.size}:${version}`} item={item} kind={kind} editing={editing} draft={draft}
+                onDraft={setDraft} onText={setOriginal} />}
+          {entries.length > 1 && i < entries.length - 1 && !editing && !office && <button className="viewer-nav next" onClick={() => go(i + 1)} aria-label="Next file"><Icon name="right" size={22} /></button>}
+          {ask && (
+            <div className="viewer-dialog-backdrop">
+              <div className="viewer-dialog" role="alertdialog" aria-label="Unsaved changes">
+                <b>Save your changes to “{item.name}”?</b>
+                <p>They aren't in the storage yet. If you discard them, the file stays as it was when it was last saved.</p>
+                <div className="row">
+                  <button className="btn primary" disabled={busy} onClick={async () => {
+                    const then = ask.then;
+                    if (await saveOfficeNow()) { await endOffice("close"); then(); } else setAsk(null);
+                  }}>{busy ? "Saving…" : "Save"}</button>
+                  <button className="btn danger-ghost" disabled={busy} onClick={async () => { const then = ask.then; await endOffice("discard"); then(); }}>Discard</button>
+                  <span className="spacer" />
+                  <button className="btn" disabled={busy} onClick={() => setAsk(null)}>Keep editing</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         {info && (
           <aside className="viewer-info">

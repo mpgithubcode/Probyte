@@ -6,6 +6,8 @@
 #   scripts/test.sh tests/api/test_fields.py   one file (or test id)
 #   scripts/test.sh bench      timings at 1k/10k/50k rows (tests/bench/bench.py)
 #   scripts/test.sh screens    README screenshots and GIFs (tests/screens/capture.py -> docs/screenshots)
+#   ONLYOFFICE_TEST_URL=http://onlyoffice ONLYOFFICE_TEST_SECRET=… scripts/test.sh tests/office   against a real Document Server
+#     (a container on the probyte-test_default network with that alias; see tests/office)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export COMPOSE_FILE=docker-compose.yml:tests/docker-compose.storage.yml COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080} RADICALE_PORT=${TEST_RADICALE_PORT:-15232}
@@ -31,7 +33,8 @@ case "${1:-}" in tests/*) target="" ;; esac  # a file or test id given: run just
 args=""; [ $# -gt 0 ] && args=$(printf "%q " "$@")  # keep quoted pytest arguments (-k "a or b") intact
 docker rm -f probyte-test-runner >/dev/null 2>&1 || true
 docker create --name probyte-test-runner --network probyte-test_default -w /work \
-  -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 -e PROBYTE_ADMIN=testadmin:test-admin-pass-1 "$PLAYWRIGHT_IMAGE" \
+  -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 -e PROBYTE_ADMIN=testadmin:test-admin-pass-1 \
+  -e ONLYOFFICE_TEST_URL="${ONLYOFFICE_TEST_URL:-}" -e ONLYOFFICE_TEST_SECRET="${ONLYOFFICE_TEST_SECRET:-}" "$PLAYWRIGHT_IMAGE" \
   bash -c "pip install -q pytest requests playwright==1.48.0 'psycopg[binary]' 2>/dev/null && $cmd $target $args" >/dev/null
 docker cp tests probyte-test-runner:/work/tests >/dev/null
 docker start -a probyte-test-runner

@@ -1353,3 +1353,16 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .input-with-action { display: flex; align-items: center; gap: 6px; width: 100%; }
 .input-with-action .input { flex: 1; min-width: 0; }
 .field-action { flex-shrink: 0; color: var(--accent); }
+
+/* ONLYOFFICE inside the viewer */
+.office-editor { position: relative; display: flex; flex: 1; min-width: 0; background: #fff; }
+.office-frame { flex: 1; min-height: 100%; }
+.office-editor iframe { width: 100% !important; height: 100% !important; border: 0; display: block; }
+.office-loading { position: absolute; inset: 0; background: #1f2023; z-index: 1; }
+.office-badge { font-size: 11.5px; font-weight: 600; letter-spacing: 0.03em; color: #ff8c5a; border: 1px solid #ff8c5a66; border-radius: 6px; padding: 2px 8px; }
+.viewer-note { color: #9aa0a6; font-size: 12.5px; }
+.viewer-menu { z-index: 90 !important; }
+.viewer-dialog-backdrop { position: absolute; inset: 0; z-index: 5; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
+.viewer-dialog { width: min(440px, 92%); background: var(--bg); color: var(--text); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 10px; }
+.viewer-dialog p { margin: 0; color: var(--text-soft); font-size: 13.5px; }

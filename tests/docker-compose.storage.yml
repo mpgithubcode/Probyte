@@ -6,3 +6,8 @@ services:
   webdav:
     image: rclone/rclone:1.68.2
     entrypoint: ["sh", "-c", "mkdir -p /data/shared && exec rclone serve webdav /data --addr :8080 --user dav --pass davpass1234"]
+  # a stand-in ONLYOFFICE Document Server (tests/office/test_office.py)
+  fakeoffice:
+    build: tests/fakeoffice
+    environment:
+      FAKE_SECRET: fake-office-secret-123

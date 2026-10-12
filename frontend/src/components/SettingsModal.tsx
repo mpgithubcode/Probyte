@@ -5,6 +5,7 @@ import { ApiPanel } from "./ApiPanel";
 import { AccountsPanel } from "./AccountsModal";
 import { StoragesPanel } from "./StorageForm";
 import { TemplatesPanel } from "./Templates";
+import { OfficeSettings } from "./OfficeSettings";
 import { SharesPanel } from "./SharesPanel";
 import { BackupsPanel } from "./BackupsPanel";
 import { Icon } from "./Icon";
@@ -30,12 +31,13 @@ function CopyField({ label, value, secret }: { label: string; value: string; sec
   );
 }
 
-export type Tab = "account" | "accounts" | "storage" | "templates" | "phone" | "links" | "keys" | "backups";
+export type Tab = "account" | "accounts" | "storage" | "templates" | "phone" | "links" | "keys" | "backups" | "office";
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "account", label: "Account", icon: "user" }, { id: "accounts", label: "Sync accounts", icon: "calendar" },
   { id: "storage", label: "File storage", icon: "folder" }, { id: "templates", label: "Templates", icon: "layers" }, { id: "phone", label: "Phone sync", icon: "phone" },
   { id: "links", label: "Public links", icon: "share" }, { id: "keys", label: "API & MCP", icon: "key" },
   { id: "backups", label: "Backups", icon: "download" },  // the server's admin only
+  { id: "office", label: "Document editing", icon: "file" },  // the server's admin only
 ];
 
 export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChanged, initialTab = "account" }: {
@@ -88,7 +90,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
     <Modal title="Settings" width={760} onClose={onClose}>
       <div className="settings">
         <nav className="settings-tabs">
-          {TABS.filter((t) => t.id !== "backups" || user.is_admin).map((t) => (
+          {TABS.filter((t) => (t.id !== "backups" && t.id !== "office") || user.is_admin).map((t) => (
             <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
               <Icon name={t.icon} size={15} /> <span>{t.label}</span>
             </button>
@@ -97,6 +99,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
         <div className="form settings-body">
         {tab === "links" && <SharesPanel ws={ws} />}
         {tab === "backups" && user.is_admin && <BackupsPanel />}
+        {tab === "office" && user.is_admin && <section className="settings-section"><OfficeSettings /></section>}
         {tab === "keys" && <ApiPanel ws={ws} />}
         {tab === "accounts" && (
           <section className="settings-section">
