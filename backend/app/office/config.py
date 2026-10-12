@@ -3,8 +3,9 @@ import re
 
 from fastapi import HTTPException
 
+from app.blobs.attachments import ATTACH_DIR
 from app.core.secretbox import seal, unseal
-from app.files import catalog as files
+from app.files.kinds import _ext
 
 WORD = {"docx", "docm", "dotx", "dotm", "odt", "ott", "rtf", "txt", "doc", "dot", "epub", "fb2", "html", "htm", "mht", "xml"}
 CELL = {"xlsx", "xlsm", "xltx", "xltm", "ods", "ots", "csv", "xls", "xlt"}
@@ -18,7 +19,7 @@ CONVERT = {"doc": "docx", "dot": "docx", "dotm": "docx", "xls": "xlsx", "xlt": "
            "ppt": "pptx", "pps": "pptx", "pot": "pptx", "potm": "pptx"}
 SETTINGS = ("url", "secret", "probyte_url", "server_url", "via_probyte", "browser_scheme", "verify_tls")
 PREFIX = "/office-ds"   # where Probyte relays the Document Server for browsers
-CONVERTED_DIR = files.ATTACH_DIR / "office"   # converted copies, while they're edited
+CONVERTED_DIR = ATTACH_DIR / "office"   # converted copies, while they're edited
 
 
 def settings(conn) -> dict:
@@ -66,5 +67,5 @@ def enabled(conn) -> bool:
 
 
 def doc_type(name: str) -> str | None:
-    e = files._ext(name)
+    e = _ext(name)
     return "word" if e in WORD else "cell" if e in CELL else "slide" if e in SLIDE else "pdf" if e in PDF else None

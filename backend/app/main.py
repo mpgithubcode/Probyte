@@ -21,7 +21,7 @@ from app.adapters import feeds, live, mcp_server, rest_v1
 from app.core.db import connection, init_db
 from app.data import contacts, store
 from app.dav import api as dav_api, server as dav_server
-from app.files import catalog as files
+from app.files import api as files
 from app.identity import oauth, routes as auth_routes
 from app.sharing import links as shares
 from app.web import admin, records, tables, templates, views, workspace

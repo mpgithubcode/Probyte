@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, Response
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
+from app.blobs.attachments import ATTACH_DIR
 from app.core.db import connection
 from app.data import store
 from app.extensions.takeoff import drawings, symbols
@@ -26,7 +27,7 @@ from app.files import catalog as files
 from app.identity.auth import User
 
 router = APIRouter()
-DIR = files.ATTACH_DIR / "takeoff"
+DIR = ATTACH_DIR / "takeoff"
 MAX_BYTES = 300 * 1024 * 1024
 MAX_PAGES = 2000
 DPIS = (50, 100, 150, 200, 300)
