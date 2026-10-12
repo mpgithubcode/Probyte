@@ -571,10 +571,13 @@ backend/app/
   formats/        pure conversions: iCalendar (ical.py), vCard, repeat rules, field formats (phone numbers…)
   calc/           the formula language, computed fields and their cache (compute.py), view filters and sorts
   identity/       accounts, sessions, API keys (auth.py), OAuth 2.1 for AI assistants, the sign-in routes
-  data/           the record store (store.py: bases, tables, fields, records, links, rules, combined databases),
-                  value conversion for imports and the API, record history (audit.py), vCard import/export
+  data/           the record store: store.py is its interface; schema.py (bases, tables, fields, views), rules.py
+                  (required / unique / defaults), behaviors.py (what tasks and events do on their own), records.py
+                  (every record write, links, history, the change feed), combos.py (combined databases); value conversion
+                  for imports and the API (values.py), record history (audit.py), vCard import/export
   blobs/          bytes: uploaded attachments, and the S3 / WebDAV drivers of files tables
-  files/          files tables (catalog.py): the storage as records, uploads, moves, previews, streaming
+  files/          files tables: kinds.py (what a file is), catalog.py (the storage as records: sync, uploads, moves,
+                  streaming), previews.py (covers and viewable copies, by the worker), storages.py (connections), api.py
   dav/            calendars and contacts: Probyte's own CalDAV/CardDAV server (server.py), device logins,
                   record <-> item mapping (items.py), sync with other servers (sync.py), the one-time Radicale import
   sharing/        public links (links.py), linked tables from any Probyte (linked.py), record writes for every
