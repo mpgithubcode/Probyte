@@ -397,7 +397,10 @@ def create_link_pair(conn, table, name, options, user_id):
 # ---------------------------------------------------------------- records
 
 def clean_record(r):
-    return {k: r[k] for k in ("id", "table_id", "data", "sync_status", "created_at", "updated_at")}
+    out = {k: r[k] for k in ("id", "table_id", "data", "sync_status", "created_at", "updated_at")}
+    if r.get("source_id"):  # a linked table's record: its id in the source
+        out["source_id"] = r["source_id"]
+    return out
 
 
 def normalize_data(conn, table, fields, data: dict, user_id=None, record_id=None) -> dict:
@@ -882,8 +885,13 @@ NAME_MEANINGS = {
 
 
 def _semantic(f):
-    if f["system_key"]:
-        return SEMANTIC_KEY.get(f["system_key"])
+    key = f["system_key"]
+    if key == "remote":  # a linked table's field: the role it has in its source (a calendar's start, status…)
+        key = (f["options"] or {}).get("_source_key")
+        if key and SEMANTIC_KEY.get(key):
+            return SEMANTIC_KEY[key]
+    elif key:
+        return SEMANTIC_KEY.get(key)
     name = f["name"].strip().lower()
     return next((sem for sem, (names, types) in NAME_MEANINGS.items() if name in names and f["type"] in types), None)
 
@@ -960,7 +968,7 @@ def resolve_combo(conn, combo, engine=None):
 
 
 def _project(fields, src_name, tid, record):
-    data = {"__source": src_name, "__id": str(record["id"])}
+    data = {"__source": src_name, "__id": str(record.get("source_id") or record["id"])}  # (a linked record: its source's id)
     for f in fields:
         fid = f["mapping"].get(tid)
         if fid is not None:

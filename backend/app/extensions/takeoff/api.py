@@ -452,6 +452,36 @@ class Region(BaseModel):
     heading: str | None = None
 
 
+_legends_cache: dict = {}
+
+
+def legends_cached(pid, doc, n) -> list[dict]:
+    key = (str(pid), n, _pdf(pid).stat().st_mtime)
+    if key not in _legends_cache:
+        if len(_legends_cache) > 300:
+            _legends_cache.clear()
+        _legends_cache[key] = drawings.legends(doc[n])
+    return _legends_cache[key]
+
+
+@router.get("/projects/{pid}/symbols")
+def symbol_library(pid: str, pages: str = "included", user=User):
+    """Every legend entry with a picture on the sheets (the ones in the takeoff, or all): to give an item its symbol."""
+    with connection() as conn:
+        _project(conn, pid, user)
+        rows = conn.execute("SELECT page_no, sheet_no FROM tk_pages WHERE project_id = %s" + (" AND included" if pages == "included" else "")
+                            + " ORDER BY page_no", (pid,)).fetchall()
+    doc = _open(pid)
+    out = []
+    for r in rows:
+        for lg in legends_cached(pid, doc, r["page_no"]):
+            for i, e in enumerate(lg["rows"]):
+                if e["symbol"]:
+                    out.append({"page": r["page_no"], "sheet_no": r["sheet_no"], "legend": lg["heading"], "legend_rect": lg["rect"],
+                                "name": e["name"], "tag": e["tag"], "rect": e["symbol"], "details": e["details"]})
+    return out
+
+
 @router.post("/projects/{pid}/pages/{n}/legend-in")
 def legend_in(pid: str, n: int, body: Region, user=User):
     """The entries of a legend boxed by hand."""

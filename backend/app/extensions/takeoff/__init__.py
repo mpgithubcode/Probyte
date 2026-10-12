@@ -7,6 +7,7 @@ drawing set marked up, or a Probyte table.
 from pathlib import Path
 
 from .. import Extension
+from . import mcp
 from .api import router
 
 EXTENSION = Extension(
@@ -17,4 +18,6 @@ EXTENSION = Extension(
     icon="ruler",
     router=router,
     migrations=Path(__file__).parent / "migrations",
+    tools=mcp.TOOLS,
+    call=mcp.call,
 )

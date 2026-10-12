@@ -161,6 +161,9 @@ def _write(link, method, suffix, body=None):
 
 # ======================================================================== mirroring into a local table
 
+REC_ID = "__record_id"  # a linked table's own Record ID field (the source's record ids)
+
+
 def lid(table_id, remote_id) -> str:
     """Stable local id for a remote field/record (so the same table linked twice never collides)."""
     return str(uuid.uuid5(uuid.UUID(str(table_id)), str(remote_id)))
@@ -213,6 +216,8 @@ def sync_fields(conn, table, payload) -> str:
         if f["type"] == "button" and opts.get("updates"):
             opts["updates"] = [{**u, "fieldId": lid(tid, u["fieldId"])} for u in opts["updates"]]
         desired.append([lid(tid, f["id"]), f["name"], f["type"], opts, bool(f.get("is_primary")), i])
+    if not any(d[2] == "record_id" for d in desired):  # the source's record ids, even when its view doesn't show them
+        desired.append([lid(tid, REC_ID), "Record ID", "record_id", {"_remote_id": REC_ID, "_readonly": True}, False, len(desired)])
     sig = hashlib.sha256(json.dumps(desired, sort_keys=True, default=str).encode()).hexdigest()
     if (table.get("remote") or {}).get("fields_hash") == sig:
         return sig
@@ -230,6 +235,7 @@ def sync_fields(conn, table, payload) -> str:
 def _convert(tid, payload) -> dict:
     fmap = {str(f["id"]): lid(tid, f["id"]) for f in payload.get("fields") or []}
     files = {str(f["id"]) for f in payload.get("fields") or [] if f["type"] == "attachment"}
+    own_rid = not any(f["type"] == "record_id" for f in payload.get("fields") or [])  # (see sync_fields)
     records, reverse = [], {}
     for r in payload.get("records") or []:
         rid = lid(tid, r["id"])
@@ -244,8 +250,10 @@ def _convert(tid, payload) -> dict:
                 v = [{**a, "url": f"/api/remote/{tid}/files/{a['id']}" if a.get("file") else f"/api/remote/{tid}/attachments/{a['id']}"}
                      for a in v if isinstance(a, dict) and a.get("id")]
             data[fmap[k]] = v
+        if own_rid:
+            data[lid(tid, REC_ID)] = str(r["id"])
         created = _parse_dt(r.get("created_at"))
-        records.append({"id": rid, "table_id": tid, "data": data, "sync_status": "synced", "created_at": created,
+        records.append({"id": rid, "source_id": str(r["id"]), "table_id": tid, "data": data, "sync_status": "synced", "created_at": created,
                         "updated_at": created, "seq": None, "created_by": None, "updated_by": None})
     return {"records": records, "reverse": reverse, "refs": payload.get("refs") or {"records": {}, "users": {}},
             "sources": payload.get("sources")}

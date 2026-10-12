@@ -111,3 +111,33 @@ def test_linked_tasks_table_keeps_field_roles_and_formats(user, other_user):
     rid = info["records"][0]["id"]
     other_user.j("PATCH", f"/tables/{lt['id']}/records/{rid}", json={"data": {by_key["done"]["id"]: True}})
     assert user.records(t["id"])[0]["data"][F["status"]] == "Completed"
+
+
+def test_linked_calendar_tables_line_up_and_keep_record_ids(user, other_user):
+    """A linked calendar's fields line up with your own calendars in a combined database (by their role, as your own
+    tables' do), and its records show the Record IDs they have in their source."""
+    acct = lambda u: next(a for a in u.workspace()["accounts"] if a["is_builtin"])["id"]
+    src = user.table("events", "Site visits")
+    F = user.fields(src["id"])
+    rec = user.j("POST", f"/tables/{src['id']}/records", json={"data": {F["summary"]: "Walkthrough", F["dtstart"]: "2026-10-20T09:00:00Z"}})
+    s, view = share(user, src, edit=True)
+    lt = link(other_user, s, view, "Their visits")
+    mine = other_user.table("events", "My visits")
+    M = other_user.fields(mine["id"])
+    other_user.j("POST", f"/tables/{mine['id']}/records", json={"data": {M["summary"]: "Inspection", M["dtstart"]: "2026-10-21T13:00:00Z"}})
+    # the linked table: its Record ID is the source's
+    info = other_user.j("GET", f"/tables/{lt['id']}")
+    rid_f = next(f for f in info["fields"] if f["type"] == "record_id")
+    assert info["records"][0]["data"][rid_f["id"]] == rec["id"]
+    # combined with my own calendar: one Title, one Start, one End… (not one per table)
+    c = other_user.j("POST", "/combos", json={"name": "All visits", "base_id": other_user.base_id,
+                                               "sources": [{"table_id": mine["id"]}, {"table_id": lt["id"]}]})
+    combo = other_user.j("GET", f"/combos/{c['id']}")
+    names = [f["name"] for f in combo["fields"]]
+    for n in ("Title", "Start", "End", "Status", "Location"):
+        assert sum(1 for x in names if x.split(" / ")[0] == n) == 1, (n, names)
+    start = next(f for f in combo["fields"] if f["name"].startswith("Start"))
+    assert len(start["mapping"]) == 2
+    title = next(f["id"] for f in combo["fields"] if f["name"].startswith("Title"))
+    got = {r["data"].get(title): r["data"]["__id"] for r in combo["records"]}
+    assert got["Walkthrough"] == rec["id"]

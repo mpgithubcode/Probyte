@@ -142,3 +142,9 @@
 .tk-findall { display: flex; flex-direction: column; gap: 6px; }
 .tk-report { font-size: 12px; background: var(--bg-soft); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow: auto; }
 .tk-report .err { color: #b45309; }
+.tk-sympick { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.tk-sympick-list { max-height: 340px; overflow: auto; display: flex; flex-direction: column; }
+.tk-sympick-row { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 4px 6px; border-radius: 6px; cursor: pointer; text-align: left; }
+.tk-sympick-row:hover { background: var(--bg-hover); }
+.tk-sympick-name { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-symbol { flex-wrap: wrap; }

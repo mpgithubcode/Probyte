@@ -57,7 +57,8 @@ def test_takeoff_in_the_browser(admin, tmp_path):
 
         pg = b.new_page(viewport={"width": 1440, "height": 900})
         errors = []
-        pg.on("pageerror", lambda e: errors.append(str(e)))
+        # (pdf.js, closed while a PDF was still loading, sometimes reports this from inside itself: harmless)
+        pg.on("pageerror", lambda e: errors.append(str(e)) if "Worker was terminated" not in str(e) else None)
         pg.on("dialog", lambda d: d.accept(answers.pop(0) if answers else ""))
         answers = []
         sign_in(pg, u)
@@ -122,6 +123,15 @@ def test_takeoff_in_the_browser(admin, tmp_path):
         pg.screenshot(path=f"{SHOTS}/takeoff-review.png")
         pg.click("button:has-text('Accept all on sheet')")
         expect(pg.locator(".tk-detail-qty")).to_contain_text("4 EA")
+        # a symbol chosen from the legends (here: the troffer's, then back)
+        pg.click("button:has-text('Choose from legends')")
+        picker = pg.locator(".tk-sympick")
+        expect(picker.locator(".tk-sympick-row")).to_have_count(7)            # E1.0 schedule (3), E2.0 and E3.0 legends (2 each)
+        picker.locator("input[aria-label='Search symbols']").fill("downlight")
+        expect(picker.locator(".tk-sympick-row")).to_have_count(1)
+        picker.locator(".tk-sympick-row").click()
+        expect(pg.locator(".tk-sympick")).to_have_count(0)
+        expect(pg.locator(".tk-symbol img")).to_have_count(1)
         # count one more by clicking
         pg.click("button:has-text('Count by clicking')")
         expect(pg.locator(".tk-tool.on")).to_have_attribute("aria-label", re.compile("^Count"))

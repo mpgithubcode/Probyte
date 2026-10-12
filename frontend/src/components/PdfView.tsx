@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+// A PDF closed while it was still loading (the viewer closed, another file opened): pdf.js rejects its own pending
+// work with this; nothing went wrong.
+window.addEventListener("unhandledrejection", (e) => {
+  if ((e.reason as Error | undefined)?.message === "Worker was terminated") e.preventDefault();
+});
 
 type Doc = Awaited<ReturnType<typeof pdfjs.getDocument>["promise"]>;
 
@@ -29,7 +34,7 @@ export default function PdfView({ src, data }: { src?: string; data?: ArrayBuffe
       }
       if (live) { setDoc(d); setSizes(s); }
     }).catch((e) => live && setErr(`This PDF couldn't be opened: ${(e as Error).message}`));
-    return () => { live = false; task.destroy(); };
+    return () => { live = false; task.destroy().catch(() => undefined); };
   }, [src, data]);
 
   useEffect(() => {
@@ -88,7 +93,7 @@ function Page({ doc, n, w, h, scale, root }: { doc: Doc; n: number; w: number; h
       const t = p.render({ canvasContext: canvas.getContext("2d")!, viewport: vp });
       task = t;
       t.promise.then(() => { if (live) holder.replaceChildren(canvas); }).catch(() => undefined);
-    });
+    }).catch(() => undefined);  // (the viewer was closed meanwhile: the document is gone)
     return () => { live = false; task?.cancel(); };
   }, [visible, scale, doc, n]);
   return <div ref={ref} className="pdf-page" data-page={n} style={{ width: w, height: h }} />;

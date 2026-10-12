@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { Icon } from "../../components/Icon";
-import { Modal } from "../../components/Overlay";
+import { Modal, Popover, usePopover } from "../../components/Overlay";
 import type { Base } from "../../types";
 import {
-  qty, sheetName, tk, type Item, type Kind, type LegendEntry, type Mark, type Project, type Pt, type Rect, type Sheet, type SheetTable,
+  qty, sheetName, tk, type Item, type Kind, type LegendEntry, type Mark, type Project, type Pt, type LibrarySymbol, type Rect, type Sheet, type SheetTable,
 } from "./tk";
 import type { Tool } from "./Viewer";
 
@@ -270,6 +270,7 @@ function ItemDetail({ project, page, marks, item, summary, onBack, onChanged, on
         <div className="tk-symbol">
           {item.symbol ? <img src={tk.symbolUrl(item.id, item.symbol.rect[0])} alt="Symbol" /> : <span className="muted small">No symbol</span>}
           <button className="btn sm" onClick={() => onTool("symbol")} title="Drag a tight box around the symbol in the legend"><Icon name="boxselect" size={13} /> {item.symbol ? "Box it again" : "Box its symbol"}</button>
+          <SymbolPicker project={project} item={item} onPicked={onChanged} onError={onError} />
         </div>
         <div className="tk-find">
           <label className="inline-check small"><input type="radio" checked={method === "tag"} disabled={!item.tag} onChange={() => setMethod("tag")} /> By its label{item.tag ? ` “${item.tag}”` : ""}</label>
@@ -316,6 +317,50 @@ function ItemDetail({ project, page, marks, item, summary, onBack, onChanged, on
       {sheetOf(page) && !sheetOf(page)!.included && <p className="tk-warn small">This sheet isn't in the takeoff: finds look on the takeoff's sheets.</p>}
     </div>
   );
+}
+
+/** Give an item a symbol from the legends (or replace it): every legend picture on the sheets, searchable. */
+function SymbolPicker({ project, item, onPicked, onError }: { project: Project; item: Item; onPicked: () => void; onError: (e: unknown) => void }) {
+  const menu = usePopover();
+  const [all, setAll] = useState(false);
+  const [list, setList] = useState<LibrarySymbol[] | null>(null);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    if (!menu.anchor) return;
+    setList(null);
+    tk.symbols(project.id, all).then(setList).catch(onError);
+  }, [menu.anchor, all]);
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = (list ?? []).filter((s) => words.every((w) => `${s.name} ${s.tag ?? ""} ${s.legend ?? ""} ${s.sheet_no ?? ""}`.toLowerCase().includes(w)));
+  const pick = async (s: LibrarySymbol) => {
+    menu.close();
+    try {
+      await tk.item(item.id, { symbol: { page: s.page, rect: s.rect, legend: s.legend_rect }, ...(!item.tag && s.tag ? { tag: s.tag } : {}),
+        ...(Object.keys(item.details ?? {}).length || !Object.keys(s.details).length ? {} : { details: s.details }) });
+      onPicked();
+    } catch (e) { onError(e); }
+  };
+  return (<>
+    <button className="btn sm" onClick={menu.open} aria-haspopup="listbox"><Icon name="list" size={13} /> Choose from legends ▾</button>
+    {menu.anchor && (
+      <Popover anchor={menu.anchor} onClose={menu.close} width={360}>
+        <div className="tk-sympick">
+          <input className="input sm" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search symbols: receptacle, EM, SD…" autoFocus aria-label="Search symbols" />
+          <label className="inline-check small"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Legends on every sheet (not only the takeoff's)</label>
+          <div className="tk-sympick-list" role="listbox">
+            {list === null ? <p className="muted small">Reading the legends…</p> : !shown.length ? <p className="muted small">{list.length ? "No symbol matches." : "No legend symbols found: include the sheet with the legend, or box the symbol on the sheet."}</p>
+              : shown.slice(0, 200).map((s, i) => (
+                <button key={i} className="tk-sympick-row" role="option" onClick={() => pick(s)}>
+                  <Crop projectId={project.id} sheet={{ page_no: s.page }} rect={s.rect} h={26} />
+                  <span className="tk-sympick-name">{s.tag && <span className="tk-tag">{s.tag}</span>}{s.name}</span>
+                  <span className="muted small">{s.sheet_no ?? `p. ${s.page + 1}`}</span>
+                </button>
+              ))}
+          </div>
+        </div>
+      </Popover>
+    )}
+  </>);
 }
 
 // ---------------------------------------------------------------- legend → items

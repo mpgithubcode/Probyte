@@ -652,7 +652,7 @@ class Engine:
             return
         if t == "record_id":
             for r in recs:
-                r["data"][fid] = str(r["id"])
+                r["data"][fid] = str(r.get("source_id") or r["id"])  # a linked table's record: the id it has in its source
             return
         if t in ("created_time", "last_modified_time"):
             col = "created_at" if t == "created_time" else "updated_at"

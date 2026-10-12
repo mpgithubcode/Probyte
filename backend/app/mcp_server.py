@@ -30,7 +30,11 @@ INSTRUCTIONS = (
     "and combined databases (read-only views over several tables). Start with list_bases, then describe_table to "
     "learn a table's fields before reading or writing. Tables can be named by id, by name, or as 'Base / Table'. "
     "Records use field names as keys; write values as plain text (dates like 2026-10-12 or 2026-10-12T15:30:00Z, "
-    "select option names, linked record titles, usernames). Calculated fields can't be written."
+    "select option names, linked record titles, usernames). Calculated fields can't be written. "
+    "With the Blueprint takeoff extension on, takeoff_* tools count and measure drawing sets (PDFs in files tables), "
+    "in this order: takeoff_create_project, takeoff_update_sheets (choose the sheets), takeoff_read_legends, "
+    "takeoff_add_items, takeoff_find, takeoff_list_marks + takeoff_review (finds are suggestions until accepted), "
+    "takeoff_summary, takeoff_export_table."
 )
 
 TABLE = {"type": "string", "description": "Table id, table name, or 'Base / Table'"}
@@ -102,7 +106,6 @@ TOOLS = [
            "options": {"type": "object"}}, ["table", "name", "type"]),
     _tool("sync_table", "Sync with calendar", "Sync a CalDAV / CardDAV table with its server now.", {"table": TABLE, "base": BASE}, ["table"], idempotent=True),
 ]
-READ_TOOLS = {t["name"] for t in TOOLS if t["annotations"]["readOnlyHint"]}
 
 
 def _call(user: dict, name: str, a: dict):
@@ -144,8 +147,20 @@ def _call(user: dict, name: str, a: dict):
     raise HTTPException(400, f"Unknown tool {name}")
 
 
+def _all_tools() -> tuple[list, dict]:
+    """Probyte's tools and those of the extensions that are on: (tools, {name: extension})."""
+    from .extensions import tools_on
+    ext = tools_on()
+    return TOOLS + [t for _, t in ext], {t["name"]: e for e, t in ext}
+
+
+def _read_only(tool) -> bool:
+    return tool["annotations"]["readOnlyHint"]
+
+
 def _tools_for(user):
-    return [t for t in TOOLS if user.get("api_scope") != "read" or t["name"] in READ_TOOLS]
+    tools, _ = _all_tools()
+    return [t for t in tools if user.get("api_scope") != "read" or _read_only(t)]
 
 
 async def handle(msg, user: dict, bases) -> dict | None:
@@ -169,7 +184,7 @@ async def handle(msg, user: dict, bases) -> dict | None:
     if method == "ping" or method == "logging/setLevel":
         return ok({})
     if method == "tools/list":
-        return ok({"tools": _tools_for(user)})
+        return ok({"tools": await run_in_threadpool(_tools_for, user)})
     if method in ("resources/list",):
         return ok({"resources": []})
     if method == "resources/templates/list":
@@ -178,10 +193,11 @@ async def handle(msg, user: dict, bases) -> dict | None:
         return ok({"prompts": []})
     if method == "tools/call":
         name, args = params.get("name"), params.get("arguments") or {}
-        tool = next((t for t in TOOLS if t["name"] == name), None)
+        tools, owners = await run_in_threadpool(_all_tools)
+        tool = next((t for t in tools if t["name"] == name), None)
         if not tool:
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": f"Unknown tool: {name}"}}
-        if user.get("api_scope") == "read" and name not in READ_TOOLS:
+        if user.get("api_scope") == "read" and not _read_only(tool):
             return ok(_error_result("This connection is read-only. Give it read & write access in Probyte (Settings → API & MCP) to make changes."))
         missing = [k for k in tool["inputSchema"]["required"] if k not in args]
         if missing:
@@ -189,6 +205,8 @@ async def handle(msg, user: dict, bases) -> dict | None:
 
         def work():
             auth.api_bases.set(bases)
+            if name in owners:  # an extension's tool
+                return owners[name].call(user, name, args)
             return _call(user, name, args)
         try:
             result = await run_in_threadpool(work)

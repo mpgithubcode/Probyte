@@ -136,6 +136,9 @@ def test_relay_and_direct_mode(admin, doc):
     u, t, rec = doc
     relay = "http://app:8000/office-ds"
     assert requests.get(relay + "/healthcheck").text == "true"
+    # the Document Server's service worker is replaced by one that removes itself (a stale one kept the editor from loading)
+    sw = requests.get(relay + "/document_editor_service_worker.js")
+    assert sw.headers["content-type"].startswith("application/javascript") and "unregister" in sw.text
     # what browsers never need isn't relayed
     for path in ("/coauthoring/CommandService.ashx", "/ConvertService.ashx", "/command", "/info/info.json", "/../api/office/status"):
         assert requests.post(relay + path, json={"c": "version"}).status_code == 404, path

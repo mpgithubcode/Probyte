@@ -12,6 +12,7 @@ import logging
 import pkgutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -31,6 +32,8 @@ class Extension:
     icon: str = "layers"
     migrations: Path | None = None
     default_on: bool = False
+    tools: list = field(default_factory=list)     # MCP tools (Probyte's MCP server lists them while the extension is on)
+    call: Callable | None = None                  # call(user, tool name, arguments) -> JSON-able result
     extra: dict = field(default_factory=dict)
 
 
@@ -57,6 +60,12 @@ BY_ID = {e.id: e for e in EXTENSIONS}
 def is_on(conn, ext_id: str) -> bool:
     row = conn.execute("SELECT value FROM app_settings WHERE key = %s", (f"ext.{ext_id}",)).fetchone()
     return (row["value"] == "1") if row else BY_ID[ext_id].default_on
+
+
+def tools_on() -> list[tuple["Extension", dict]]:
+    """The MCP tools of the extensions that are on."""
+    with connection() as conn:
+        return [(e, t) for e in EXTENSIONS if e.tools and is_on(conn, e.id) for t in e.tools]
 
 
 def _require(ext_id: str):

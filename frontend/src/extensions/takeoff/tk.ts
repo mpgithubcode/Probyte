@@ -37,6 +37,7 @@ export interface ProjectSummary {
 }
 export interface LegendEntry { name: string; tag: string | null; symbol: Rect | null; details: Record<string, string>; category: string | null; rect: Rect }
 export interface Legend { heading: string | null; rect: Rect; columns: string[]; rows: LegendEntry[]; cells: string[][] }
+export interface LibrarySymbol { page: number; sheet_no: string | null; legend: string | null; legend_rect: Rect; name: string; tag: string | null; rect: Rect; details: Record<string, string> }
 export interface SheetTable { rect: Rect; heading: string | null; cells: string[][] }
 
 const X = "/x/takeoff";
@@ -55,6 +56,7 @@ export const tk = {
   calibrate: (id: string, page: number, points: Pt[], feet: number) => api.post<Sheet>(`${X}/projects/${id}/pages/${page}/calibrate`, { points, feet }),
   legends: (id: string, page: number) => api.get<Legend[]>(`${X}/projects/${id}/pages/${page}/legends`),
   legendIn: (id: string, page: number, rect: Rect) => api.post<LegendEntry[]>(`${X}/projects/${id}/pages/${page}/legend-in`, { rect }),
+  symbols: (id: string, all = false) => api.get<LibrarySymbol[]>(`${X}/projects/${id}/symbols?pages=${all ? "all" : "included"}`),
   tables: (id: string, page: number) => api.get<SheetTable[]>(`${X}/projects/${id}/pages/${page}/tables`),
   words: (id: string, page: number) => api.get<[number, number, number, number, string][]>(`${X}/projects/${id}/pages/${page}/words`),
   search: (id: string, q: string, all: boolean) => api.get<{ page_no: number; rects: Rect[] }[]>(`${X}/projects/${id}/search?q=${encodeURIComponent(q)}&pages=${all ? "all" : "included"}`),
