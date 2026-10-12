@@ -65,7 +65,7 @@ function loadScript(src: string): Promise<void> {
 /** The editor itself. onDirty(true) when there are changes not yet written to the storage (the viewer decides when
  * they are: after a save it confirms). */
 export function OfficeEditor({ session, onModified, onError }: {
-  session: OfficeSession; onModified: () => void; onError: (msg: string) => void;
+  session: OfficeSession; onModified: () => void; onError: (msg: string, code?: number) => void;
 }) {
   const id = useRef(`office-${session.session}`).current;
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -87,7 +87,7 @@ export function OfficeEditor({ session, onModified, onError }: {
           },
           onError: (e: { data?: { errorDescription?: string; errorCode?: number } }) => {
             const m = e.data?.errorDescription || `The document server reported an error (${e.data?.errorCode ?? "?"})`;
-            latest.current.onError(m);
+            latest.current.onError(m, e.data?.errorCode);
           },
         },
       });

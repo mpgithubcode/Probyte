@@ -19,6 +19,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SECRET = os.environ.get("FAKE_SECRET", "")
 docs = {}      # key -> {"text", "saved_text", "users": {id: callbackUrl}, "callback", "changed_by": set}
+failed_keys = set()   # like the real one: a key whose download failed keeps failing
+fail_next = [0]
 finished = {}  # closed documents (their last version can still be downloaded)
 log = []
 lock = threading.Lock()
@@ -161,8 +163,17 @@ class H(BaseHTTPRequestHandler):
                 threading.Thread(target=callback, args=(d, body["key"], 6, d["changed_by"], save_url(body["key"], n))).start()
                 return self._send(200, {"error": 0, "key": body["key"]})
             return self._send(200, {"error": 5})
+        if self.path == "/fake/fail-next":
+            fail_next[0] = int(body.get("count", 1))
+            return self._send(200, {"ok": True})
         if self.path == "/fake/open":
             cfg = body["config"]
+            key = cfg["document"]["key"]
+            if fail_next[0] > 0 or key in failed_keys:
+                if fail_next[0] > 0:
+                    fail_next[0] -= 1
+                failed_keys.add(key)
+                return self._send(200, {"error": -4, "message": "Download failed."})
             if SECRET:
                 try:
                     signed = verify(cfg.get("token") or "")

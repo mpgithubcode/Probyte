@@ -71,6 +71,7 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
   const [officeNote, setOfficeNote] = useState("");
   const [ask, setAsk] = useState<{ then: () => void } | null>(null);
   const editMenu = usePopover();
+  const retried = useRef(false);  // (one fresh try after a failed download)
 
   useEffect(() => {  // leaving the page with unsaved changes in the editor
     if (!officeDirty) return;
@@ -79,8 +80,9 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
     return () => window.removeEventListener("beforeunload", warn);
   }, [officeDirty]);
 
-  const openOffice = async (mode: "edit" | "view") => {
+  const openOffice = async (mode: "edit" | "view", fresh = false) => {
     editMenu.close();
+    if (fresh) retried.current = false;
     setBusy(true); setErr(""); setOfficeNote("");
     try { setOffice(await startOffice(item!, mode)); setOfficeDirty(false); } catch (e) { setErr((e as Error).message); }
     setBusy(false);
@@ -206,9 +208,9 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
                 <div className="menu-list">
                   {canEditFile && <button className="menu-item" disabled={original === null} onClick={() => { editMenu.close(); setDraft(original ?? ""); }}>
                     <Icon name="edit" size={14} /> Edit here</button>}
-                  {canOffice && oMode === "edit" && canChangeFile && <button className="menu-item" onClick={() => openOffice("edit")}>
+                  {canOffice && oMode === "edit" && canChangeFile && <button className="menu-item" onClick={() => openOffice("edit", true)}>
                     <Icon name="file" size={14} /> Edit in ONLYOFFICE{newFormat && <span className="muted small"> (saves as .{newFormat})</span>}</button>}
-                  {canOffice && <button className="menu-item" onClick={() => openOffice("view")}>
+                  {canOffice && <button className="menu-item" onClick={() => openOffice("view", true)}>
                     <Icon name="eye" size={14} /> Open in ONLYOFFICE (read-only)</button>}
                 </div>
               </Popover>
@@ -239,7 +241,17 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
           {entries.length > 1 && i > 0 && !editing && !office && <button className="viewer-nav prev" onClick={() => go(i - 1)} aria-label="Previous file"><Icon name="left" size={22} /></button>}
           {office
             ? <OfficeEditor key={office.session} session={office} onModified={() => { setOfficeDirty(true); setOfficeNote("Unsaved changes"); }}
-                onError={(m) => setErr(m)} />
+                onError={(m, code) => {
+                  // -4: the Document Server couldn't download the file. It keeps that result under the document's key,
+                  // so reopening would fail the same way: retire the key and reopen once with a new one.
+                  if (code === -4 && office && !retried.current) {
+                    retried.current = true;
+                    api.post(`/office/sessions/${office.session}/discard`).catch(() => undefined)
+                      .then(() => openOffice(office.mode));
+                    return;
+                  }
+                  setErr(m);
+                }} />
             : <FileBody key={`${item.id}:${item.size}:${version}`} item={item} kind={kind} editing={editing} draft={draft}
                 onDraft={setDraft} onText={setOriginal} />}
           {entries.length > 1 && i < entries.length - 1 && !editing && !office && <button className="viewer-nav next" onClick={() => go(i + 1)} aria-label="Next file"><Icon name="right" size={22} /></button>}

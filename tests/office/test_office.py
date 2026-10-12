@@ -509,3 +509,24 @@ def test_files_permissions_in_the_link_settings():
     assert s["permissions"]["edit_files"] is True and s["permissions"]["edit"] is False and s["permissions"]["add"] is True
     meta = requests.get(API + f"/public/{s['token']}").json()
     assert meta["permissions"]["upload_files"] and meta["permissions"]["edit_files"] and not meta["permissions"]["edit"]
+
+
+
+def test_a_failed_download_is_tried_again_with_a_new_key(doc):
+    """The Document Server keeps a failed download under the document's key: the viewer retires the key and reopens."""
+    u, t, rec = doc
+    requests.post(FAKE + "/fake/fail-next", json={"count": 1})
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        pg = b.new_page(viewport={"width": 1280, "height": 860})
+        pg.goto(BASE)
+        pg.fill("input[autocomplete=username]", u.username)
+        pg.fill("input[type=password]", u.password)
+        pg.click("button:has-text('Sign in')")
+        pg.wait_for_selector(".page, .welcome")
+        pg.goto(f"{BASE}/#/table/{t['id']}?record={rec['id']}")
+        pg.click(".viewer-bar button:has-text('Edit')")
+        pg.click(".popover .menu-item:has-text('Edit in ONLYOFFICE')")
+        expect(pg.locator(".office-frame .fake-office-text")).to_have_value("first draft", timeout=15000)
+        expect(pg.locator(".viewer-err")).to_have_count(0)
+        b.close()
