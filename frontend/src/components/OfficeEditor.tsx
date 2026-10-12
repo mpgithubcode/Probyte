@@ -6,26 +6,35 @@ import { Icon } from "./Icon";
 
 /** ONLYOFFICE Document Server editing inside the file viewer (backend/app/office.py has the whole story). */
 
-export interface OfficeStatus { enabled: boolean; url: string | null; editable: string[]; viewable: string[] }
-export interface OfficeSession { session: string; mode: "edit" | "view"; api_url: string; config: Record<string, unknown> }
+export interface OfficeStatus { enabled: boolean; url: string | null; editable: string[]; convertible: Record<string, string>; viewable: string[] }
+export interface OfficeSession {
+  session: string; mode: "edit" | "view"; api_url: string; config: Record<string, unknown>;
+  converted_from?: string | null; saves_as?: string | null;   // an old format, edited (and saved) as its newer one
+}
 
 let statusPromise: Promise<OfficeStatus> | null = null;
 export function useOfficeStatus() {
   const [s, setS] = useState<OfficeStatus | null>(null);
   useEffect(() => {
-    statusPromise ??= api.get<OfficeStatus>("/office/status").catch(() => ({ enabled: false, url: null, editable: [], viewable: [] }));
+    statusPromise ??= api.get<OfficeStatus>("/office/status").catch(() => ({ enabled: false, url: null, editable: [], convertible: {}, viewable: [] }));
     statusPromise.then(setS);
   }, []);
   return s;
 }
 export const resetOfficeStatus = () => { statusPromise = null; };
 
-/** What the document server can do with a file of a files table: "edit", "view" or nothing. */
+/** A linked files table's file: the linked table it comes through. */
+const linkedTable = (item: Attachment) => item.url?.match(/^\/api\/remote\/([^/]+)\/files\//)?.[1];
+
+/** What the document server can do with a file of a files table (or a linked one): "edit", "view" or nothing. */
 export function officeMode(status: OfficeStatus | null, item: Attachment): "edit" | "view" | null {
-  if (!status?.enabled || !item.file) return null;
+  if (!status?.enabled || !item.file || (item.url && !linkedTable(item))) return null;
   const e = fileExt(item.name);
-  return status.editable.includes(e) ? "edit" : status.viewable.includes(e) ? "view" : null;
+  return status.editable.includes(e) || status.convertible?.[e] ? "edit" : status.viewable.includes(e) ? "view" : null;
 }
+
+/** An old format the editor saves as its newer one (".doc" → "docx"), or undefined. */
+export const convertsTo = (status: OfficeStatus | null, item: Attachment) => status?.convertible?.[fileExt(item.name)];
 
 declare global {
   interface Window { DocsAPI?: { DocEditor: new (id: string, config: Record<string, unknown>) => { destroyEditor: () => void } } }
@@ -96,7 +105,7 @@ export function OfficeEditor({ session, onModified, onError }: {
 }
 
 export async function startOffice(item: Attachment, mode: "edit" | "view"): Promise<OfficeSession> {
-  return api.post<OfficeSession>("/office/sessions", { record_id: item.id, mode });
+  return api.post<OfficeSession>("/office/sessions", { record_id: item.id, mode, table_id: linkedTable(item) ?? null });
 }
 
 /** Ask the document server to save now; resolves when the new version is in the storage (or nothing had changed). */

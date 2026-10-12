@@ -701,12 +701,40 @@ def upload(table_id: str, files: list[UploadFile] = File(...), folder: str = For
     return {"records": upload_files(table_id, files, folder, user["id"])}
 
 
-def replace_contents(table, rec, keys, body_file, mime: str | None) -> dict:
-    """New contents for a file (its record, fields and links stay)."""
+# formats a new version may change a file to (old Word / Excel / PowerPoint files edited in ONLYOFFICE)
+NEW_FORMATS = {"docx", "xlsx", "pptx", "odt", "ods", "odp"}
+
+
+def replace_contents(table, rec, keys, body_file, mime: str | None, new_ext: str | None = None) -> dict:
+    """New contents for a file (its record, fields and links stay). new_ext: the new version is in another format
+    (report.doc edited in ONLYOFFICE comes back as a .docx): the file becomes report.docx and the old one goes."""
+    new_ext = (new_ext or "").lower().lstrip(".") or None
+    old_path = rec["caldav_href"]
+    if new_ext and new_ext != _ext(old_path):
+        if new_ext not in NEW_FORMATS:
+            raise HTTPException(400, f"A file can't be changed to .{new_ext} this way")
+        with connection() as conn:
+            _lock(conn, table["id"])  # (until it's done: the next sync must see the new name with its record)
+            drv = _storage(conn, table)
+            folder, _, name = old_path.rpartition("/")
+            stem = name.rsplit(".", 1)[0] if "." in name.strip(".") else name
+            try:
+                target = _free_path(drv, conn, table["id"], f"{folder + '/' if folder else ''}{stem}.{new_ext}", exclude=rec["id"])
+                meta = drv.put(target, body_file, guess_mime(target))
+            except StorageError as e:
+                _bad(e)
+            _drop_cache(rec["id"])
+            cur = conn.execute("SELECT * FROM records WHERE id = %s FOR UPDATE", (rec["id"],)).fetchone()
+            _refresh(conn, cur, keys, {**meta, "mime": None})
+            try:
+                drv.delete(old_path)
+            except StorageError as e:  # the new version is safe; the old file stays (the next sync lists it)
+                log.warning("couldn't remove %s after its new version: %s", old_path, e)
+            return store.clean_record(conn.execute("SELECT * FROM records WHERE id = %s", (rec["id"],)).fetchone())
     with connection() as conn:
         drv = _storage(conn, table)
     try:
-        meta = drv.put(rec["caldav_href"], body_file, mime or guess_mime(rec["caldav_href"]))
+        meta = drv.put(old_path, body_file, mime or guess_mime(old_path))
     except StorageError as e:
         _bad(e)
     with connection() as conn:

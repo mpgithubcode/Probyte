@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import { OfficeEditor, officeMode, saveOffice, startOffice, useOfficeStatus, type OfficeSession } from "./OfficeEditor";
+import { OfficeEditor, convertsTo, officeMode, saveOffice, startOffice, useOfficeStatus, type OfficeSession } from "./OfficeEditor";
 import { Popover, usePopover } from "./Overlay";
 import { createPortal } from "react-dom";
 import { api } from "../api";
@@ -36,10 +36,12 @@ export interface ViewerEntry { item: Attachment; rec?: Rec }
 
 /** Full-screen viewer (like Google Drive's): the file in the middle, actions on top, details on the right.
  * Files of files tables can be edited here (text files; Markdown as formatted text) and their fields changed. */
-export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate, onDelete, onSaved, onReplace, location, onMove }: {
+export function FullViewer({ entries, index, onClose, fields, canEdit, canChangeFile = canEdit, onUpdate, onDelete, onSaved, onChanged, onReplace, location, onMove }: {
   entries: ViewerEntry[]; index: number; onClose: () => void;
   fields?: Field[];                                     // the record's fields, for the details panel
-  canEdit?: boolean;
+  canEdit?: boolean;                                    // the record's fields
+  canChangeFile?: boolean;                              // the file's contents (replace, edit; a link's "Edit files")
+  onChanged?: () => void;                               // a file was saved from ONLYOFFICE (its name may have changed)
   onUpdate?: (rec: Rec, patch: Record<string, unknown>) => void;
   onDelete?: (rec: Rec) => void;
   onSaved?: (rec: Rec) => void;                         // after saving an edited file / replacing it
@@ -86,8 +88,9 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
     setBusy(true); setErr(""); setOfficeNote("Saving…");
     try {
       await saveOffice(office);
-      setOfficeDirty(false); setOfficeNote("Saved");
+      setOfficeDirty(false); setOfficeNote(office.saves_as ? `Saved as ${office.saves_as}` : "Saved");
       setVersion((v) => v + 1);
+      onChanged?.();
       return true;
     } catch (e) { setErr((e as Error).message); setOfficeNote(""); return false; }
     finally { setBusy(false); }
@@ -135,9 +138,10 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
 
   if (!item) return null;
   const kind = viewKind(item);
-  const canEditFile = !!canEdit && editableKind(item) && item.size <= MAX_TEXT;
-  const oMode = !item.url ? officeMode(officeStatus, item) : null;   // (files of linked tables: not here)
-  const canOffice = !!oMode && (oMode === "view" || !!canEdit);
+  const canEditFile = !!canChangeFile && editableKind(item) && item.size <= MAX_TEXT;
+  const oMode = officeMode(officeStatus, item);
+  const canOffice = !!oMode;
+  const newFormat = convertsTo(officeStatus, item);   // .doc → edited and saved as .docx
 
   async function save() {
     if (!item || draft === null) return;
@@ -177,7 +181,8 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
         {err && <span className="viewer-err" title={err}>{err}</span>}
         {office ? (
           <>
-            <span className="office-badge">ONLYOFFICE{office.mode === "view" ? " · read-only" : ""}</span>
+            <span className="office-badge" title={office.saves_as ? `Saving makes it ${office.saves_as} (a new version of this file)` : undefined}>
+              ONLYOFFICE{office.mode === "view" ? " · read-only" : office.converted_from ? ` · as .${fileExt(office.saves_as ?? "")}` : ""}</span>
             {officeNote && <span className="viewer-note">{officeNote}</span>}
             {office.mode === "edit" && <button className="viewer-btn text" disabled={busy} onClick={saveOfficeNow} title="Save to the storage now">
               <Icon name="upload" size={16} /> <span>{busy ? "Saving…" : "Save"}</span></button>}
@@ -199,8 +204,8 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
                 <div className="menu-list">
                   {canEditFile && <button className="menu-item" disabled={original === null} onClick={() => { editMenu.close(); setDraft(original ?? ""); }}>
                     <Icon name="edit" size={14} /> Edit here</button>}
-                  {canOffice && oMode === "edit" && <button className="menu-item" onClick={() => openOffice("edit")}>
-                    <Icon name="file" size={14} /> Edit in ONLYOFFICE</button>}
+                  {canOffice && oMode === "edit" && canChangeFile && <button className="menu-item" onClick={() => openOffice("edit")}>
+                    <Icon name="file" size={14} /> Edit in ONLYOFFICE{newFormat && <span className="muted small"> (saves as .{newFormat})</span>}</button>}
                   {canOffice && <button className="menu-item" onClick={() => openOffice("view")}>
                     <Icon name="eye" size={14} /> Open in ONLYOFFICE (read-only)</button>}
                 </div>
@@ -210,7 +215,7 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
               <a className="viewer-btn" href={attachmentUrl(item)} target="_blank" rel="noreferrer" title="Open in a new tab"><Icon name="external" size={17} /></a>
             )}
             <a className="viewer-btn text" href={attachmentUrl(item, true)} title="Download"><Icon name="download" size={17} /> <span>Download</span></a>
-            {onReplace && canEdit && entry.rec && (<>
+            {onReplace && canChangeFile && entry.rec && (<>
               <input ref={replaceRef} type="file" hidden onChange={(e) => replace(e.target.files)} />
               <button className="viewer-btn" title="Replace file (upload a new version)" disabled={busy} onClick={() => replaceRef.current?.click()}>
                 <Icon name="upload" size={17} /></button>

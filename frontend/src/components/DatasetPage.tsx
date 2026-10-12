@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Attachment, Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
-import { applyView, choiceColor, debounce, hiddenIds, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
+import { applyView, choiceColor, debounce, hiddenIds, linkCan, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
 import { FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
 import { FullViewer, type ViewerEntry } from "./FileViewer";
 import { fromDrop, fromPicker, useUploads } from "./Uploads";
@@ -213,7 +213,9 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
   // A linked table can do only what its source link allows; its fields come from the source.
   const linkPerms = ds?.table?.kind === "remote" ? ds.table.remote?.permissions ?? {} : null;
-  const can = linkPerms ? { add: !!linkPerms.add, edit: !!linkPerms.edit, delete: !!linkPerms.delete, manage: false } : CAN_ALL;
+  const linkAllows = linkPerms ? linkCan(linkPerms) : null;
+  const can = linkAllows ? { add: nativeKind(ds?.table) === "files" ? linkAllows.upload_files : linkAllows.add,  // a files table adds by uploading
+    edit: linkAllows.edit, delete: linkAllows.delete, manage: false } : CAN_ALL;
 
   const ops: Ops = {
     can,
@@ -590,7 +592,8 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
       {isFiles && viewing && fileEntries.some((e) => e.rec!.id === viewing) && (
         <FullViewer entries={fileEntries} index={fileEntries.findIndex((e) => e.rec!.id === viewing)} fields={vfields}
-          canEdit={ops.can.edit} onClose={() => setViewing(null)} onUpdate={ops.update} onReplace
+          canEdit={ops.can.edit} canChangeFile={linkAllows ? linkAllows.edit_files : true} onChanged={() => reload()}
+          onClose={() => setViewing(null)} onUpdate={ops.update} onReplace
           onMove={(e) => e.rec && setViewing(e.rec.id)}
           onDelete={!ops.can.delete ? undefined : (r) => {
             const k = fileEntries.findIndex((e) => e.rec!.id === r.id);

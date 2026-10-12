@@ -149,7 +149,7 @@ Every database and combined database can have any number of Notion-style views, 
 **Settings → Public links** lists your links, where you can create, edit, switch off, or delete them. Each link has these settings:
 
 - a **base** and which of its tables and combined databases to show, plus **which views** of each
-- what visitors can do: **view**, **add**, **edit** or **delete** records
+- what visitors can do: **view**, **add**, **edit** or **delete** records, and for files tables, **upload files** and **edit files** (replace a file, edit a text file, edit a document in ONLYOFFICE). These two are separate from the record permissions: a link can let people change documents without touching their fields, or the other way round. On links made before they existed, they follow *add* and *edit*.
 - an optional **password** and **expiry date**, a name and a colour
 
 A link works three ways:
@@ -183,11 +183,14 @@ A **Files** table (New table → **Files**) shows the files in an **S3 bucket** 
 - **Changes in the storage** (from other apps, phones, the Nextcloud client…) arrive with the next sync: every `SYNC_INTERVAL`, on **Sync**, and right after the table is created. Up to 100,000 files per table.
 - **Deleting**: a deleted record goes to the trash; its file is deleted from the storage when the trash is emptied (or after 30 days), and restoring the record keeps everything. Deleting the **table** never deletes the files.
 - Connections are saved under **Settings → File storage** (secret keys and passwords encrypted) and can be shared by several tables. Uploads are limited to `FILES_MAX_UPLOAD_MB` (default 2048) per file; your reverse proxy may have its own limit.
-- Public links that show a files table serve its files too (read-only).
+- Public links that show a files table serve its files too. Uploading and changing them takes the link's **Upload files** / **Edit files** permissions.
 
 ## Editing documents in ONLYOFFICE
 
-Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (the free Community edition works) and Word, Excel and PowerPoint files (and OpenDocument, RTF, CSV and text) in a files table can be edited inside Probyte's viewer: **Edit ▾ → Edit in ONLYOFFICE**. PDFs and older formats (.doc, .xls, .ppt) open read-only (**Open in ONLYOFFICE (read-only)**).
+Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (the free Community edition works) and Word, Excel and PowerPoint files (and OpenDocument, RTF, CSV and text) in a files table can be edited inside Probyte's viewer: **Edit ▾ → Edit in ONLYOFFICE**. PDFs open read-only (**Open in ONLYOFFICE (read-only)**).
+
+- **Old formats** (.doc, .xls, .ppt and their templates) can't be saved as they are, so ONLYOFFICE converts them and you edit them as .docx, .xlsx or .pptx (the menu says *saves as .docx*). Saving makes that the file's new version: `report.doc` becomes `report.docx`, same record, fields and links, and the .doc is removed from the storage. Discard, and the old file stays as it was.
+- **Linked tables**: files of a linked files table are edited in *your* server's Document Server, and saved back through the link into the owner's storage, when the link's owner allowed **Edit files**. Otherwise they open read-only. This works for links to other Probyte servers too (a server older than 0.4 keeps the old file name when an old format is saved).
 
 - **Saved to your storage.** **Save** writes the document to the S3 bucket or WebDAV folder as a new version of the same file (the record, its fields and links stay), and the viewer says when it's there. ONLYOFFICE also saves on its own when everyone has closed the document.
 - **Closing with unsaved changes asks**: **Save**, **Discard** (the file stays as it was last saved) or **Keep editing**. Closing the viewer, going to another file and **Close editor** all ask; leaving the page warns too.
@@ -207,7 +210,7 @@ Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (t
       - "8081:80"   # or behind your reverse proxy (it uses WebSockets)
 ```
 
-Under **Network settings**, give *Probyte's address for the Document Server* (`http://probyte:8000` in the same Compose file) and *the Document Server's address for Probyte* (`http://onlyoffice`) when they differ from the public ones. If Probyte is served over HTTPS, the Document Server must be too (browsers don't load an HTTP editor into an HTTPS page). Files of linked tables open in the viewer as usual but aren't edited in ONLYOFFICE.
+Under **Network settings**, give *Probyte's address for the Document Server* (`http://probyte:8000` in the same Compose file) and *the Document Server's address for Probyte* (`http://onlyoffice`) when they differ from the public ones. If Probyte is served over HTTPS, the Document Server must be too (browsers don't load an HTTP editor into an HTTPS page).
 
 ## Linked tables (from any Probyte server)
 

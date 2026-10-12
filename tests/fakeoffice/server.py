@@ -5,6 +5,7 @@ Probyte uses, with JWT signing (secret FAKE_SECRET):
 - the "editor" is a textarea: it downloads the file from document.url, sends status 1 when someone opens it,
   status 6 (forcesave) on request, and status 2 / 4 when the last person closes it. Saved versions are the
   textarea's text, at /cache/<key>.
+- the conversion service (old formats → new): the "converted" file is the same text, kept at /cache/<key>/0.
 - /fake/log: every callback sent and Probyte's answer, for the tests to check.
 """
 import base64
@@ -44,6 +45,7 @@ def callback(doc, key, status, users, url=None):
     body = {"key": key, "status": status, "users": sorted(users)}
     if url:
         body["url"] = url
+        body["filetype"] = doc["filetype"]
     if SECRET:
         body["token"] = sign(dict(body))
     req = urllib.request.Request(doc["callback"], data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
@@ -121,6 +123,19 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        if self.path in ("/ConvertService.ashx", "/converter"):
+            if SECRET:
+                try:
+                    body = verify(body.get("token") or "")
+                except Exception:  # noqa: BLE001
+                    return self._send(200, {"error": -8})
+            with urllib.request.urlopen(body["url"], timeout=30) as r:
+                text = r.read().decode("utf-8", "replace")
+            with lock:
+                finished[body["key"]] = {"versions": [text]}
+            log.append({"key": body["key"], "convert": f"{body['filetype']}->{body['outputtype']}"})
+            return self._send(200, {"endConvert": True, "percent": 100, "fileType": body["outputtype"],
+                                    "fileUrl": save_url(body["key"], 0)})
         if self.path in ("/coauthoring/CommandService.ashx", "/command"):
             if SECRET:
                 try:
@@ -157,7 +172,7 @@ class H(BaseHTTPRequestHandler):
                     with urllib.request.urlopen(cfg["document"]["url"], timeout=30) as r:
                         text = r.read().decode("utf-8", "replace")
                     d = docs[key] = {"text": text, "saved_text": text, "versions": [text], "users": {}, "changed_by": set(),
-                                     "callback": cfg["editorConfig"]["callbackUrl"]}
+                                     "callback": cfg["editorConfig"]["callbackUrl"], "filetype": cfg["document"]["fileType"]}
                 d["users"][cfg["editorConfig"]["user"]["id"]] = cfg["editorConfig"]["callbackUrl"]
                 d["callback"] = cfg["editorConfig"]["callbackUrl"]
                 text, users = d["text"], set(d["users"])

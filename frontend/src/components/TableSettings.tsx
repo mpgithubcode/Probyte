@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Base, Dataset, Field, Storage } from "../types";
-import { FIELD_TYPES, nativeKind, timeAgo } from "../util";
+import { FIELD_TYPES, linkSummary, nativeKind, timeAgo } from "../util";
 import { EmojiPicker } from "./EmojiPicker";
 import { FieldIcon, Icon, tableIcon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
@@ -91,7 +91,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
               <dl className="settings-facts">
                 <dt>Shared as</dt><dd>{t.remote.name ?? "—"}</dd>
                 <dt>From</dt><dd className="mono small">{t.remote.url}</dd>
-                <dt>You can</dt><dd>{["view", t.remote.permissions?.add && "add", t.remote.permissions?.edit && "edit", t.remote.permissions?.delete && "delete"].filter(Boolean).join(", ")}</dd>
+                <dt>You can</dt><dd>{linkSummary(t.remote.permissions, nativeKind(t) === "files").replace(/^can /, "view, ")}</dd>
                 {t.remote.error && (<><dt>Problem</dt><dd className="error small">{t.remote.error}</dd></>)}
               </dl>
               <div className="settings-actions">

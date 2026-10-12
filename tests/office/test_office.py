@@ -263,3 +263,220 @@ def test_edit_save_and_discard_in_the_viewer(doc):
         pg.click(".viewer-bar button:has-text('Close editor')")
         expect(pg.locator(".office-badge")).to_have_count(0)
         b.close()
+
+
+# ---- old formats: edited as their newer one; saving makes that the file's new version
+
+def names(u, t):
+    F = u.fields(t["id"])
+    return sorted(r["data"][F["name"]] for r in u.records(t["id"]))
+
+
+def test_an_old_format_is_saved_as_the_new_one(doc):
+    u, t, _ = doc
+    rec = u.post(API + f"/tables/{t['id']}/files", files=[("files", ("old.doc", b"old words", "application/msword"))]).json()["records"][0]
+    s = u.j("POST", "/office/sessions", json={"record_id": rec["id"], "mode": "edit"})
+    c = s["config"]
+    assert s["mode"] == "edit" and s["converted_from"] == "doc" and s["saves_as"] == "old.docx"
+    assert c["document"]["fileType"] == "docx" and c["document"]["title"] == "old.docx"
+    assert editor(s) == "old words"            # the Document Server gets the converted copy
+    # discarding leaves the old file alone
+    edit(s, "not kept")
+    u.j("POST", f"/office/sessions/{s['session']}/discard")
+    close_editor(s)
+    wait(lambda: [e for e in fake_log(c["document"]["key"]) if e.get("status") == 2])
+    assert "old.doc" in names(u, t) and content(u, rec) == "old words"
+    # saving: the record's file becomes old.docx (the .doc is gone from the storage)
+    s = u.j("POST", "/office/sessions", json={"record_id": rec["id"], "mode": "edit"})
+    editor(s)
+    edit(s, "new words")
+    assert u.j("POST", f"/office/sessions/{s['session']}/save") == {"saving": True}
+    wait(lambda: u.j("GET", f"/office/sessions/{s['session']}")["saves"] == 1)
+    assert "old.docx" in names(u, t) and "old.doc" not in names(u, t)
+    assert content(u, rec) == "new words"
+    edit(s, "newer words")                     # saving again in the same editor: the same .docx
+    u.j("POST", f"/office/sessions/{s['session']}/save")
+    wait(lambda: u.j("GET", f"/office/sessions/{s['session']}")["saves"] == 2)
+    close_editor(s)
+    u.sync(t["id"])
+    assert names(u, t).count("old.docx") == 1 and "old.doc" not in names(u, t) and content(u, rec) == "newer words"
+    # read-only opens the file as it is, no conversion
+    rec2 = u.post(API + f"/tables/{t['id']}/files", files=[("files", ("sheet.xls", b"cells", "application/vnd.ms-excel"))]).json()["records"][0]
+    v = u.j("POST", "/office/sessions", json={"record_id": rec2["id"], "mode": "view"})
+    assert v["mode"] == "view" and not v["converted_from"] and v["config"]["document"]["fileType"] == "xls"
+
+
+# ---- linked tables: edited in this server's Document Server, saved through the link
+
+def share(user, t, **perms):
+    view = user.j("GET", f"/tables/{t['id']}")["views"][0]
+    s = user.j("POST", "/shares", json={"name": "Link", "base_id": user.base_id, "permissions": perms,
+                                       "items": [{"kind": "table", "id": t["id"], "views": [view["id"]]}]})
+    return s, view
+
+
+def link(viewer, s, view):
+    return viewer.j("POST", "/tables", json={"name": "Linked", "kind": "remote", "base_id": viewer.base_id,
+                                             "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+
+
+def linked_item(viewer, lt, name):
+    fid = next(f["id"] for f in viewer.j("GET", f"/tables/{lt['id']}")["fields"] if f.get("system_key") == "file")
+    return next(r["data"][fid][0] for r in viewer.records(lt["id"]) if r["data"].get(fid) and r["data"][fid][0]["name"] == name)
+
+
+def test_link_permissions_for_files(doc):
+    owner, t, rec = doc
+    root = API.replace("/api", "")
+    # links made before the files permissions: they follow add / edit
+    s, view = share(owner, t, add=True, edit=True)
+    meta = requests.get(API + f"/public/{s['token']}").json()
+    assert meta["permissions"] == {"add": True, "edit": True, "delete": False, "upload_files": True, "edit_files": True}
+    # records may be edited, files not
+    s, view = share(owner, t, add=True, edit=True, upload_files=False, edit_files=False)
+    base = f"{API}/public/{s['token']}/views/{view['id']}"
+    r = requests.post(base + "/files", files=[("files", ("x.txt", b"x", "text/plain"))])
+    assert r.status_code == 403 and "Uploading files" in r.json()["detail"]
+    r = requests.put(base + f"/files/{rec['id']}/file", files={"file": ("x.txt", b"x", "text/plain")})
+    assert r.status_code == 403 and "Changing files" in r.json()["detail"]
+    assert requests.put(base + f"/files/{rec['id']}/text", json={"text": "x"}).status_code == 403
+    # files may be changed though records may not
+    s, view = share(owner, t, edit_files=True)
+    base = f"{API}/public/{s['token']}/views/{view['id']}"
+    assert requests.put(base + f"/files/{rec['id']}/text", json={"text": "via the link"}).status_code == 200
+    assert content(owner, rec) == "via the link"
+    assert requests.patch(base + f"/records/{rec['id']}", json={"data": {}}).status_code == 403
+    # a linked table says what it may do; without "Edit files" its files open in ONLYOFFICE only to read
+    viewer = Client()
+    s, view = share(owner, t, edit=True, edit_files=False)
+    lt = link(viewer, s, view)
+    perms = viewer.j("GET", f"/tables/{lt['id']}")["table"]["remote"]["permissions"]
+    assert perms["edit"] and not perms["edit_files"]
+    item = linked_item(viewer, lt, "notes.txt")
+    assert viewer.post(API + "/office/sessions", json={"record_id": item["id"], "table_id": lt["id"], "mode": "edit"}).status_code == 403
+    v = viewer.j("POST", "/office/sessions", json={"record_id": item["id"], "table_id": lt["id"], "mode": "view"})
+    assert v["mode"] == "view"
+    assert requests.get(v["config"]["document"]["url"]).text == "via the link"
+    assert viewer.request("PUT", root + item["url"] + "/text", json={"text": "no"}).status_code == 403
+
+
+def test_a_linked_tables_file_is_edited_and_saved_through_the_link(doc):
+    owner, t, rec = doc
+    owner.post(API + f"/tables/{t['id']}/files", files=[("files", ("old.doc", b"legacy", "application/msword"))])
+    s, view = share(owner, t, edit_files=True)          # only changing files: no record edits
+    viewer = Client()
+    lt = link(viewer, s, view)
+    item = linked_item(viewer, lt, "notes.txt")
+    # someone else can't use this person's linked table
+    assert Client().post(API + "/office/sessions", json={"record_id": item["id"], "table_id": lt["id"]}).status_code == 404
+    sess = viewer.j("POST", "/office/sessions", json={"record_id": item["id"], "table_id": lt["id"], "mode": "edit"})
+    assert sess["mode"] == "edit" and editor(sess) == "first draft"
+    edit(sess, "edited through the link")
+    assert viewer.j("POST", f"/office/sessions/{sess['session']}/save") == {"saving": True}
+    wait(lambda: viewer.j("GET", f"/office/sessions/{sess['session']}")["saves"] == 1)
+    assert content(owner, rec) == "edited through the link"
+    close_editor(sess)
+    # an old format through the link: the owner's file becomes the new format
+    item = linked_item(viewer, lt, "old.doc")
+    sess = viewer.j("POST", "/office/sessions", json={"record_id": item["id"], "table_id": lt["id"], "mode": "edit"})
+    assert sess["converted_from"] == "doc" and editor(sess) == "legacy"
+    edit(sess, "modern")
+    close_editor(sess)                                   # closed without Save: the Document Server's final save
+    wait(lambda: "old.docx" in names(owner, t))
+    assert "old.doc" not in names(owner, t)
+    assert linked_item(viewer, lt, "old.docx")
+
+
+def test_linked_file_in_the_viewer(doc):
+    owner, t, rec = doc
+    s, view = share(owner, t, edit_files=True)
+    viewer = Client()
+    lt = link(viewer, s, view)
+    owner.post(API + f"/tables/{t['id']}/files", files=[("files", ("memo.doc", b"memo text", "application/msword"))])
+    F = owner.fields(t["id"])
+    memo = next(r for r in owner.records(t["id"]) if r["data"][F["name"]] == "memo.doc")
+    lrec = next(r for r in viewer.records(lt["id"]) if "memo.doc" in str(r["data"]))
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        pg = b.new_page(viewport={"width": 1280, "height": 860})
+        pg.goto(BASE)
+        pg.fill("input[autocomplete=username]", viewer.username)
+        pg.fill("input[type=password]", viewer.password)
+        pg.click("button:has-text('Sign in')")
+        pg.wait_for_selector(".page, .welcome")
+        pg.goto(f"{BASE}/#/table/{lt['id']}?record={lrec['id']}")
+        pg.click(".viewer-bar button:has-text('Edit')")
+        expect(pg.locator(".popover .menu-item")).to_have_text(["Edit in ONLYOFFICE (saves as .docx)", "Open in ONLYOFFICE (read-only)"])
+        pg.click(".popover .menu-item:has-text('Edit in ONLYOFFICE')")
+        box = pg.locator(".office-frame .fake-office-text")
+        expect(box).to_have_value("memo text")
+        expect(pg.locator(".office-badge")).to_have_text("ONLYOFFICE · as .docx")
+        box.fill("memo, edited")
+        pg.click(".viewer-bar button:has-text('Save')")
+        expect(pg.locator(".viewer-note")).to_have_text("Saved as memo.docx", timeout=20000)
+        expect(pg.locator(".viewer-title b")).to_have_text("memo.docx")       # the list reloaded: the new name
+        assert content(owner, memo) == "memo, edited"
+        pg.click(".viewer-bar button:has-text('Close editor')")
+        expect(pg.locator(".office-badge")).to_have_count(0)
+        b.close()
+
+
+def test_a_link_to_another_server(doc):
+    """The same, with the linked table using the link's public address (as when it's on another server)."""
+    import psycopg
+    owner, t, rec = doc
+    owner.post(API + f"/tables/{t['id']}/files", files=[("files", ("far.xls", b"far cells", "application/vnd.ms-excel"))])
+    s, view = share(owner, t, edit_files=True)
+    viewer = Client()
+    lt = link(viewer, s, view)
+    try:
+        conn = psycopg.connect(os.environ.get("BENCH_DB", "postgresql://probyte:probyte-test@db:5432/probyte"))
+    except Exception:
+        pytest.skip("no database access")
+    with conn:
+        conn.execute("UPDATE tables SET remote = remote || '{\"local\": false}' WHERE id = %s", (lt["id"],))
+    item = linked_item(viewer, lt, "far.xls")
+    sess = viewer.j("POST", "/office/sessions", json={"record_id": item["id"], "table_id": lt["id"], "mode": "edit"})
+    assert sess["saves_as"] == "far.xlsx" and editor(sess) == "far cells"
+    edit(sess, "near cells")
+    viewer.j("POST", f"/office/sessions/{sess['session']}/save")
+    wait(lambda: viewer.j("GET", f"/office/sessions/{sess['session']}")["saves"] == 1)
+    close_editor(sess)
+    assert "far.xlsx" in names(owner, t) and "far.xls" not in names(owner, t)
+    F = owner.fields(t["id"])
+    far = next(r for r in owner.records(t["id"]) if r["data"][F["name"]] == "far.xlsx")
+    assert owner.get(API + f"/files/{far['id']}/content").text == "near cells"
+
+
+def test_files_permissions_in_the_link_settings():
+    u = Client()
+    t = u.table("files", "Shared drive", storage=S3, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    plain = u.table(name="Plain list")
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        pg = b.new_page(viewport={"width": 1280, "height": 860})
+        pg.goto(BASE)
+        pg.fill("input[autocomplete=username]", u.username)
+        pg.fill("input[type=password]", u.password)
+        pg.click("button:has-text('Sign in')")
+        pg.wait_for_selector(".page, .welcome")
+        pg.click(".side-user .side-item")
+        pg.click(".settings-tabs button:has-text('Public links')")
+        pg.click("button:has-text('New public link')")
+        pg.fill(".modal input[placeholder='Team calendar']", "Drive for partners")
+        pick = lambda name: pg.locator(".modal label, .modal .share-item").filter(has_text=name).locator("input[type=checkbox]").first
+        pick("Plain list").check()
+        expect(pg.locator(".modal .perm-row", has_text="Files tables")).to_have_count(0)   # no files table chosen
+        pick("Shared drive").check()
+        files_row = pg.locator(".modal .perm-row", has_text="Files tables")
+        expect(files_row.locator("input").nth(0)).not_to_be_checked()
+        pg.locator(".modal .perm-row").first.locator("label", has_text="Add records").locator("input").check()
+        expect(files_row.locator("input").nth(0)).to_be_checked()      # follows "Add records" until set
+        files_row.locator("label", has_text="Edit files").locator("input").check()
+        pg.click(".modal-foot button:has-text('Create link')")
+        pg.wait_for_timeout(500)
+        b.close()
+    s = next(x for x in u.j("GET", "/shares") if x["name"] == "Drive for partners")
+    assert s["permissions"]["edit_files"] is True and s["permissions"]["edit"] is False and s["permissions"]["add"] is True
+    meta = requests.get(API + f"/public/{s['token']}").json()
+    assert meta["permissions"]["upload_files"] and meta["permissions"]["edit_files"] and not meta["permissions"]["edit"]

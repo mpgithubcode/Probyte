@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Share, ShareItem, SharePerms, Workspace } from "../types";
-import { PALETTE } from "../util";
+import { PALETTE, linkCan, linkSummary, nativeKind } from "../util";
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
 import { VIEW_TYPES } from "./Toolbar";
@@ -61,9 +61,7 @@ export function SharesPanel({ ws }: { ws: Workspace }) {
                 <b>{s.name}</b>
                 <span className="muted small">
                   {base?.name ?? "?"} · {s.items.length} table{s.items.length === 1 ? "" : "s"}
-                  {s.permissions.add || s.permissions.edit || s.permissions.delete
-                    ? ` · can ${[s.permissions.add && "add", s.permissions.edit && "edit", s.permissions.delete && "delete"].filter(Boolean).join(", ")}`
-                    : " · view only"}
+                  {" · "}{linkSummary(s.permissions, s.items.some((it) => it.kind === "table" && nativeKind(ws.tables.find((t) => t.id === it.id)) === "files"))}
                 </span>
               </div>
               <span className="spacer" />
@@ -119,6 +117,9 @@ function ShareEditor({ ws, share, onClose, onSaved, onDeleted }: {
     const next = current.includes(viewId) ? current.filter((v) => v !== viewId) : [...current, viewId];
     return { ...x, views: next.length === it.views.length ? null : next };
   }));
+
+  const can = linkCan(perms);
+  const sharesFiles = items.some((it) => it.kind === "table" && nativeKind(ws.tables.find((t) => t.id === it.id)) === "files");
 
   const save = async () => {
     if (!name.trim()) return setError("Give the link a name");
@@ -223,6 +224,15 @@ function ShareEditor({ ws, share, onClose, onSaved, onDeleted }: {
             <label className="inline-check"><input type="checkbox" checked={perms.edit} onChange={(e) => setPerms({ ...perms, edit: e.target.checked })} /> Edit records</label>
             <label className="inline-check"><input type="checkbox" checked={perms.delete} onChange={(e) => setPerms({ ...perms, delete: e.target.checked })} /> Delete records</label>
           </div>
+          {sharesFiles && (
+            <div className="perm-row">
+              <span className="muted small">Files tables:</span>
+              <label className="inline-check" title="Add files to the shared files tables">
+                <input type="checkbox" checked={can.upload_files} onChange={(e) => setPerms({ ...perms, upload_files: e.target.checked })} /> Upload files</label>
+              <label className="inline-check" title="Replace files, edit text files, and edit documents in ONLYOFFICE (saved to your storage)">
+                <input type="checkbox" checked={can.edit_files} onChange={(e) => setPerms({ ...perms, edit_files: e.target.checked })} /> Edit files</label>
+            </div>
+          )}
         </div>
 
         <div className="row-2">

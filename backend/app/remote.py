@@ -306,12 +306,13 @@ def refs(conn, table) -> dict:
 
 def public_info(table) -> dict | None:
     """What the browser may know about a linked table's source (never the access cookie)."""
+    from .shares import effective
     r = table.get("remote") if table else None
     if not r:
         return None
     return {"url": r.get("url"), "origin": r.get("origin"), "local": r.get("local"), "name": r.get("name"),
             "source_kind": r.get("source_kind"),
-            "permissions": r.get("permissions") or {}, "error": r.get("error"), "has_password": bool(r.get("cookie"))}
+            "permissions": effective(r.get("permissions")), "error": r.get("error"), "has_password": bool(r.get("cookie"))}
 
 
 # ======================================================================== creating & writing
@@ -518,13 +519,21 @@ def upload(table, files, folder: str):
     return _send(table, "POST", f"/views/{_view(table)}/files", files=sent, data={"folder": folder}).json()["records"]
 
 
-def replace_file(table, record_id: str, upload_file):
+def replace_file(table, record_id: str, upload_file, new_ext: str | None = None):
+    """New contents for a file of the linked files table (the link must allow changing files); new_ext: the new
+    version is in another format (the file is renamed to match)."""
     from . import shares
     link = table["remote"]
     if link.get("local"):
-        return _done(table, shares.core_replace(link["token"], link["view_id"], record_id, upload_file, _cookie_value(link)))
-    return _send(table, "PUT", f"/views/{_view(table)}/files/{quote(record_id, safe='')}/file",
+        return _done(table, shares.core_replace(link["token"], link["view_id"], record_id, upload_file, _cookie_value(link), new_ext))
+    return _send(table, "PUT", f"/views/{_view(table)}/files/{quote(record_id, safe='')}/file", data={"new_ext": new_ext or ""},
                  files={"file": (upload_file.filename or "file", upload_file.file, upload_file.content_type or "application/octet-stream")}).json()
+
+
+def can(table, what: str) -> bool:
+    """What the link allows (add, edit, delete, upload_files, edit_files)."""
+    from .shares import effective
+    return effective((table.get("remote") or {}).get("permissions"))[what]
 
 
 def save_text(table, record_id: str, text: str):

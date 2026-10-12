@@ -152,7 +152,7 @@ export type TableKind = "generic" | "tasks" | "events" | "mixed" | "contacts" | 
 export interface RemoteInfo {
   url: string; origin: string; local: boolean; name: string | null;
   source_kind?: TableKind | "combo" | null;  // what the shared table is (files, contacts, tasks & events…): it behaves like one
-  permissions: { add?: boolean; edit?: boolean; delete?: boolean }; error: string | null; has_password: boolean;
+  permissions: LinkPerms; error: string | null; has_password: boolean;
 }
 
 export interface Base { id: string; name: string; color: string; position: number }
@@ -205,7 +205,10 @@ export interface CreateTarget { label: string; color?: string | null; tableId?: 
 
 export interface Workspace { bases: Base[]; tables: TableInfo[]; combos: ComboSummary[]; accounts: Account[] }
 
-export interface SharePerms { add: boolean; edit: boolean; delete: boolean }
+// upload_files / edit_files: files tables (upload; replace, edit text, edit in ONLYOFFICE); null = the same as add / edit
+export interface SharePerms { add: boolean; edit: boolean; delete: boolean; upload_files?: boolean | null; edit_files?: boolean | null }
+/** What a link allows, as its server spells it out. */
+export interface LinkPerms { add?: boolean; edit?: boolean; delete?: boolean; upload_files?: boolean; edit_files?: boolean }
 export interface ShareItem { kind: "table" | "combo"; id: string; views: string[] | null }
 export interface Share {
   id: string; base_id: string; token: string; name: string; items: ShareItem[]; permissions: SharePerms;

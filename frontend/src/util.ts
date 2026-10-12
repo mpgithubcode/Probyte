@@ -1,4 +1,4 @@
-import type { Field, FieldOptions, FieldType, TableInfo, TableKind, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig } from "./types";
+import type { Field, FieldOptions, FieldType, TableInfo, TableKind, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig, SharePerms, LinkPerms } from "./types";
 
 export const PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#ec4899", "#64748b", "#84cc16", "#f97316"];
 
@@ -486,6 +486,20 @@ export function withDisplayNames(fields: Field[], config: ViewConfig): Field[] {
 }
 
 /** What a table really is: a linked table is treated like its source (files, contacts, tasks & events…). */
+/** What a link allows, every permission spelled out (upload_files / edit_files follow add / edit unless set). */
+export function linkCan(p: SharePerms | LinkPerms | null | undefined) {
+  const add = !!p?.add, edit = !!p?.edit;
+  return { add, edit, delete: !!p?.delete, upload_files: p?.upload_files ?? add, edit_files: p?.edit_files ?? edit };
+}
+
+/** "can add, edit, upload files" / "view only" */
+export function linkSummary(p: SharePerms | LinkPerms | null | undefined, files = true): string {
+  const c = linkCan(p);
+  const words = [c.add && "add", c.edit && "edit", c.delete && "delete",
+    files && c.upload_files && "upload files", files && c.edit_files && "edit files"].filter(Boolean);
+  return words.length ? `can ${words.join(", ")}` : "view only";
+}
+
 export function nativeKind(t?: TableInfo | null): TableKind | "combo" | undefined {
   if (!t) return undefined;
   return t.kind === "remote" ? t.remote?.source_kind || "remote" : t.kind;

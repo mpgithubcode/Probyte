@@ -42,6 +42,19 @@ class SharePerms(BaseModel):
     add: bool = False
     edit: bool = False
     delete: bool = False
+    # files tables: upload new files / change a file's contents (replace it, edit its text, edit it in ONLYOFFICE).
+    # None (links made before these existed): the same as add / edit.
+    upload_files: bool | None = None
+    edit_files: bool | None = None
+
+
+def effective(perms: dict | None) -> dict:
+    """What a link allows, every permission spelled out."""
+    p = perms or {}
+    out = {k: bool(p.get(k)) for k in ("add", "edit", "delete")}
+    out["upload_files"] = out["add"] if p.get("upload_files") is None else bool(p["upload_files"])
+    out["edit_files"] = out["edit"] if p.get("edit_files") is None else bool(p["edit_files"])
+    return out
 
 
 class ShareIn(BaseModel):
@@ -227,7 +240,7 @@ def _view_payload(conn, s, item, view):
             "view": {"id": str(view["id"]), "name": view["name"], "type": view["type"], "config": cfg},
             "views": [{"id": str(v["id"]), "name": v["name"], "type": v["type"], "config": {}} for v in item["views"]],
             "fields": fields, "records": out_records, "refs": refs,
-            "permissions": s["permissions"], "link_name": s["name"],
+            "permissions": effective(s["permissions"]), "link_name": s["name"],
             "sources": [{k: x[k] for k in ("table_id", "name", "kind", "color")} for x in sources] if sources else None}
 
 
@@ -284,7 +297,7 @@ def core_meta(token: str, cookie: str | None) -> dict:
         s = _load(conn, token)
         unlocked = _ok(s, cookie)
         items = _items(conn, s) if unlocked else []
-    return {"name": s["name"], "color": s["color"], "permissions": s["permissions"], "needs_password": not unlocked,
+    return {"name": s["name"], "color": s["color"], "permissions": effective(s["permissions"]), "needs_password": not unlocked,
             "items": [{"kind": i["kind"], "id": i["id"], "name": i["name"], "table_kind": i["table_kind"],
                        "views": [{"id": str(v["id"]), "name": v["name"], "type": v["type"]} for v in i["views"]]} for i in items]}
 
@@ -410,9 +423,10 @@ def core_file(token: str, record_id: str, cookie: str | None):
 
 def _table_item(conn, s, view_id, need: str | None, kind: str):
     """The shared table behind a view, when the link allows `need` ("add" / "edit") and it's that kind of table."""
-    _ok_or_403 = s["permissions"].get(need) if need else True
-    if not _ok_or_403:
-        raise HTTPException(403, {"add": "Adding isn't allowed on this link", "edit": "Editing isn't allowed on this link"}[need])
+    if need and not effective(s["permissions"])[need]:
+        raise HTTPException(403, {"add": "Adding isn't allowed on this link", "edit": "Editing isn't allowed on this link",
+                                  "upload_files": "Uploading files isn't allowed on this link",
+                                  "edit_files": "Changing files isn't allowed on this link"}[need])
     item, view = _find_view(conn, s, view_id)
     if item["kind"] != "table" or item["table_kind"] != kind:
         raise HTTPException(400, "That isn't possible with this table")
@@ -425,7 +439,7 @@ def core_upload(token: str, view_id: str, files, folder: str, cookie: str | None
         s = _load(conn, token)
         _require(s, cookie)
         audit.set_actor(f"Public link “{s['name']}”")
-        item, _ = _table_item(conn, s, view_id, "add", "files")
+        item, _ = _table_item(conn, s, view_id, "upload_files", "files")
         table = store.get_table(conn, item["id"])
     if table["kind"] == "remote":  # shared on again: through its own link
         from . import remote
@@ -439,7 +453,7 @@ def _editable_file(token, view_id, record_id, cookie):
         s = _load(conn, token)
         _require(s, cookie)
         audit.set_actor(f"Public link “{s['name']}”")
-        item, view = _table_item(conn, s, view_id, "edit", "files")
+        item, view = _table_item(conn, s, view_id, "edit_files", "files")
         _visible_record(_view_payload(conn, s, item, view), record_id)
         table = store.get_table(conn, item["id"])
         if table["kind"] == "remote":
@@ -450,13 +464,15 @@ def _editable_file(token, view_id, record_id, cookie):
         return table, rec, files_mod._keys(store.get_fields(conn, table["id"]))
 
 
-def core_replace(token, view_id, record_id, upload, cookie):
+def core_replace(token, view_id, record_id, upload, cookie, new_ext: str | None = None):
+    """New contents for a file the link shows; new_ext: the new version is in another format (a .doc edited in
+    ONLYOFFICE comes back as .docx), so the file is renamed to match."""
     from . import files as files_mod, remote
     table, rec, keys = _editable_file(token, view_id, record_id, cookie)
     if rec is None:
-        return remote.replace_file(table, record_id, upload)
+        return remote.replace_file(table, record_id, upload, new_ext)
     files_mod._check_size(upload)
-    return files_mod.replace_contents(table, rec, keys, upload.file, files_mod.upload_mime(upload))
+    return files_mod.replace_contents(table, rec, keys, upload.file, files_mod.upload_mime(upload), new_ext)
 
 
 def core_text(token, view_id, record_id, text, cookie):
@@ -583,8 +599,8 @@ def share_upload(token: str, view_id: str, request: Request, files: list[UploadF
 
 
 @router.put("/api/public/{token}/views/{view_id}/files/{record_id}/file")
-def share_replace(token: str, view_id: str, record_id: str, request: Request, file: UploadFile = File(...)):
-    return core_replace(token, view_id, record_id, file, _cookie(request, token))
+def share_replace(token: str, view_id: str, record_id: str, request: Request, file: UploadFile = File(...), new_ext: str = Form("")):
+    return core_replace(token, view_id, record_id, file, _cookie(request, token), new_ext or None)
 
 
 class PublicText(BaseModel):

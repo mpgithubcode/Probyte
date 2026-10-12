@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Account, Base, CalendarInfo, Storage, TableInfo, TableKind } from "../types";
+import { linkSummary } from "../util";
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
 import { StorageForm, emptyStorage, storageBody, type StorageDraft } from "./StorageForm";
@@ -222,9 +223,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
                   <Icon name="link" size={16} /> <b>{meta.name}</b>
                   <span className="muted small">{meta.local ? "on this server" : new URL(meta.origin).host}</span>
                   <span className="spacer" />
-                  <span className="badge">{meta.permissions.add || meta.permissions.edit || meta.permissions.delete
-                    ? `can ${[meta.permissions.add && "add", meta.permissions.edit && "edit", meta.permissions.delete && "delete"].filter(Boolean).join(", ")}`
-                    : "view only"}</span>
+                  <span className="badge">{linkSummary(meta.permissions)}</span>
                 </div>
                 <span className="muted small">Choose the table and view to show:</span>
                 {meta.items.map((it) => (
