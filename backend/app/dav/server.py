@@ -182,8 +182,10 @@ def render_pending(conn, table) -> None:
 def _render(conn, table, mapper, r):
     uid = r["caldav_uid"] or (vcard.new_uid() if table["kind"] == "contacts" else ical.new_uid())
     body = mapper.body({**r, "caldav_uid": uid})
+    # only if nothing wrote the record since it was read (a phone's PUT, another render): that write wins
     conn.execute("UPDATE records SET caldav_uid = %s, caldav_href = %s, caldav_raw = %s, caldav_etag = %s, sync_status = 'synced' "
-                 "WHERE id = %s", (uid, r["caldav_href"] or item_name(table["kind"], uid), body, make_etag(body), r["id"]))
+                 "WHERE id = %s AND row_version = %s",
+                 (uid, r["caldav_href"] or item_name(table["kind"], uid), body, make_etag(body), r["id"], r["row_version"]))
 
 
 def on_record_change(conn, table, event, record_id, source):
@@ -221,6 +223,7 @@ def write_item(conn, user, t, name, text, if_match=None, if_none_match=None) -> 
         raise DavFail(400, (CR, "valid-address-data") if book else (C, "valid-calendar-data"))
     if uid is None:
         raise DavFail(403, (C, "supported-calendar-component"))
+    render_pending(conn, t)  # an edit made here a moment ago has its new ETag before the device's If-Match is checked
     existing = find_item(conn, t, name, lock=True)
     if if_none_match == "*" and existing:
         raise DavFail(412)
@@ -519,6 +522,7 @@ class Ctx:
                 return Response(204, {})
             if kind != "item" or not t:
                 raise DavFail(404 if kind != "home" else 403)
+            render_pending(conn, t)
             r = self._item(conn, t, name, with_body=False, lock=True)
             if not r:
                 raise DavFail(404)

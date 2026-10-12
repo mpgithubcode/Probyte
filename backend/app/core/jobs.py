@@ -57,7 +57,7 @@ def enqueue(conn, kind: str, payload: dict | None = None, *, key: str | None = N
             run(c)
 
 
-SLOW_KINDS = ["sync_table"]  # jobs that talk to other servers for a while; one worker thread never takes them
+SLOW_KINDS = ["sync_table", "radicale_import"]  # jobs that take a while (other servers, big imports); one worker thread never takes them
 
 
 def _claim(fast_only=False):

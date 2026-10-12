@@ -165,3 +165,16 @@ def test_a_new_device_password_locks_out_the_old_one():
     u.j("POST", "/dav/reset")
     assert requests.request("PROPFIND", t["calendar_url"], auth=old, headers={"Depth": "0"}).status_code == 401
     assert requests.request("PROPFIND", t["calendar_url"], auth=u.dav_auth(), headers={"Depth": "0"}).status_code == 207
+
+
+def test_a_phone_cant_overwrite_an_edit_it_hasnt_seen(user):
+    """The phone's If-Match names the item it read; an edit made in Probyte since makes it stale: 412, and the phone
+    reads the item again (instead of silently undoing the edit)."""
+    t = user.table("tasks", "Stale")
+    F = user.fields(t["id"])
+    r = user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["summary"]: "Original"}})
+    href, body = user.server_item(t["calendar_url"], "Original")
+    etag = dav(user, "HEAD", href).headers["ETag"]
+    user.j("PATCH", f"/records/{r['id']}", json={"data": {F["summary"]: "Edited in Probyte"}})
+    assert dav(user, "PUT", href, body.replace("SUMMARY:Original", "SUMMARY:Phone"), **{"If-Match": etag}).status_code == 412
+    assert user.record(t["id"], r["id"])["data"][F["summary"]] == "Edited in Probyte"
