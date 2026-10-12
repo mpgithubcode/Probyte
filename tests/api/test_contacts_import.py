@@ -32,7 +32,7 @@ def test_import_vcards(user):
     ada, jurgen = recs["Ada Lovelace"], recs["Jürgen Müller"]
     assert ada[F["email"]] == "ada@example.com" and ada[F["org"]] == "Analytical Engines" and set(ada[F["categories"]]) == {"Clients", "VIP"}
     assert recs["Alan Turing"][F["birthday"]] == "1912-06-23"
-    assert jurgen[F["last"]] == "Müller" and jurgen[F["phone"]] == "+49 30 123456"
+    assert jurgen[F["last"]] == "Müller" and jurgen[F["phone"]] == "+4930123456"
     assert jurgen[F["note"]].startswith("First line") and "wraps onto the next" in jurgen[F["note"]]
     # the address book gets them, with what Probyte doesn't show (the photo)
     user.sync(t["id"])

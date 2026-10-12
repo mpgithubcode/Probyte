@@ -109,7 +109,9 @@ def test_sessions_are_signed_and_only_for_the_owner(doc):
     u, t, rec = doc
     s = u.j("POST", "/office/sessions", json={"record_id": rec["id"], "mode": "edit"})
     c = s["config"]
-    assert s["mode"] == "edit" and s["api_url"] == FAKE + "/web-apps/apps/api/documents/api.js"
+    # browsers load the editor through Probyte (the relay), wherever the Document Server is
+    assert s["mode"] == "edit" and s["api_url"] == "http://app:8000/office-ds/web-apps/apps/api/documents/api.js"
+    assert "DocsAPI" in requests.get(s["api_url"]).text
     assert c["documentType"] == "word" and c["document"]["fileType"] == "txt" and c["editorConfig"]["mode"] == "edit"
     signed = claims(c["token"])
     assert signed["document"]["url"] == c["document"]["url"] and signed["editorConfig"]["callbackUrl"] == c["editorConfig"]["callbackUrl"]
@@ -128,6 +130,30 @@ def test_sessions_are_signed_and_only_for_the_owner(doc):
     # not a document
     img = u.post(API + f"/tables/{t['id']}/files", files=[("files", ("a.zip", b"PK\x05\x06" + b"\0" * 18, "application/zip"))]).json()["records"][0]
     assert u.post(API + "/office/sessions", json={"record_id": img["id"]}).status_code == 400
+
+
+def test_relay_and_direct_mode(admin, doc):
+    u, t, rec = doc
+    relay = "http://app:8000/office-ds"
+    assert requests.get(relay + "/healthcheck").text == "true"
+    # what browsers never need isn't relayed
+    for path in ("/coauthoring/CommandService.ashx", "/ConvertService.ashx", "/command", "/info/info.json", "/../api/office/status"):
+        assert requests.post(relay + path, json={"c": "version"}).status_code == 404, path
+    # directly: browsers load it from its own address, and the relay is off
+    try:
+        admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://app:8000", "via_probyte": False})
+        assert admin.j("GET", "/office/settings")["via_probyte"] is False
+        s = u.j("POST", "/office/sessions", json={"record_id": rec["id"]})
+        assert s["api_url"] == FAKE + "/web-apps/apps/api/documents/api.js"
+        assert requests.get(relay + "/healthcheck").status_code == 404
+    finally:
+        admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://app:8000", "via_probyte": True})
+    # the settings test checks that the Document Server can download from Probyte, too
+    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://nowhere.invalid:8000"})
+    r = admin.post(API + "/office/settings/test")
+    assert r.status_code == 400 and "can't download files from Probyte" in r.json()["detail"]
+    admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": "http://app:8000"})
+    assert admin.j("POST", "/office/settings/test")["ok"]
 
 
 def test_callbacks_must_be_signed_and_for_the_document(doc):

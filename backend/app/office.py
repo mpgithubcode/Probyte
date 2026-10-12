@@ -19,6 +19,11 @@ Old formats (.doc, .xls, .ppt…) can't be saved as they are: the Document Serve
 service) and the editor works on the .docx / .xlsx / .pptx. Saving makes that the file's new version (report.doc
 becomes report.docx, same record); discarding leaves the old file as it was.
 
+Browsers can reach the Document Server through Probyte ("through Probyte", the default for new setups): Probyte
+relays it at /office-ds/ (pages, files and the editor's WebSocket), so it works wherever Probyte does, over HTTPS,
+with the Document Server only on the local network or the same Docker network. Otherwise browsers load it from its
+own address, which they must be able to reach.
+
 The Document Server must reach Probyte (its file and callback addresses), and Probyte must reach the Document
 Server (commands, and the saved files): settings "Probyte's address for the Document Server" and "the Document
 Server's address for Probyte" cover setups where these differ from the public addresses.
@@ -34,8 +39,8 @@ import time
 from urllib.parse import urlparse
 
 import requests
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Request, WebSocket
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from . import audit, files, store
@@ -56,7 +61,8 @@ EDITABLE = {"docx", "docm", "dotx", "odt", "ott", "rtf", "txt", "xlsx", "xlsm", 
 # opened for editing as their newer format (the saved version replaces the file, with the new extension)
 CONVERT = {"doc": "docx", "dot": "docx", "dotm": "docx", "xls": "xlsx", "xlt": "xlsx", "xltm": "xlsx",
            "ppt": "pptx", "pps": "pptx", "pot": "pptx", "potm": "pptx"}
-SETTINGS = ("url", "secret", "probyte_url", "server_url")
+SETTINGS = ("url", "secret", "probyte_url", "server_url", "via_probyte")
+PREFIX = "/office-ds"   # where Probyte relays the Document Server for browsers
 CONVERTED_DIR = files.ATTACH_DIR / "office"   # converted copies, while they're edited
 
 
@@ -66,6 +72,7 @@ def settings(conn) -> dict:
     rows = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM app_settings WHERE key LIKE 'office.%'").fetchall()}
     out = {k: rows.get(f"office.{k}", "") for k in SETTINGS}
     out["secret"] = unseal(out["secret"]) or ""
+    out["via_probyte"] = rows.get("office.via_probyte", "1") == "1"   # (on unless turned off)
     return out
 
 
@@ -205,7 +212,13 @@ def open_session(body: SessionIn, request: Request, user=User):
     if cfg["secret"]:
         config["token"] = sign(config, cfg["secret"])
     return {"session": str(s["id"]), "mode": mode, "converted_from": ext if convert else None, "saves_as": title if convert else None,
-            "api_url": cfg["url"].rstrip("/") + "/web-apps/apps/api/documents/api.js", "config": config}
+            "api_url": _browser_base(cfg, request) + "/web-apps/apps/api/documents/api.js", "config": config}
+
+
+def _browser_base(cfg: dict, request: Request) -> str:
+    """Where browsers load the Document Server from: through Probyte, or its own address."""
+    from .oauth import public_base
+    return public_base(request).rstrip("/") + PREFIX if cfg["via_probyte"] else cfg["url"].rstrip("/")
 
 
 def _convert(cfg: dict, s, probyte: str, name: str, src: str, out: str):
@@ -358,7 +371,8 @@ def _from_server(cfg: dict, url: str) -> bytes:
     if u.scheme not in ("http", "https") or u.netloc not in allowed:
         # the Document Server may report its own address as it knows it: fetch the same path from the configured one
         base = (cfg["server_url"] or cfg["url"]).rstrip("/")
-        url = base + u.path + (f"?{u.query}" if u.query else "")
+        path = u.path[len(PREFIX):] if u.path.startswith(PREFIX + "/") else u.path  # (reported through Probyte's relay)
+        url = base + path + (f"?{u.query}" if u.query else "")
     r = requests.get(url, timeout=(10, 600))
     if r.status_code != 200:
         raise HTTPException(502, f"Couldn't get the saved document (HTTP {r.status_code})")
@@ -449,6 +463,7 @@ class SettingsIn(BaseModel):
     secret: str | None = None        # empty = keep the saved one
     probyte_url: str = ""
     server_url: str = ""
+    via_probyte: bool = True
 
 
 def _admin(user):
@@ -461,7 +476,8 @@ def get_settings(user=User):
     _admin(user)
     with connection() as conn:
         cfg = settings(conn)
-    return {"url": cfg["url"], "probyte_url": cfg["probyte_url"], "server_url": cfg["server_url"], "has_secret": bool(cfg["secret"])}
+    return {"url": cfg["url"], "probyte_url": cfg["probyte_url"], "server_url": cfg["server_url"], "via_probyte": cfg["via_probyte"],
+            "has_secret": bool(cfg["secret"])}
 
 
 def _clean_url(u: str) -> str:
@@ -474,7 +490,8 @@ def _clean_url(u: str) -> str:
 @router.put("/api/office/settings")
 def put_settings(body: SettingsIn, user=User):
     _admin(user)
-    vals = {"url": _clean_url(body.url), "probyte_url": _clean_url(body.probyte_url), "server_url": _clean_url(body.server_url)}
+    vals = {"url": _clean_url(body.url), "probyte_url": _clean_url(body.probyte_url), "server_url": _clean_url(body.server_url),
+            "via_probyte": "1" if body.via_probyte else ""}
     with connection() as conn:
         for k, v in vals.items():
             conn.execute("INSERT INTO app_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
@@ -485,9 +502,20 @@ def put_settings(body: SettingsIn, user=User):
     return get_settings(user)
 
 
+_probes: dict[str, float] = {}
+
+
+@router.get("/api/office/probe/{token}", include_in_schema=False)
+def probe(token: str):
+    """A tiny file the Document Server fetches during the settings test (can it reach Probyte?)."""
+    if _probes.get(token, 0) < time.time():
+        raise HTTPException(404, "Not found")
+    return Response(b"Probyte test", media_type="text/plain")
+
+
 @router.post("/api/office/settings/test")
-def test_settings(user=User):
-    """Can Probyte reach the Document Server, and does it accept our signature?"""
+def test_settings(request: Request, user=User):
+    """Can Probyte reach the Document Server, does it accept our signature, and can it reach Probyte back?"""
     _admin(user)
     with connection() as conn:
         cfg = settings(conn)
@@ -504,4 +532,122 @@ def test_settings(user=User):
     if r.get("error") not in (0, None):
         raise HTTPException(400, "The document server refused Probyte's signature: check the secret (JWT)" if r.get("error") == 6
                             else f"The document server answered error {r.get('error')}")
+    # the other way: the Document Server downloads a small file from Probyte (as it does every document)
+    token = secrets.token_urlsafe(24)
+    _probes[token] = time.time() + 120
+    probyte = _probyte_base(cfg, request)
+    try:
+        c = _post(cfg, ("/ConvertService.ashx", "/converter"), {"async": False, "filetype": "txt", "outputtype": "docx",
+                                                                 "key": f"probe-{token[:20]}", "title": "probe.txt",
+                                                                 "url": f"{probyte}/api/office/probe/{token}"})
+    finally:
+        _probes.pop(token, None)
+    if c.get("error"):
+        raise HTTPException(400, f"The document server can't download files from Probyte at {probyte} (error {c['error']}). "
+                                 "Set “Probyte's address for the document server” (network settings) to an address it can reach, "
+                                 "e.g. http://probyte:8000 in the same Docker network or http://<this machine's IP>:<Probyte's port>; "
+                                 "a Document Server on a private network may also need ALLOW_PRIVATE_IP_ADDRESS=true.")
     return {"ok": True, "version": r.get("version")}
+
+
+# ---------------------------------------------------------------- the relay: the Document Server through Probyte
+
+_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding",
+        "upgrade", "host", "content-length"}
+# what browsers never need (Probyte talks to these directly), and the Document Server's own pages
+_NOT_RELAYED = re.compile(r"^(coauthoring/commandservice\.ashx|command|convertservice\.ashx|converter|info|example|welcome)(/|$)", re.I)
+_client = None
+
+
+def _relay_target(path: str) -> str:
+    with connection() as conn:
+        cfg = settings(conn)
+    if not cfg["url"] or not cfg["via_probyte"] or _NOT_RELAYED.match(path.lstrip("/")) or ".." in path.split("/"):
+        raise HTTPException(404, "Not found")
+    return (cfg["server_url"] or cfg["url"]).rstrip("/") + "/" + path.lstrip("/")
+
+
+def _relay_headers(headers, request_base: str) -> dict:
+    """The browser's request headers, plus where it sees the Document Server (so the addresses it makes point back
+    through Probyte, as an nginx in front of it would say)."""
+    u = urlparse(request_base)
+    out = {k: v for k, v in headers.items() if k.lower() not in _HOP and k.lower() not in ("cookie", "authorization")}
+    out["X-Forwarded-Host"] = u.netloc + PREFIX
+    out["X-Forwarded-Proto"] = u.scheme
+    return out
+
+
+@router.api_route(PREFIX + "/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"], include_in_schema=False)
+async def relay(path: str, request: Request):
+    import httpx
+    from starlette.background import BackgroundTask
+    from starlette.concurrency import run_in_threadpool
+    from starlette.responses import StreamingResponse
+    from .oauth import public_base
+    global _client
+    target = await run_in_threadpool(_relay_target, path)
+    if request.url.query:
+        target += "?" + request.url.query
+    _client = _client or httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), follow_redirects=False)
+    body = await request.body() if request.method in ("POST", "PUT") else None  # (with its length: not every server takes chunks)
+    try:
+        up = await _client.send(_client.build_request(request.method, target, headers=_relay_headers(request.headers, public_base(request)),
+                                                      content=body), stream=True)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Probyte can't reach the document server ({e.__class__.__name__})")
+    headers = {k: v for k, v in up.headers.items() if k.lower() not in _HOP and k.lower() != "set-cookie"}
+    if "location" in headers:  # a redirect to its own address: through the relay instead
+        loc = urlparse(headers["location"])
+        if loc.netloc:
+            headers["location"] = public_base(request).rstrip("/") + PREFIX + loc.path + (f"?{loc.query}" if loc.query else "")
+        elif loc.path.startswith("/") and not loc.path.startswith(PREFIX):
+            headers["location"] = PREFIX + headers["location"]
+    return StreamingResponse(up.aiter_raw(), status_code=up.status_code, headers=headers, background=BackgroundTask(up.aclose))
+
+
+@router.websocket(PREFIX + "/{path:path}")
+async def relay_ws(ws: WebSocket, path: str):
+    """The editor's live connection (co-editing, saving) to the Document Server."""
+    import asyncio
+    import websockets
+    from starlette.concurrency import run_in_threadpool
+    from .oauth import public_base
+    try:
+        target = await run_in_threadpool(_relay_target, path)
+    except HTTPException:
+        await ws.close(code=1008)
+        return
+    target = re.sub(r"^http", "ws", target) + (f"?{ws.url.query}" if ws.url.query else "")
+    headers = _relay_headers({k: v for k, v in ws.headers.items() if k.lower() not in ("sec-websocket-key", "sec-websocket-version",
+                              "sec-websocket-extensions", "sec-websocket-protocol")}, public_base(ws))
+    try:
+        up = await websockets.connect(target, extra_headers=headers, subprotocols=ws.scope.get("subprotocols") or None,
+                                      max_size=None, open_timeout=20, ping_interval=None)
+    except Exception as e:  # noqa: BLE001
+        log.warning("relay: can't open the document server's WebSocket: %s", e)
+        await ws.close(code=1011)
+        return
+    await ws.accept(subprotocol=up.subprotocol)
+
+    async def to_server():
+        while True:
+            m = await ws.receive()
+            if m["type"] == "websocket.disconnect":
+                break
+            await up.send(m["text"] if m.get("text") is not None else m.get("bytes") or b"")
+
+    async def to_browser():
+        async for m in up:
+            await (ws.send_text(m) if isinstance(m, str) else ws.send_bytes(m))
+
+    tasks = [asyncio.create_task(to_server()), asyncio.create_task(to_browser())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await up.close()
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass

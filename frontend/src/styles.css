@@ -259,7 +259,7 @@ textarea.input { resize: vertical; }
 
 /* ---------------------------------------------------------------- grid view */
 .grid-wrap { flex: 1; overflow: auto; }
-.grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 100%; width: max-content; }
+.grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; }  /* its width: the columns' (set by GridView) */
 .grid th, .grid td { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); height: 36px; padding: 0; }
 .grid th {
   position: sticky; top: 0; z-index: 2; background: var(--bg-soft); font-weight: 500; text-align: left; color: var(--text-soft);
@@ -724,7 +724,6 @@ button.cal-day { font: inherit; color: inherit; text-align: left; background: va
   .view-tab { padding: 7px 10px; }
   /* table */
   .grid .rownum { width: 46px; }
-  .grid th:not(.rownum):not(.add-col) { width: 150px !important; }
   .th-inner, .cell-content { padding: 0 8px; }
   /* settings: four equal tabs */
   .settings { min-height: 0; grid-template-rows: auto 1fr; }
@@ -1366,3 +1365,12 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .viewer-dialog { width: min(440px, 92%); background: var(--bg); color: var(--text); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow);
   display: flex; flex-direction: column; gap: 10px; }
 .viewer-dialog p { margin: 0; color: var(--text-soft); font-size: 13.5px; }
+
+/* column widths: a handle on each header's right edge; contents narrower than their text end in "…" */
+.col-resize { position: absolute; top: 0; right: -4px; width: 8px; height: 100%; cursor: col-resize; z-index: 2; touch-action: none; }
+.col-resize::after { content: ""; position: absolute; top: 20%; bottom: 20%; left: 3px; width: 2px; border-radius: 1px; background: transparent; }
+.grid th:hover .col-resize::after, .col-resize:active::after { background: var(--accent); }
+.th-inner { min-width: 0; overflow: hidden; }
+.th-inner .th-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-content > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
+.cell-content > .chips { display: flex; flex-wrap: nowrap; }

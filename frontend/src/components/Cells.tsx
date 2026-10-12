@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { Attachment, Field, Refs, User } from "../types";
 import {
   choiceColor, cleanFormatted, displayText, formatDate, formatNumber, fromInputValue, innerField, isDateOnly, isEditable, isErrorValue,
-  FORMAT_TYPES, shortUrl, telHref,
+  FORMAT_TYPES, formatPhone, shortUrl, telHref,
   toInputValue, valueType,
 } from "../util";
 import { Icon } from "./Icon";
@@ -92,7 +92,7 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
     case "email":
       return <a className="cell-link" href={`mailto:${value}`} title={`Write to ${value}`} onClick={(e) => e.stopPropagation()}>{String(value)}</a>;
     case "phone":
-      return <a className="cell-link" href={telHref(String(value))} title={`Call ${value}`} onClick={(e) => e.stopPropagation()}>{String(value)}</a>;
+      return <a className="cell-link" href={telHref(String(value))} title={`Call ${formatPhone(value)}`} onClick={(e) => e.stopPropagation()}>{formatPhone(value)}</a>;
     case "link":
       return <span className="chips">{(value as string[]).map((id) => <RefChip key={id} kind="record" label={refs.records[id] ?? ""} />)}</span>;
     case "user": case "created_by": case "last_modified_by":
@@ -165,8 +165,9 @@ export function FieldInput(props: InputProps) {
 }
 
 function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial, takeTyped }: InputProps) {
-  const original = value ?? "";
-  const [draft, setDraft] = useState<string>(initial ?? String(original));
+  const show = (x: unknown) => (field.type === "phone" && x ? formatPhone(x) : String(x ?? ""));  // phone numbers: as they're shown
+  const original = show(value);
+  const [draft, setDraft] = useState<string>(initial ?? original);
   // started by typing: the caret goes after that first character
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -181,7 +182,7 @@ function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial,
   const cancelled = useRef(false);
   const focused = useRef(false);
   const [invalid, setInvalid] = useState("");
-  useEffect(() => { if (!focused.current) setDraft(String(value ?? "")); }, [value]);
+  useEffect(() => { if (!focused.current) setDraft(show(value)); }, [value]);
 
   const commit = () => {
     focused.current = false;
@@ -196,7 +197,7 @@ function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial,
       }
       setInvalid("");
       v = c.value;
-      if (v !== null && v !== draft) setDraft(v);
+      if (v !== null && show(v) !== draft) setDraft(show(v));
     }
     if (field.type === "number") v = draft.trim() === "" ? null : Number(draft);
     if (v === "") v = null;
@@ -231,7 +232,7 @@ function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial,
     }} />;
   // record panel: a button to call / write / open what's in the field
   const action = !inline && FORMAT_TYPES.has(field.type) && typeof value === "string" && value
-    ? field.type === "phone" ? { href: telHref(value), icon: "phone", label: `Call ${value}` }
+    ? field.type === "phone" ? { href: telHref(value), icon: "phone", label: `Call ${formatPhone(value)}` }
       : field.type === "email" ? { href: `mailto:${value}`, icon: "external", label: `Write to ${value}` }
         : /^https?:\/\//i.test(value) ? { href: value, icon: "external", label: `Open ${value}` } : null
     : null;

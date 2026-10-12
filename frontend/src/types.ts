@@ -123,6 +123,7 @@ export interface ViewConfig {
   fieldOrder?: string[];
   pageSize?: number;
   fieldNames?: Record<string, string>;  // names fields go by in this view only (the field keeps its own)
+  columnWidths?: Record<string, number>;  // table view: column widths dragged by hand (field id -> px)
   summary?: Record<string, string>;     // table view footer: field id -> what to show (sum, avg, filled…)
   frozen?: number;  // table view: how many columns (after the row numbers) stay put when scrolling sideways  // table / list / gallery: records per page (unset = all)  // column order dragged in the table view (also used for cards)
   listLabels?: boolean;                                   // List: show property names (default on)

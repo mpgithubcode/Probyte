@@ -69,7 +69,12 @@ app.add_middleware(CompressAPI)
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except RuntimeError as e:  # the browser went away before the answer (a closed editor, a cancelled download)
+        if str(e) == "No response returned." and await request.is_disconnected():
+            return RawResponse(status_code=499)
+        raise
     h = response.headers
     h.setdefault("X-Content-Type-Options", "nosniff")
     h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")

@@ -66,8 +66,9 @@ def save_url(key, n):
 
 
 API_JS = r"""
+var fakeBase = (document.currentScript && document.currentScript.src.replace(/\/web-apps\/apps\/api\/documents\/api\.js.*$/, "")) || %(base)s;
 window.DocsAPI = { DocEditor: function (id, config) {
-  var base = %(base)s, key = config.document.key, user = config.editorConfig.user.id, ev = config.events || {};
+  var base = fakeBase, key = config.document.key, user = config.editorConfig.user.id, ev = config.events || {};
   var host = document.getElementById(id), box = document.createElement("div");
   box.className = "fake-office"; box.setAttribute("data-mode", config.editorConfig.mode);
   var ta = document.createElement("textarea"); ta.className = "fake-office-text"; ta.style.width = "100%%"; ta.style.height = "300px";
@@ -129,8 +130,11 @@ class H(BaseHTTPRequestHandler):
                     body = verify(body.get("token") or "")
                 except Exception:  # noqa: BLE001
                     return self._send(200, {"error": -8})
-            with urllib.request.urlopen(body["url"], timeout=30) as r:
-                text = r.read().decode("utf-8", "replace")
+            try:
+                with urllib.request.urlopen(body["url"], timeout=10) as r:
+                    text = r.read().decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                return self._send(200, {"error": -4})  # as the real one: couldn't download the file
             with lock:
                 finished[body["key"]] = {"versions": [text]}
             log.append({"key": body["key"], "convert": f"{body['filetype']}->{body['outputtype']}"})

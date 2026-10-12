@@ -1,7 +1,7 @@
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Field, Rec } from "../types";
 import { buildGroups, displayText, fitField, isEditable, orderFields, parseTsv, recordKind, setFieldShown, viewGroups, viewSorts, type GroupNode } from "../util";
-import { isTouch } from "./useNarrow";
+import { isTouch, useNarrow } from "./useNarrow";
 import { summarize, summaryKinds } from "./Summary";
 import { CellValue, Chip, FieldInput, RefsContext } from "./Cells";
 import { anchorOf } from "../recur";
@@ -12,6 +12,7 @@ import type { ViewProps } from "./viewTypes";
 
 const ROW_H = 36;    // keep in sync with .grid td height
 const HEADER_H = 36;
+const MIN_WIDTH = 40;
 const WIDTHS: Record<string, number> = {
   long_text: 260, recurrence: 200, checkbox: 90, rating: 120, date: 180, multi_select: 220, link: 220, lookup: 220, attachment: 160,
   autonumber: 90, button: 130, created_time: 180, last_modified_time: 180, formula: 200, record_id: 300,
@@ -117,6 +118,34 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
     if (JSON.stringify(next) !== JSON.stringify(lefts)) setLefts(next);
   });
   const lastFrozen = frozenIds[frozenIds.length - 1];
+
+  // Column widths: drag a header's right edge (saved with the view; double-click goes back to the default width).
+  // A column can be narrower than what's in it: the text is cut off with "…".
+  const [liveWidth, setLiveWidth] = useState<{ id: string; w: number } | null>(null);
+  const resizing = useRef(false);
+  const narrow = useNarrow();
+  const widthOf = (f: Field) => (liveWidth?.id === f.id ? liveWidth.w : view.config.columnWidths?.[f.id] ?? (narrow ? 150 : WIDTHS[f.type] ?? 200));
+  // the table is exactly as wide as its columns (an explicit width: otherwise the browser widens columns to fit their text)
+  const tableWidth = (narrow ? 46 : 64) + visible.reduce((n, f) => n + widthOf(f), 0) + 48;
+  const startResize = (e: ReactPointerEvent, f: Field) => {
+    e.preventDefault(); e.stopPropagation();
+    resizing.current = true;
+    const th = (e.currentTarget as HTMLElement).closest("th")!;
+    const x0 = e.clientX, w0 = th.offsetWidth;
+    let w = w0;
+    const move = (ev: PointerEvent) => { w = Math.max(MIN_WIDTH, Math.min(1200, Math.round(w0 + ev.clientX - x0))); setLiveWidth({ id: f.id, w }); };
+    const up = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      setTimeout(() => { resizing.current = false; }, 0);  // (the click that ends the drag doesn't open the menu)
+      setLiveWidth(null);
+      if (w !== w0) setConfig({ columnWidths: { ...view.config.columnWidths, [f.id]: w } });
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  };
+  const resetWidth = (f: Field) => {
+    const { [f.id]: _, ...rest } = view.config.columnWidths ?? {};
+    setConfig({ columnWidths: rest });
+  };
   const fz = (f: Field) => (f.id in lefts
     ? { className: ` frozen${f.id === lastFrozen ? " frozen-last" : ""}`, style: { left: lefts[f.id] } as CSSProperties }
     : { className: "", style: undefined });
@@ -293,7 +322,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
   return (
     <div className={`grid-wrap ${sel.size ? "selecting" : ""}`} tabIndex={0} onKeyDown={onKeyDown} onCopy={onCopy} onPaste={onPaste}
       ref={(el) => { win.ref(el); wrapRef.current = el; }}>
-      <table className="grid">
+      <table className="grid" style={{ width: tableWidth }}>
         <thead>
           <tr ref={headRow}>
             <th className="rownum">
@@ -304,15 +333,15 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
               )}
             </th>
             {visible.map((f) => (
-              <th key={f.id} style={{ width: WIDTHS[f.type] ?? 200, ...fz(f).style }} title={f.options._error ?? f.description ?? undefined}
-                className={`${fz(f).className} ${dragCol === f.id ? "col-dragging" : ""} ${overCol === f.id && dragCol && dragCol !== f.id
+              <th key={f.id} style={{ width: widthOf(f), ...fz(f).style }} title={f.options._error ?? f.description ?? undefined}
+                className={`${fz(f).className}${view.config.columnWidths?.[f.id] || liveWidth?.id === f.id ? " sized" : ""} ${dragCol === f.id ? "col-dragging" : ""} ${overCol === f.id && dragCol && dragCol !== f.id
                   ? (visible.findIndex((x) => x.id === dragCol) < visible.findIndex((x) => x.id === f.id) ? "col-over-after" : "col-over") : ""}`}
                 draggable={!isTouch}
-                onDragStart={(e) => { setDragCol(f.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", f.id); }}
+                onDragStart={(e) => { if (resizing.current) { e.preventDefault(); return; } setDragCol(f.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", f.id); }}
                 onDragOver={(e) => { if (dragCol) { e.preventDefault(); setOverCol(f.id); } }}
                 onDragEnd={() => { setDragCol(null); setOverCol(null); }}
                 onDrop={(e) => { e.preventDefault(); if (dragCol) moveColumn(dragCol, f.id); setDragCol(null); setOverCol(null); }}
-                onClick={(e) => setMenu({ field: f, anchor: e.currentTarget })}>
+                onClick={(e) => { if (!resizing.current) setMenu({ field: f, anchor: e.currentTarget }); }}>
                 <div className="th-inner">
                   <FieldIcon type={f.type} />
                   <span className="th-name">{f.name}{f.required && <span className="req-mark" title="Required"> *</span>}</span>
@@ -322,6 +351,9 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
                     <span key={i} className="muted" title={`Sort ${i + 1}`}>{s.dir === "asc" ? "↑" : "↓"}{sorts.length > 1 ? i + 1 : ""}</span>))}
                   {groupedBy.has(f.id) && <Icon name="group" size={12} className="muted" />}
                 </div>
+                <span className="col-resize" role="separator" aria-orientation="vertical" aria-label={`Resize ${f.name}`}
+                  title="Drag to resize (double-click: default width)" onPointerDown={(e) => startResize(e, f)}
+                  onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); resetWidth(f); }} />
               </th>
             ))}
             <th className="add-col">

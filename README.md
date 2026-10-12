@@ -92,7 +92,7 @@ Every database and combined database can have any number of Notion-style views, 
 
 | View | What it shows |
 |---|---|
-| **Table** | Spreadsheet grid; click a cell to edit it. Drag a column header to move the column, the title column included (the order is saved with the view). A column header's menu can **freeze** the columns up to it, so they stay put while the rest scrolls sideways. The footer shows a **summary** per column (click it): sum, average, min, max for numbers, earliest / latest for dates, filled, empty, unique and % filled for anything, checked / unchecked for checkboxes, over the view's records |
+| **Table** | Spreadsheet grid; click a cell to edit it. Drag a column header to move the column, the title column included (the order is saved with the view). Drag a header's right edge to **resize** the column, as narrow as you like (text that doesn't fit ends in "…"); double-click the edge for the default width. Widths are saved with the view. A column header's menu can **freeze** the columns up to it, so they stay put while the rest scrolls sideways. The footer shows a **summary** per column (click it): sum, average, min, max for numbers, earliest / latest for dates, filled, empty, unique and % filled for anything, checked / unchecked for checkboxes, over the view's records |
 | **Board** | Kanban columns grouped by a single-select field; drag cards between columns |
 | **Timeline** | Records as bars between a start and end date. Drag a bar to move it, or drag its edges to change the start or end. Day, week and month scales. Click an empty row to give an undated record dates. |
 | **Calendar** | **Month**, **Week** and **Day**. Month: drag items to another day. Week/Day: a time grid with an all-day row (on phones the week scrolls sideways and opens on today); click a slot to add, drag a block to move it (15-minute steps, across days in Week), drag its bottom edge to change the end |
@@ -197,7 +197,9 @@ Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (t
 - The same file open in two places is edited together (ONLYOFFICE's co-editing); one of them discarding doesn't throw away the other's changes.
 - Every exchange is signed with the Document Server's secret (JWT). The Document Server gets each file through a one-off address, and Probyte only ever downloads saved versions from the Document Server's own address.
 
-**Setting it up** (Settings → **Document editing**, admin): the Document Server's address (as browsers reach it) and its `JWT_SECRET`, then **Save and test**. Add it to your compose file (it needs about 2 GB of memory):
+**Setting it up** (Settings → **Document editing**, admin): the Document Server's address (where Probyte reaches it: its Docker name or a local network address such as `http://192.168.1.10:8081`) and its `JWT_SECRET`, then **Save and test**. The test checks both directions: Probyte reaching the Document Server, and the Document Server downloading a file from Probyte.
+
+**Browsers open the editor through Probyte** (the default): Probyte relays the Document Server at `/office-ds/` (its pages, files and the editor's WebSocket), so editing works wherever Probyte works, remotely and over HTTPS, with the Document Server kept on your local network or Docker network and no port of its own exposed. If your reverse proxy is in front of Probyte, it must pass WebSockets (most do: Traefik, Caddy, Pangolin, nginx with the usual `Upgrade` headers). To let browsers load it from its own public address instead, choose *Directly* in the settings. Add it to your compose file (it needs about 2 GB of memory):
 
 ```yaml
   onlyoffice:
@@ -210,7 +212,7 @@ Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (t
       - "8081:80"   # or behind your reverse proxy (it uses WebSockets)
 ```
 
-Under **Network settings**, give *Probyte's address for the Document Server* (`http://probyte:8000` in the same Compose file) and *the Document Server's address for Probyte* (`http://onlyoffice`) when they differ from the public ones. If Probyte is served over HTTPS, the Document Server must be too (browsers don't load an HTTP editor into an HTTPS page).
+Under **Network settings**, give *Probyte's address for the Document Server* (`http://probyte:8000` in the same Compose file, or `http://<this machine's IP>:<Probyte's port>` when the Document Server runs in another stack) when it can't use Probyte's public address. (In *Directly* mode, a Probyte served over HTTPS needs the Document Server on HTTPS too: browsers don't load an HTTP editor into an HTTPS page.)
 
 ## Linked tables (from any Probyte server)
 
@@ -282,7 +284,7 @@ Probyte POSTs `record.created`, `record.updated` and `record.deleted` events (wi
 - **Field value validation rules**: **Required** (a record can't be added or saved with it empty; marked * on the column) and, for text, numbers, email, URL and dates, **Unique** (no two records share a value; case doesn't matter). Values synced in from phones aren't blocked.
 - **Default value** for new records: text, a number, an option, checked, *today* / *now* for dates, or *whoever adds the record* for user fields.
 
-- **Email, URL and phone number** fields follow the same rules in every table, however values arrive (typing, the API, imports, public and linked tables, type changes): an email must be name@domain.tld (its domain is stored in lower case); a URL must be a web address (`example.com` gets `https://`; `javascript:` and other links are refused); a phone number is digits with the usual punctuation and an optional extension. They show as links that write, open or call, and the record panel has a button for that. Contacts tables' Phone is a phone field. Values synced from phones are kept as they are.
+- **Email, URL and phone number** fields follow the same rules in every table, however values arrive (typing, the API, imports, public and linked tables, type changes): an email must be name@domain.tld (its domain is stored in lower case); a URL must be a web address (`example.com` gets `https://`; `javascript:` and other links are refused); a phone number keeps only its digits, a leading + and an extension (labels, letters, `tel:` and punctuation go; `1-800-FLOWERS` becomes its digits) and is stored one way (`+15551234567 x12`) and shown one way everywhere: `(555) 123-4567`, `+1 (555) 123-4567`, `+44 207 946 0958`, with `ext. 12`. Searching `555-123-4567` finds it however it was written. Numbers stored before 0.5 were tidied the same way. They show as links that write, open or call, and the record panel has a button for that. Contacts tables' Phone is a phone field. Numbers synced from phones are tidied too (the card on the phone is left as it is).
 - **Link to record** connects records across tables, or within one table. By default it is two-way: adding a link also creates the matching field in the other table, and the two stay in sync. Deleting a record removes it from every link that points to it.
 - **Lookup** shows a field from the linked records. **Rollup** summarises it: count, sum, average, min, max, and/or/xor, join, unique.
 - **Conditional lookup** and **Conditional rollup** don't need a link field. They pick records from any table that match conditions. A condition can compare against a fixed value or against a field of the current record, for example "Project contains {Name}". They can also sort and limit the matches.

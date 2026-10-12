@@ -5,7 +5,7 @@ Used for public links, so records a view filters out never leave the server, and
 import re
 from functools import cmp_to_key
 
-from . import formula as F
+from . import fieldformats, formula as F
 from .compute import Engine
 
 
@@ -18,9 +18,13 @@ def display_text(eng: Engine, f, v) -> str:
     if t in ("lookup", "conditional_lookup"):
         inn = eng.inner(f)
         shown = eng.shown(inn[2], v) if inn else v
+        if inn and inn[0] == "phone":
+            shown = [fieldformats.format_phone(x) for x in (shown if isinstance(shown, list) else [shown])]
         return ", ".join(F.to_str(x) for x in (shown if isinstance(shown, list) else [shown]) if not F.is_blank(x))
     if t == "checkbox":
         return "true" if v else "false"
+    if t == "phone":
+        return fieldformats.format_phone(v)
     if eng.value_type(f) == "date" and isinstance(v, str) and v:
         try:
             dt = F.local(F.parse_dt(v))

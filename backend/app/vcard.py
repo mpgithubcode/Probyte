@@ -10,6 +10,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from . import fieldformats
+
 
 # (system_key, name, type, options, is_primary)
 CONTACT_FIELDS = [
@@ -198,7 +200,7 @@ def card_to_values(raw: str) -> tuple[str | None, dict]:
         "org": (_split(org, ";")[0].strip() or None) if org else None,
         "title": _text(card, "TITLE"),
         "email": _uri(card, "EMAIL", "mailto:"),
-        "phone": _uri(card, "TEL", "tel:"),
+        "phone": fieldformats.phone_or_raw(_uri(card, "TEL", "tel:")),
         "address": _address(card),
         "birthday": _bday(card.get("BDAY")),
         "url": _text(card, "URL"),

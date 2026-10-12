@@ -1464,4 +1464,54 @@ def test_email_url_and_phone_fields(browser):
     expect(pg.locator(".grid tbody a[href='tel:+15550100100']")).to_have_text("+1 (555) 010-0100")
     expect(pg.locator(".grid tbody a[href='https://example.com/']")).to_have_text("example.com")
     expect(pg.locator(".grid tbody a[href='mailto:ada@example.com']")).to_have_count(1)
+    # a phone number typed any way: stored one way, shown one way (in the panel's box too)
+    r2 = u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Grace"}})
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={r2['id']}")
+    box = pg.locator(".modal .form-row", has_text="Phone").locator("input")
+    box.fill("Mobile 555.010.0177 x5")
+    box.press("Enter")
+    eventually(lambda: u.record(t["id"], r2["id"])["data"].get(ph["id"]) == "5550100177 x5" or None)
+    expect(box).to_have_value("(555) 010-0177 ext. 5")
+    pg.keyboard.press("Escape")
+    expect(pg.locator(".grid tbody a[href='tel:5550100177;ext=5']")).to_have_text("(555) 010-0177 ext. 5")
+    # searching a number finds it however it's written
+    pg.fill(".view-options input[placeholder=Search]", "555-010-0177")
+    expect(pg.locator(".grid tbody", has_text="Grace")).to_have_count(1)
+    expect(pg.locator(".grid tbody", has_text="Ada")).to_have_count(0)
+    pg.fill(".view-options input[placeholder=Search]", "")
+    assert not pg.errors, pg.errors
+
+
+def test_resize_columns(browser):
+    u = Client()
+    t = u.table(name="Wide")
+    F = u.fields(t["id"])
+    long = "a very long piece of text that doesn't fit in a narrow column at all"
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: long}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    th = pg.locator(".grid thead th", has_text="Name")
+    w0 = th.bounding_box()["width"]
+    handle = th.locator(".col-resize")
+    box = handle.bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    pg.mouse.move(x, y)
+    pg.mouse.down()
+    pg.mouse.move(x - (w0 - 70), y, steps=8)       # narrower than the text
+    pg.mouse.up()
+    expect(pg.locator(".popover")).to_have_count(0)  # (ending the drag doesn't open the column menu)
+    assert abs(th.bounding_box()["width"] - 70) <= 2
+    eventually(lambda: (u.j("GET", f"/tables/{t['id']}")["views"][0]["config"].get("columnWidths") or {}).get(F["Name"]))
+    cell = pg.locator(".grid tbody td .cell-content > *", has_text="a very long").first
+    assert cell.evaluate("e => e.scrollWidth > e.clientWidth")          # cut off with …
+    assert cell.evaluate("e => getComputedStyle(e).textOverflow") == "ellipsis"
+    # the width is kept with the view
+    pg.reload()
+    expect(th).to_be_visible()
+    assert abs(th.bounding_box()["width"] - 70) <= 2
+    # double-click the edge: back to the default width
+    pg.locator(".grid thead th", has_text="Name").locator(".col-resize").dblclick()
+    eventually(lambda: not (u.j("GET", f"/tables/{t['id']}")["views"][0]["config"].get("columnWidths") or {}).get(F["Name"]))
+    assert abs(th.bounding_box()["width"] - w0) <= 2
     assert not pg.errors, pg.errors

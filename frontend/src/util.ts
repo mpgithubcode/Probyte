@@ -213,6 +213,7 @@ export function displayText(field: Field, v: unknown, refs?: Refs): string {
       return (Array.isArray(v) ? v : [v]).map((x) => (inner ? displayText(inner, x, refs) : String(x))).join(", ");
     }
     case "checkbox": return v ? "true" : "false";
+    case "phone": return formatPhone(v);
     case "date": return formatDate(v, field.options.includeTime, field.options);
     case "created_time": case "last_modified_time": return formatDate(v, true);
   }
@@ -296,7 +297,9 @@ export function applyView(records: Rec[], fields: Field[], config: ViewConfig, s
   const group = viewFilter(config);
   if (group.items.length) out = out.filter((r) => test(byId, r, group, refs));
   const q = search.trim().toLowerCase();
-  if (q) out = out.filter((r) => fields.some((f) => displayText(f, r.data[f.id], refs).toLowerCase().includes(q)));
+  const qDigits = q ? phoneQuery(q) : null;
+  if (q) out = out.filter((r) => fields.some((f) => displayText(f, r.data[f.id], refs).toLowerCase().includes(q)
+    || (qDigits !== null && f.type === "phone" && typeof r.data[f.id] === "string" && String(r.data[f.id]).replace(/\D/g, "").includes(qDigits))));
   const sorts = viewSorts(config).flatMap((s) => { const f = byId.get(s.field); return f ? [{ f, dir: s.dir === "desc" ? -1 : 1 }] : []; });
   if (sorts.length) {
     out = [...out].sort((a, b) => {
@@ -509,7 +512,6 @@ export function nativeKind(t?: TableInfo | null): TableKind | "combo" | undefine
 // (backend/app/fieldformats.py), for feedback while typing
 
 const EMAIL_RE = /^[^@\s<>"',;]+@[^@\s<>"',;]+\.[^@\s<>"',;.]{2,}$/;
-const PHONE_RE = /^\+?[\d\s().\-/]+(\s*(ext\.?|x|#)\s*\d{1,6})?$/i;
 const DOMAINISH_RE = /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#].*)?$/;
 
 /** A typed value as it will be stored, or why it can't be. */
@@ -534,9 +536,9 @@ export function cleanFormatted(type: FieldType, input: string): { value: string 
     return { value: t };
   }
   if (type === "phone") {
-    const digits = text.split(/\s*(?:ext\.?|x|#)\s*/i)[0].replace(/\D/g, "");
-    if (!PHONE_RE.test(text) || digits.length < 3 || digits.length > 20) return { error: "That isn't a phone number" };
-    return { value: text };
+    const p = phoneParts(text);
+    if (!p) return { error: "That isn't a phone number" };
+    return { value: (p.plus ? "+" : "") + p.digits + (p.ext ? ` x${p.ext}` : "") };
   }
   return { value: text };
 }
@@ -545,10 +547,59 @@ export const FORMAT_TYPES = new Set<FieldType>(["email", "url", "phone"]);
 
 /** tel: link for a phone number (digits and a leading +; an extension as ;ext=). */
 export function telHref(phone: string) {
-  const [main, ext] = phone.split(/\s*(?:ext\.?|x|#)\s*/i);
-  const num = (main.trim().startsWith("+") ? "+" : "") + main.replace(/\D/g, "");
-  return `tel:${num}${ext ? `;ext=${ext.replace(/\D/g, "")}` : ""}`;
+  const p = phoneParts(phone);
+  if (!p) return `tel:${phone.replace(/[^\d+]/g, "")}`;
+  return `tel:${p.plus ? "+" : ""}${p.digits}${p.ext ? `;ext=${p.ext}` : ""}`;
 }
+
+/* Phone numbers: the same rules as backend/app/fieldformats.py (stored as +15551234567 x12; shown as formatPhone). */
+const KEYPAD: Record<string, string> = Object.fromEntries("ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((c, i) => [c, "22233344455566677778889999"[i]]));
+const CC1 = new Set(["1", "7"]);
+const CC2 = new Set("20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49 51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86 90 91 92 93 94 95 98".split(" "));
+
+export function phoneParts(text: string): { plus: boolean; digits: string; ext: string | null } | null {
+  let t = String(text).replace(/^\s*tel:/i, "").trim();
+  let ext: string | null = null;
+  const m = /(?:\b(?:ext|extension)\b\.?|;ext=|(?:(?<=\d)|\b)x|#)\s*(\d{1,6})\s*$/i.exec(t);
+  if (m && /\d/.test(t.slice(0, m.index))) { ext = m[1]; t = t.slice(0, m.index); }
+  t = t.replace(/[A-Za-z]+\s*:/g, " ");
+  if (/\d/.test(t)) t = t.replace(/(?<=[\d\s\-.])[A-Z]{3,7}\b/g, (w) => w.split("").map((c) => KEYPAD[c]).join(""));
+  let plus = /^[^\d]*\+/.test(t);
+  let digits = t.replace(/\D/g, "");
+  if (digits.length < 3 || digits.length > 20) return null;
+  if (!plus && digits.length === 11 && digits[0] === "1") plus = true;
+  else if (!plus && digits.startsWith("00") && digits.length >= 10) { plus = true; digits = digits.slice(2); }
+  else if (!plus && digits.startsWith("011") && digits.length >= 13) { plus = true; digits = digits.slice(3); }
+  return { plus, digits, ext };
+}
+
+function phoneGroups(n: string) {
+  const out = n.length > 4 ? [n.slice(-4)] : [n];
+  let rest = n.length > 4 ? n.slice(0, -4) : "";
+  while (rest) { out.unshift(rest.slice(-3)); rest = rest.slice(0, -3); }
+  if (out.length > 1 && out[0].length === 1) { const first = out.shift()!; out[0] = first + out[0]; }
+  return out.join(" ");
+}
+
+/** A phone number as it's shown everywhere: (555) 123-4567, +1 (555) 123-4567, +44 207 946 0958, 123-4567. */
+export function formatPhone(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  const p = phoneParts(String(value));
+  if (!p) return String(value);
+  const d = p.digits;
+  let s: string;
+  if (p.plus && d.length === 11 && d[0] === "1") s = `+1 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}`;
+  else if (p.plus) {
+    const cc = CC1.has(d.slice(0, 1)) ? d.slice(0, 1) : CC2.has(d.slice(0, 2)) ? d.slice(0, 2) : d.slice(0, 3);
+    s = `+${cc} ${phoneGroups(d.slice(cc.length))}`.trim();
+  } else if (d.length === 10) s = `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+  else if (d.length === 7) s = `${d.slice(0, 3)}-${d.slice(3)}`;
+  else s = d;
+  return s + (p.ext ? ` ext. ${p.ext}` : "");
+}
+
+/** A search typed as a phone number ("555-1234") matches the numbers with those digits. */
+const phoneQuery = (q: string) => (/^[\d\s().+\-]+$/.test(q) && q.replace(/\D/g, "").length >= 3 ? q.replace(/\D/g, "") : null);
 
 /** A web address as shown: without https:// and a trailing slash. */
 export const shortUrl = (url: string) => url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
