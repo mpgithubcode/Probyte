@@ -3,7 +3,7 @@ Values that aren't numbers stay as they are. A synced contact's card on the phon
 same, so nothing is sent back)."""
 from psycopg.types.json import Jsonb
 
-from app.data.fieldformats import phone_or_raw
+from app.formats.fieldformats import phone_or_raw
 
 
 def run(conn):

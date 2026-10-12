@@ -187,7 +187,7 @@ def _source_id(table_id, record_id) -> str:
 
 @router.post("/api/remote/{table_id}/vcards")
 async def remote_vcards_import(table_id: str, files: list[UploadFile] = File(...), existing: str = Form("skip"), user=User):
-    from app.adapters import contacts
+    from app.data import contacts
     with connection() as conn:
         t = _linked(conn, table_id, user)
     from starlette.concurrency import run_in_threadpool

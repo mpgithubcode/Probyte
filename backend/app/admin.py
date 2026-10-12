@@ -16,7 +16,6 @@ from fastapi import HTTPException
 
 from app import wiring  # noqa: F401  (connects the components: before anything writes)
 from app.core.db import connection, init_db
-from app.dav import devices
 from app.identity import auth
 
 
@@ -40,9 +39,8 @@ def create_user(username: str, admin: bool, password: str | None = None) -> str:
     with connection() as conn:
         if conn.execute("SELECT 1 FROM users WHERE username = %s", (username,)).fetchone():
             raise SystemExit(f"{username} already exists")
-        u = conn.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (%s,%s,%s) RETURNING id",
+        conn.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (%s,%s,%s) RETURNING id",
                          (username, auth.hash_password(password), admin)).fetchone()
-        devices.provision(conn, u["id"])
     return password
 
 

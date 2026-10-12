@@ -327,7 +327,7 @@ def core_view(token: str, view_id: str, cookie: str | None) -> dict:
 
 
 def core_create(token: str, view_id: str, data: dict, table_id: str | None, cookie: str | None) -> dict:
-    from app.data import recordops
+    from app.sharing import recordops
     with connection() as conn:
         s = _load(conn, token)
         audit.set_actor(f"Public link “{s['name']}”")
@@ -351,7 +351,7 @@ def core_create(token: str, view_id: str, data: dict, table_id: str | None, cook
 
 
 def core_update(token: str, view_id: str, record_id: str, data: dict, cookie: str | None) -> dict:
-    from app.data import recordops
+    from app.sharing import recordops
     with connection() as conn:
         s = _load(conn, token)
         audit.set_actor(f"Public link “{s['name']}”")
@@ -372,7 +372,7 @@ def core_update(token: str, view_id: str, record_id: str, data: dict, cookie: st
 
 
 def core_delete(token: str, view_id: str, record_id: str, cookie: str | None) -> None:
-    from app.data import recordops
+    from app.sharing import recordops
     with connection() as conn:
         s = _load(conn, token)
         audit.set_actor(f"Public link “{s['name']}”")
@@ -490,7 +490,7 @@ def core_text(token, view_id, record_id, text, cookie):
 
 
 def core_vcards_import(token, view_id, texts, existing, cookie):
-    from app.adapters import contacts
+    from app.data import contacts
     with connection() as conn:
         s = _load(conn, token)
         _require(s, cookie)
@@ -506,7 +506,7 @@ def core_vcards_import(token, view_id, texts, existing, cookie):
 
 
 def core_vcards_export(token, view_id, cookie):
-    from app.adapters import contacts
+    from app.data import contacts
     with connection() as conn:
         s = _load(conn, token)
         _require(s, cookie)
@@ -620,7 +620,7 @@ def share_text(token: str, view_id: str, record_id: str, body: PublicText, reque
 
 @router.post("/api/public/{token}/views/{view_id}/vcards")
 async def share_vcards_import(token: str, view_id: str, request: Request, files: list[UploadFile] = File(...), existing: str = Form("skip")):
-    from app.adapters import contacts
+    from app.data import contacts
     from starlette.concurrency import run_in_threadpool
     texts = await contacts.read_files(files)
     return await run_in_threadpool(core_vcards_import, token, view_id, texts, existing, _cookie(request, token))

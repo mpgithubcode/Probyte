@@ -20,7 +20,7 @@ from app.core.secretbox import unseal
 from app.data import audit
 from app.data.store import DAV_KINDS, get_fields, get_table, insert_record, is_synced
 from app.dav.carddav import CardDAV
-from app.dav.client import TIMEOUT as DAV_TIMEOUT, Collection, check_url, path_of
+from app.core.webdav import TIMEOUT as DAV_TIMEOUT, Collection, check_url, path_of
 from app.dav.items import Mapper, build_body, item_name, parse_item
 
 log = logging.getLogger("probyte.sync")

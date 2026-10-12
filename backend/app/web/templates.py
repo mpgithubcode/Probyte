@@ -27,7 +27,9 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.data import recordops, store
+from app.data import store
+
+from app.sharing import recordops
 from app.calc.compute import COMPUTED_TYPES, FIELD_TYPES, Engine
 from app.core.db import Jsonb, connection
 from app.identity.auth import User

@@ -144,7 +144,7 @@ def from_mixed(vals: dict) -> tuple[str, dict]:
 
 
 def _rename_override_key(value, old: str, new: str):
-    from app.data import recur
+    from app.formats import recur
     ovs = recur.overrides(value)
     if not ovs:
         return value
@@ -233,7 +233,7 @@ def _choice_to_priority(c) -> int | None:
 
 
 def _recurrence(comp, cal=None, kind="events") -> str | None:
-    from app.data import recur
+    from app.formats import recur
     rr = comp.get("rrule")
     if rr is None:
         return None
@@ -290,7 +290,7 @@ def _write_dt(comp, name, value):
 
 def _apply_overrides(cal, master, kind, value):
     """Make the series' RECURRENCE-ID components match the overrides in a repeat value."""
-    from app.data import recur
+    from app.formats import recur
     want = {recur.rid_key(o["rid"]): o for o in recur.overrides(value)} if recur.parse(value)[0] else {}
     for c in _exceptions(cal, master, kind):
         o = want.pop(to_value(c["recurrence-id"].dt), None)
@@ -355,7 +355,7 @@ def _write_override(c, kind, o, master, new: bool):
 
 
 def _set_recurrence(comp, value):
-    from app.data import recur
+    from app.formats import recur
     rule, exdates = recur.parse(value)
     _set(comp, "exdate", None)
     if not rule:

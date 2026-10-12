@@ -7,11 +7,8 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.identity import auth
-from app.dav import devices
 from app.core import ratelimit
-from app.data import store
 from app.core.db import Jsonb, connection
-from app.core.secretbox import unseal
 from app.identity.auth import User
 
 router = APIRouter()
@@ -57,7 +54,6 @@ def register(body: Credentials, request: Request, response: Response):
             # Data created before multi-user support belongs to the first account.
             for t in ("caldav_accounts", "tables", "combos"):
                 conn.execute(f"UPDATE {t} SET user_id = %s WHERE user_id IS NULL", (user["id"],))
-        devices.provision(conn, user["id"])
         auth.start_session(conn, user["id"], request, response)
     return auth.public_user(user)
 
@@ -120,37 +116,6 @@ def change_password(body: PasswordChange, request: Request, response: Response, 
     return {"ok": True}
 
 
-# ======================================================================== device login for calendars and contacts (dav/)
-
-def _own_address(request: Request) -> str:
-    from app.identity.oauth import public_base
-    return public_base(request).rstrip("/") + "/"
-
-
-@router.get("/api/dav")
-def dav_info(request: Request, user=User):
-    with connection() as conn:
-        return devices.info(conn, user["id"], _own_address(request))
-
-
-@router.post("/api/dav/check")
-def dav_check(request: Request, user=User):
-    """Test the public CalDAV address the way a phone would."""
-    with connection() as conn:
-        acc = conn.execute("SELECT username, password FROM caldav_accounts WHERE user_id = %s AND is_builtin", (user["id"],)).fetchone()
-    if not acc:
-        raise HTTPException(400, "Enable your CalDAV login first")
-    return devices.check_public(acc["username"], unseal(acc["password"]), _own_address(request))
-
-
-@router.post("/api/dav/reset")
-def dav_reset(request: Request, user=User):
-    """Replace the user's device password (devices set up with the old one stop syncing)."""
-    with connection() as conn:
-        devices.provision(conn, user["id"])
-        return devices.info(conn, user["id"], _own_address(request))
-
-
 # ======================================================================== API keys
 
 class KeyIn(BaseModel):
@@ -170,12 +135,17 @@ def list_keys(user=User):
         return [_key_public(k) for k in conn.execute("SELECT * FROM api_keys WHERE user_id = %s ORDER BY created_at DESC", (user["id"],)).fetchall()]
 
 
+def _own_bases(conn, base_ids, user):
+    for b in base_ids or []:
+        if not conn.execute("SELECT 1 FROM bases WHERE id = %s AND user_id = %s", (b, user["id"])).fetchone():
+            raise HTTPException(404, "Base not found")
+
+
 @router.post("/api/keys")
 def create_key(body: KeyIn, user=User):
     """Creates a key. The full key is returned only this once; Probyte stores just its hash."""
     with connection() as conn:
-        for b in body.base_ids or []:
-            store.get_base(conn, b, user["id"])
+        _own_bases(conn, body.base_ids, user)
         key, key_hash = auth.new_api_key()
         k = conn.execute(
             "INSERT INTO api_keys (user_id, name, prefix, key_hash, scope, base_ids, expires_at) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",
@@ -188,11 +158,12 @@ def create_key(body: KeyIn, user=User):
 @router.patch("/api/keys/{key_id}")
 def update_key(key_id: str, body: KeyIn, user=User):
     with connection() as conn:
-        for b in body.base_ids or []:
-            store.get_base(conn, b, user["id"])
+        _own_bases(conn, body.base_ids, user)
         k = conn.execute("UPDATE api_keys SET name = %s, scope = %s, base_ids = %s, expires_at = %s WHERE id = %s AND user_id = %s RETURNING *",
                          (body.name.strip() or "API key", body.scope, Jsonb(body.base_ids) if body.base_ids is not None else None,
-                          body.expires_at, key_id, user["id"])).fetchone() or store.not_found("API key not found")
+                          body.expires_at, key_id, user["id"])).fetchone()
+        if not k:
+            raise HTTPException(404, "API key not found")
     return _key_public(k)
 
 

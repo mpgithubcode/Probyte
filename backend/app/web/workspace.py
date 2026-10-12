@@ -3,8 +3,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException
 
-from app.dav import client as dav
+from app.core import webdav as dav
+from app.core.context import api_bases
 from app.data import store
+from app.dav import devices
 from app.dav import sync
 from app.core.db import connection
 from app.formats.ical import PALETTE
@@ -20,6 +22,8 @@ router = APIRouter()
 def workspace(user=User):
     with connection() as conn:
         store.ensure_base(conn, user["id"])
+        if not user.get("api_key"):
+            devices.ensure(conn, user["id"])  # the built-in account: phones' login for Probyte's own calendar server
         bases = [b for b in conn.execute("SELECT id, name, color, position FROM bases WHERE user_id = %s ORDER BY position, created_at",
                                          (user["id"],)).fetchall() if store.base_allowed(b["id"])]
         allowed = {str(b["id"]) for b in bases}
@@ -44,7 +48,7 @@ def list_bases(user=User):
 
 @router.post("/api/bases")
 def create_base(body: BaseIn, user=User):
-    if store.api_bases.get() is not None:
+    if api_bases.get() is not None:
         raise HTTPException(403, "This API key is limited to specific bases and can't create new ones")
     with connection() as conn:
         pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM bases WHERE user_id = %s", (user["id"],)).fetchone()["p"]

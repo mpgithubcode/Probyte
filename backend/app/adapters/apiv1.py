@@ -10,7 +10,8 @@ import re
 from fastapi import HTTPException
 
 from app.sharing import linked as remote
-from app.data import recordops, store
+from app.data import store
+from app.sharing import recordops
 from app.dav import sync
 from app.data import values as values_
 from app.calc.compute import COMPUTED_TYPES, FILTER_OPS, Engine

@@ -1,17 +1,12 @@
 """Record history: who changed what. The "who" is set once per request (signed-in user, API key, AI assistant,
 public link) or by the sync, and every record write notes it with the fields it changed."""
-from contextvars import ContextVar
-
 from psycopg.types.json import Jsonb
 
-_actor: ContextVar[tuple[str, str | None]] = ContextVar("probyte_actor", default=("Probyte", None))
+from app.core.context import actor, set_actor  # noqa: F401  (set_actor: callers set the "who" through here too)
+
 KEEP_DAYS = 180
 SKIP_TYPES = {"formula", "lookup", "rollup", "conditional_lookup", "conditional_rollup", "autonumber", "record_id",
               "created_time", "last_modified_time", "created_by", "last_modified_by", "button"}
-
-
-def set_actor(label: str, user_id=None):
-    _actor.set((label, str(user_id) if user_id else None))
 
 
 def note(conn, table_id, record_id, action: str, old: dict | None = None, new: dict | None = None, fields=None):
@@ -26,7 +21,7 @@ def note(conn, table_id, record_id, action: str, old: dict | None = None, new: d
                 changes[k] = [a, b]
         if not changes:
             return
-    label, user_id = _actor.get()
+    label, user_id = actor()
     conn.execute("INSERT INTO record_history (record_id, table_id, actor, user_id, action, changes) VALUES (%s,%s,%s,%s,%s,%s)",
                  (record_id, table_id, label, user_id, action, Jsonb(changes)))
 

@@ -139,7 +139,7 @@ class WebhookPatch(BaseModel):
 
 @v1.get("/me", tags=["Account"], summary="Who the key belongs to and what it may do")
 def me(user=User):
-    from app.identity.auth import api_bases
+    from app.core.context import api_bases
     return {"username": user["username"], "access": user.get("api_scope", "write"),
             "bases": "all" if api_bases.get() is None else sorted(api_bases.get())}
 

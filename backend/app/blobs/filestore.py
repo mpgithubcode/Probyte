@@ -10,7 +10,7 @@ from urllib.parse import quote, unquote, urlparse
 
 import requests
 
-from app.dav.client import D, NS, TIMEOUT, DavError, check_url, q, responses
+from app.core.webdav import D, NS, TIMEOUT, DavError, check_url, q, responses
 from app.core.secretbox import unseal
 
 MAX_OBJECTS = 100_000   # a sync lists at most this many files

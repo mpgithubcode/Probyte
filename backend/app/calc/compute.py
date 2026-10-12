@@ -60,6 +60,12 @@ def _iso(dt):
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
 
 
+# Where the records of tables that aren't stored here come from, by table kind: a linked table's are read through its
+# link (sharing/linked.py registers "remote"), so this engine needn't know about links.
+READERS: dict = {}
+REF_READERS: dict = {}   # (and the titles / usernames their records refer to)
+
+
 class Engine:
     def __init__(self, conn):
         self.conn = conn
@@ -259,8 +265,7 @@ class Engine:
     def raw(self, table_id) -> list:
         tid = str(table_id)
         if tid not in self._raw and self.is_remote(tid):
-            from app.sharing import linked as remote
-            self._raw[tid] = remote.records(self.conn, self.table(tid))
+            self._raw[tid] = READERS["remote"](self.conn, self.table(tid))
         if tid not in self._raw:
             rows = self.conn.execute(
                 "SELECT id, table_id, data, sync_status, created_at, updated_at, seq, created_by, updated_by, row_version "
@@ -733,8 +738,7 @@ class Engine:
     def refs(self, table_id, records) -> dict:
         """Titles of linked records and usernames that the given records refer to."""
         if self.is_remote(table_id):
-            from app.sharing import linked as remote
-            return remote.refs(self.conn, self.table(table_id))
+            return REF_READERS["remote"](self.conn, self.table(table_id))
         rec_titles, user_ids = {}, set()
         for f in self.fields(table_id):
             fid, t = str(f["id"]), f["type"]

@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from app.core.context import api_bases
 from app.adapters import apiv1
 from app.data import audit
 from app.identity import auth
@@ -206,7 +207,7 @@ async def handle(msg, user: dict, bases) -> dict | None:
             return ok(_error_result(f"Missing argument(s): {', '.join(missing)}"))
 
         def work():
-            auth.api_bases.set(bases)
+            api_bases.set(bases)
             if name in owners:  # an extension's tool
                 return owners[name].call(user, name, args)
             return _call(user, name, args)

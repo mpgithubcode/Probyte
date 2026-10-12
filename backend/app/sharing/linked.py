@@ -21,6 +21,7 @@ from urllib.parse import quote, urlparse
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
 
+from app.calc import compute
 from app.core.db import Jsonb
 
 # Fetching user-supplied URLs from the server: refuse private / internal addresses unless allowed
@@ -590,3 +591,8 @@ def attachment(conn, table, attachment_id, download: bool):
                     headers={"Content-Disposition": disp if inline else disp.replace("inline", "attachment"),
                              "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; img-src 'self'; sandbox",
                              "Cache-Control": "private, max-age=3600"})
+
+
+# the computed-values engine reads linked tables' records (and what they refer to) through their link
+compute.READERS["remote"] = records
+compute.REF_READERS["remote"] = refs

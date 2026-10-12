@@ -13,7 +13,9 @@ from icalendar import Calendar, Event
 from icalendar.prop import vRecur
 from pydantic import BaseModel
 
-from app.data import recur, store
+from app.data import store
+
+from app.formats import recur
 from app.calc.compute import Engine
 from app.core.db import connection
 from app.formats.ical import as_date, parse_value_dt

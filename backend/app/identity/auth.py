@@ -1,6 +1,5 @@
 """Username/password accounts with cookie sessions."""
 import base64
-import contextvars
 import hashlib
 import hmac
 import os
@@ -11,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from app.data import audit
+from app.core.context import api_bases, set_actor
 from app.core.db import connection
 
 SESSION_COOKIE = "probyte_session"
@@ -81,7 +80,6 @@ API_KEY_PREFIX = "pbk_"
 # API keys work for data (bases, tables, records, views…), never for account management.
 KEY_BLOCKED_PATHS = ("/api/auth", "/api/keys", "/api/shares", "/api/dav", "/api/accounts", "/api/attachments")
 # Bases an API key is limited to, for the current request (None = no limit / logged-in session).
-api_bases: contextvars.ContextVar[set | None] = contextvars.ContextVar("api_bases", default=None)
 
 
 def new_api_key() -> tuple[str, str]:
@@ -142,14 +140,14 @@ async def current_user(request: Request) -> dict:
     if key:
         user, bases = await run_in_threadpool(_key_user, key, request.method, request.url.path)
         api_bases.set(bases)
-        audit.set_actor(user["actor"], user["id"])
+        set_actor(user["actor"], user["id"])
         return user
     api_bases.set(None)
     token = request.cookies.get(SESSION_COOKIE)
     if token:
         user = await run_in_threadpool(_session_user, token)
         if user:
-            audit.set_actor(user["username"], user["id"])
+            set_actor(user["username"], user["id"])
             return user
     raise HTTPException(401, "Not logged in")
 
