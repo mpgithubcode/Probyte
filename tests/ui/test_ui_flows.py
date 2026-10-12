@@ -1374,3 +1374,26 @@ def test_search_shows_linked_table_records(browser, table_user):
     expect(pg.locator(".page-head h1")).to_have_text("Their stock")
     expect(pg.locator(".modal")).to_contain_text("Shelf")
     assert not pg.errors, pg.errors
+
+
+def test_import_contacts_from_a_vcard_file(browser, tmp_path):
+    u = Client()
+    t = u.table("contacts", "Contacts")
+    f = tmp_path / "people.vcf"
+    f.write_text("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Grace Hopper\r\nEMAIL:grace@example.com\r\nEND:VCARD\r\n"
+                 "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Katherine Johnson\r\nTEL:+1 555 0100\r\nEND:VCARD\r\n")
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".page-head [aria-label=More]")
+    pg.click(".settings-nav button:has-text('Import & export')")
+    expect(pg.locator(".modal a:has-text('Download .vcf')")).to_be_visible()
+    pg.click(".modal button:has-text('Import .vcf')")
+    pg.set_input_files(".modal input[type=file]", str(f))
+    expect(pg.locator(".modal .drop-box")).to_contain_text("people.vcf")
+    pg.click(".modal-foot button:has-text('Import')")
+    expect(pg.locator(".modal .import-result")).to_contain_text("2 contacts added")
+    pg.click(".modal-foot button:has-text('Done')")
+    expect(rows(pg)).to_have_count(2)
+    expect(pg.locator(".grid tbody")).to_contain_text("Grace Hopper")
+    assert not pg.errors, pg.errors

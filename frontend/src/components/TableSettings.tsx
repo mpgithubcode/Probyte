@@ -25,6 +25,7 @@ export interface TableSettingsActions {
   fieldsReordered: () => void;
   syncNow: () => void;
   importFile?: () => void;
+  importVcards?: () => void;   // contacts tables
   exportData: () => void;
   combine?: () => void;
   sources?: () => void;
@@ -119,6 +120,14 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
               {actions.importFile && (<div className="settings-item">
                 <div><b>Import from a file</b><span className="muted small">CSV, Excel, OpenDocument, Numbers or JSON: rows become records.</span></div>
                 <button className="btn sm" onClick={actions.importFile}><Icon name="upload" size={14} /> Import…</button>
+              </div>)}
+              {actions.importVcards && (<div className="settings-item">
+                <div><b>Import contacts</b><span className="muted small">vCard files (.vcf) from a phone, Google, Outlook or iCloud. You can also drop them on the table.</span></div>
+                <button className="btn sm" onClick={actions.importVcards}><Icon name="contacts" size={14} /> Import .vcf…</button>
+              </div>)}
+              {kind === "contacts" && (<div className="settings-item">
+                <div><b>Download as vCard</b><span className="muted small">Every contact in one .vcf file, for a phone, another app or a backup.</span></div>
+                <a className="btn sm" href={`/api/tables/${ds.id}/vcards`}><Icon name="download" size={14} /> Download .vcf</a>
               </div>)}
               <div className="settings-item">
                 <div><b>Export</b><span className="muted small">The current view (or everything) as xlsx, csv, tsv, ods, xls or json.</span></div>

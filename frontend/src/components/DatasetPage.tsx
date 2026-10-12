@@ -11,6 +11,7 @@ import { EmojiPicker } from "./EmojiPicker";
 import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
 import { TableSettings } from "./TableSettings";
+import { ContactsImport } from "./ContactsImport";
 import { ViewSettings } from "./ViewSettings";
 import { VIEW_TYPES, ViewOptions, ViewTabs } from "./Toolbar";
 import { CAN_ALL, type Ops } from "./viewTypes";
@@ -53,6 +54,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [combineNew, setCombineNew] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [dropping, setDropping] = useState(false);
+  const [vcards, setVcards] = useState<File[] | null>(null);  // contacts tables: the vCard import window (with dropped files)
   const uploadRef = useRef<HTMLInputElement>(null);    // files tables: file picker…
   const folderRef = useRef<HTMLInputElement>(null);    // …and folder picker
   const [uploadInto, setUploadInto] = useState("");    // the folder uploads go into
@@ -450,6 +452,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const props = { ds, view, fields: vfields, visible, records, allRecords, ops, setConfig };
   const t = ds.table;
   const isFiles = t?.kind === "files";
+  const isContacts = t?.kind === "contacts" && can.add;
   // files tables: the view's files, for the viewer (it goes through them in the view's order)
   const fileF = isFiles ? ds.fields.find((f) => f.system_key === "file") : undefined;
   const fileEntries: ViewerEntry[] = fileF
@@ -467,14 +470,20 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     <RefsContext.Provider value={{ refs: ds.refs, addRefs, me }}>
     <FileOpenContext.Provider value={isFiles ? openFile : null}>
     <div className={`page ${dropping ? "dropping" : ""}`}
-      onDragOver={isFiles ? (e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } } : undefined}
-      onDragLeave={isFiles ? (e) => { if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) setDropping(false); } : undefined}
+      onDragOver={isFiles || isContacts ? (e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } } : undefined}
+      onDragLeave={isFiles || isContacts ? (e) => { if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) setDropping(false); } : undefined}
       onDrop={isFiles ? (e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault(); setDropping(false);
         fromDrop(e.dataTransfer, uploadInto).then(uploads.enqueue).catch((err) => onError(String(err)));
+      } : isContacts ? (e) => {  // contacts tables: dropped .vcf files open the contacts import
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault(); setDropping(false);
+        setVcards(Array.from(e.dataTransfer.files));
       } : undefined}>
-      {dropping && <div className="drop-overlay"><Icon name="upload" size={28} /> Drop files or folders to upload them to {[ds.storage?.location, uploadInto].filter(Boolean).join("/") || ds.name}</div>}
+      {dropping && <div className="drop-overlay"><Icon name="upload" size={28} />
+        {isContacts ? "Drop vCard files (.vcf) to import their contacts"
+          : <>Drop files or folders to upload them to {[ds.storage?.location, uploadInto].filter(Boolean).join("/") || ds.name}</>}</div>}
       <header className="page-head">
         <div className="title-row">
           <button className="icon-btn menu-btn" onClick={onMenu} aria-label="Menu"><Icon name="menu" size={20} /></button>
@@ -589,6 +598,9 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
           onSaved={(saved) => patchLocal(saved.id, (r) => ({ ...r, ...saved }))} location={ds.storage?.location} />
       )}
       {uploads.panel}
+      {vcards && ds.kind === "table" && (
+        <ContactsImport tableId={ds.id} initialFiles={vcards} onClose={() => setVcards(null)} onDone={() => reload()} />
+      )}
       {settings && (
         <TableSettings ds={ds} bases={bases} currentBase={currentBase} hiddenInSidebar={hiddenInSidebar} syncing={syncing}
           canManage={ds.kind === "table" && !link && ops.can.manage} initial={settings as "general"} onClose={() => setSettings(null)}
@@ -610,6 +622,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             // these open their own window instead
             importFile: ds.kind === "table" && can.add && !isFiles && !link ? () => { setSettings(null); setTransfer("import"); } : undefined,
             exportData: () => { setSettings(null); setTransfer("export"); },
+            importVcards: t?.kind === "contacts" && can.add ? () => { setSettings(null); setVcards([]); } : undefined,
             combine: ds.kind === "table" ? () => { setSettings(null); setCombineNew(true); } : undefined,
             sources: ds.kind === "combo" ? () => { setSettings(null); setComboEdit(true); } : undefined,
             linkSettings: link ? () => { setSettings(null); setLinkEdit(true); } : undefined,
