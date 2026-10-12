@@ -1029,8 +1029,8 @@ def test_files_table_new_upload_preview_and_edit(browser):
     expect(pg.locator(".upload-panel")).to_contain_text("3 uploads complete", timeout=15000)
     expect(rows(pg)).to_have_count(3)
     # the image: a preview; clicking it opens the full-screen viewer with the details on the right
-    expect(pg.locator(".grid tbody .thumb img")).to_have_count(1, timeout=15000)
-    pg.locator(".grid tbody .thumb img").first.click()
+    expect(pg.locator(".grid tbody .thumb img")).to_have_count(3, timeout=15000)   # the text files get covers too
+    pg.locator(".grid tbody tr", has_text="dot.png").locator(".thumb img").click()
     expect(pg.locator(".viewer .viewer-image img")).to_be_visible()
     expect(pg.locator(".viewer-info")).to_contain_text("Kind")
     expect(pg.locator(".viewer-info")).to_contain_text("Image")
@@ -1222,4 +1222,50 @@ def test_files_table_header_on_a_phone(browser):
     expect(pg.locator(".page-head h1")).to_have_text("Files")
     expect(pg.locator(".page-head .storage-badge")).to_be_hidden()          # it's in table settings instead
     assert pg.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1")
+    assert not pg.errors, pg.errors
+
+
+def test_templates_for_tables_and_views(browser, table_user):
+    u, t, F = table_user
+    pg = new_page(browser)
+    sign_in(pg, u)
+    # a new table from a starter template
+    pg.click(".side-add >> nth=0")
+    pg.click(".kind:has-text('From a template')")
+    pg.click(".template-card:has-text('Job tracker')")
+    expect(pg.locator(".modal label:has-text('Name') input").first).to_have_value("Job tracker")
+    expect(pg.locator(".modal")).to_contain_text("Add its 3 sample records")
+    pg.click(".modal-foot button:has-text('Create')")
+    expect(pg.locator(".page-head h1")).to_have_text("Job tracker")
+    expect(pg.locator(".view-tab")).to_contain_text(["All jobs", "Board", "Schedule", "To invoice"])
+    expect(rows(pg)).to_have_count(3)
+    # a view saved as a template, then used in another table
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".view-tab.active .view-tab-more")
+    pg.click(".modal .settings-nav button:has-text('Layout')")
+    pg.click(".modal .settings-nav button:has-text('General')")
+    pg.click(".modal .type-tile:has-text('Board')")
+    pg.click(".modal .settings-nav button:has-text('Template')")
+    pg.fill(".modal label:has-text('Template name') input", "Status board")
+    pg.click(".modal button:has-text('Save as template')")
+    expect(pg.locator(".modal .ok")).to_contain_text("Saved")
+    pg.click(".modal-foot button:has-text('Done')")
+    jobs = next(x for x in u.workspace()["tables"] if x["name"] == "Job tracker")
+    pg.goto(f"{BASE}/#/table/{jobs['id']}")
+    pg.click(".view-tab.add")
+    pg.click(".popover .menu-item:has-text('Status board')")
+    expect(pg.locator(".view-tab.active")).to_contain_text("Status board")
+    expect(pg.locator(".kanban-col").first).to_be_visible()
+    v = next(x for x in u.j("GET", f"/tables/{jobs['id']}")["views"] if x["name"] == "Status board")
+    J = u.fields(jobs["id"])
+    assert v["type"] == "kanban" and v["config"]["groupBy"] == J["Status"]       # matched by name
+    # a table template downloaded as a file from table settings
+    pg.click(".page-head [aria-label=More]")
+    pg.click(".modal .settings-nav button:has-text('Template')")
+    with pg.expect_download() as dl:
+        pg.click(".modal button:has-text('Download template file')")
+    import json as _json
+    body = _json.loads(open(dl.value.path()).read())
+    assert body["kind"] == "table" and body["name"] == "Job tracker" and any(f["name"] == "Invoice total" for f in body["fields"])
+    assert dl.value.suggested_filename.endswith(".probyte-table.json")
     assert not pg.errors, pg.errors

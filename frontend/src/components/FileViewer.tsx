@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
-import { attachmentUrl, editableKind, fetchBytes, fileExt, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
+import { attachmentUrl, editableKind, fetchBytes, fileExt, imageUrl, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
 import type { Attachment, Field, Rec } from "../types";
 import { formatBytes, isEditable } from "../util";
 import { CellValue, FieldInput } from "./Cells";
@@ -242,7 +242,7 @@ function ImageView({ item }: { item: Attachment }) {
   const [zoom, setZoom] = useState(false);
   return (
     <div className={`viewer-image ${zoom ? "zoom" : ""}`} onClick={() => setZoom(!zoom)} title={zoom ? "Fit to screen" : "Actual size"}>
-      <img src={attachmentUrl(item)} alt={item.name} />
+      <img src={imageUrl(item)} alt={item.name} />
     </div>
   );
 }
@@ -377,7 +377,8 @@ function DocumentView({ item }: { item: Attachment }) {
     return () => { live = false; };
   }, [fallback, isDocx, item.id]);
 
-  if (pdf) return <Pdf data={pdf} name={item.name} />;
+  // desktop browsers: their own PDF viewer, from the address (cached); elsewhere pdf.js draws the pages just read
+  if (pdf) return nativePdf() ? <Pdf src={previewPdfUrl(item)} name={item.name} /> : <Pdf data={pdf} name={item.name} />;
   if (!fallback) return <Loading text="Preparing the preview…" />;
   if (isDocx) return docxErr ? <NoPreview item={item} why={docxErr} /> : <div className="viewer-docx" ref={box}><Loading /></div>;
   return <NoPreview item={item} why={fallback === "only-docx" ? undefined : fallback} />;
@@ -405,7 +406,7 @@ export function FileView({ item, onExpand }: { item: Attachment; onExpand?: () =
   const thumb = thumbUrl(item);
   return (
     <div className="file-card" onClick={onExpand} role={onExpand ? "button" : undefined}>
-      {kind === "image" ? <img src={attachmentUrl(item)} alt={item.name} />
+      {kind === "image" ? <img src={imageUrl(item)} alt={item.name} />
         : thumb ? <img src={thumb} alt={item.name} />
           : <span className="viewer-ext big">{fileExt(item.name)}</span>}
       {onExpand && <span className="file-card-open"><Icon name="expand" size={14} /> Open preview</span>}

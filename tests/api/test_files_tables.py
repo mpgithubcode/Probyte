@@ -211,3 +211,18 @@ def test_document_previews(user):
     wait(lambda: "Revenue grew" in (by_name(user, t, F, "report.docx")["data"].get(F["text"]) or ""))
     txt = upload(user, t, ("a.txt", b"x", "text/plain"))[0]
     assert user.get(API + f"/files/{txt['id']}/preview").status_code == 400
+
+
+def test_covers_for_text_and_files_added_before(user):
+    """Text files get a page-style cover; files without one (e.g. added before the converter) get one at the next sync."""
+    t = user.table("files", "Covers", storage=S3, storage_prefix=f"p{uuid.uuid4().hex[:8]}")
+    md = upload(user, t, ("notes.md", b"# Title\n\n- one\n- two\n", "text/markdown"))[0]
+    wait(lambda: user.get(API + f"/files/{md['id']}/thumb").status_code == 200)
+    F = user.fields(t["id"])
+    item = user.record(t["id"], md["id"])["data"][F["file"]][0]
+    assert item["thumb"] and item["previewed"]
+    # a file whose cover was never made (as if added before): the sync makes it
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    doc = upload(user, t, ("old.docx", open(os.path.join(here, "fixtures", "report.docx"), "rb").read(), "application/octet-stream"))[0]
+    wait(lambda: user.get(API + f"/files/{doc['id']}/thumb").status_code == 200, timeout=60)

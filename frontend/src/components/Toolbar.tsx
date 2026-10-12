@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Field, View, ViewConfig, ViewType } from "../types";
 import { countConditions, hiddenIds, isDateField, setFieldShown, viewFilter, viewGroups, viewSorts } from "../util";
 import { BoardOptions, FilterEditor, GroupEditorList, ListOptions, SortEditor } from "./ViewControls";
@@ -6,6 +6,7 @@ import { listLayout } from "./ListView";
 import { FieldIcon, Icon } from "./Icon";
 import { Popover, usePopover } from "./Overlay";
 import { PAGE_SIZES, PAGED_VIEWS } from "./Pager";
+import { listTemplates, readTemplateFile, type TemplateInfo } from "./Templates";
 
 export const VIEW_TYPES: { type: ViewType; label: string; icon: string; desc: string }[] = [
   { type: "grid", label: "Table", icon: "grid", desc: "Rows and columns" },
@@ -18,11 +19,32 @@ export const VIEW_TYPES: { type: ViewType; label: string; icon: string; desc: st
 ];
 
 /** The view tabs: click to switch, drag to reorder, ⋯ (or double-click) on the open one for its settings. */
-export function ViewTabs({ views, active, onSelect, onCreate, onReorder, onSettings }: {
+export function ViewTabs({ views, active, onSelect, onCreate, onReorder, onSettings, onFromTemplate }: {
   views: View[]; active?: View; onSelect: (v: View) => void; onCreate: (t: ViewType) => void;
   onReorder: (ids: string[]) => void; onSettings: (v: View) => void;
+  onFromTemplate?: (t: { template_id?: string; body?: Record<string, unknown> }) => Promise<void>;
 }) {
   const add = usePopover();
+  const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
+  const [tplErr, setTplErr] = useState("");
+  const tplFile = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!add.anchor || !onFromTemplate) return;
+    setTplErr("");
+    listTemplates("view").then(setTemplates).catch(() => setTemplates([]));
+  }, [add.anchor]);
+  const useTemplate = async (t: { template_id?: string; body?: Record<string, unknown> }) => {
+    try { await onFromTemplate!(t); add.close(); } catch (e) { setTplErr((e as Error).message); }
+  };
+  const fromFile = async (f: File | undefined) => {
+    if (!f) return;
+    try {
+      const t = await readTemplateFile(f);
+      if (t.kind !== "view") throw new Error("That's a table template: use it from New table");
+      await useTemplate({ body: t.body });
+    } catch (e) { setTplErr((e as Error).message); }
+    if (tplFile.current) tplFile.current.value = "";
+  };
   const [drag, setDrag] = useState<string | null>(null);
   const [order, setOrder] = useState<string[] | null>(null);  // while dragging
   const shown = order ? order.map((id) => views.find((v) => v.id === id)!).filter(Boolean) : views;
@@ -65,6 +87,18 @@ export function ViewTabs({ views, active, onSelect, onCreate, onReorder, onSetti
                 <span><b>{t.label}</b><span className="muted small">{t.desc}</span></span>
               </button>
             ))}
+            {onFromTemplate && (<>
+              <div className="menu-heading">From a template</div>
+              {templates?.map((t) => (
+                <button key={t.id} className="menu-item" onClick={() => useTemplate({ template_id: t.id })}>
+                  <Icon name={VIEW_TYPES.find((x) => x.type === t.summary.type)?.icon ?? "grid"} size={16} /> {t.name}
+                </button>
+              ))}
+              {templates && !templates.length && <div className="muted small pad">No view templates yet: save one from a view's settings.</div>}
+              <input ref={tplFile} type="file" accept=".json,application/json" hidden onChange={(e) => fromFile(e.target.files?.[0])} />
+              <button className="menu-item" onClick={() => tplFile.current?.click()}><Icon name="upload" size={16} /> Use a template file…</button>
+              {tplErr && <div className="error small pad">{tplErr}</div>}
+            </>)}
           </div>
         </Popover>
       )}

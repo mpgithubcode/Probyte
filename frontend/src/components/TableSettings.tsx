@@ -6,8 +6,9 @@ import { EmojiPicker } from "./EmojiPicker";
 import { FieldIcon, Icon, tableIcon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
 import { StorageEditor } from "./StorageForm";
+import { TemplateActions } from "./Templates";
 
-type Section = "general" | "fields" | "sync" | "sharing" | "data" | "delete";
+type Section = "general" | "fields" | "sync" | "sharing" | "data" | "template" | "delete";
 
 const KIND_LABEL: Record<string, string> = {
   generic: "Table", tasks: "Tasks (synced calendar)", events: "Events (synced calendar)", mixed: "Tasks & events (synced calendar)",
@@ -52,6 +53,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
       : remote ? [{ id: "sync" as Section, label: "Link" }] : ds.kind === "combo" ? [{ id: "sync" as Section, label: "Sources" }] : []),
     ...(actions.feeds && hasDates && !files ? [{ id: "sharing" as Section, label: "Calendar links" }] : []),
     { id: "data", label: "Import & export" },
+    ...(ds.kind === "table" && !remote && !files ? [{ id: "template" as Section, label: "Template" }] : []),
     { id: "delete", label: "Delete" },
   ];
   const [section, setSection] = useState<Section>(sections.some((s) => s.id === initial) ? initial : "general");
@@ -129,6 +131,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
               {files && <p className="hint">Files are added with Upload (or by dropping them on the page), not imported.</p>}
             </div>
           )}
+          {section === "template" && <TemplateActions kind="table" tableId={ds.id} defaultName={ds.name} records={ds.records.length} />}
           {section === "delete" && <DeletePane ds={ds} files={files} word={word} actions={actions} />}
         </div>
       </div>

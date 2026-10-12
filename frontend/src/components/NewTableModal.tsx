@@ -4,9 +4,12 @@ import type { Account, Base, CalendarInfo, Storage, TableInfo, TableKind } from 
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
 import { StorageForm, emptyStorage, storageBody, type StorageDraft } from "./StorageForm";
+import { TemplateGallery, type UploadedTemplate } from "./Templates";
 
-const KINDS: { kind: TableKind; title: string; desc: string; icon: string }[] = [
+type NewKind = TableKind | "template";
+const KINDS: { kind: NewKind; title: string; desc: string; icon: string }[] = [
   { kind: "generic", title: "Blank database", desc: "Your own fields, stored in Probyte", icon: "table" },
+  { kind: "template", title: "From a template", desc: "A starter, one you saved, or a template file", icon: "layers" },
   // One calendar type: tasks and events together (existing tasks-only / events-only tables keep working)
   { kind: "mixed", title: "Tasks & events", desc: "Synced with a calendar: your phone's Reminders and Calendar apps", icon: "calendar-check" },
   { kind: "contacts", title: "Contacts", desc: "vCards synced with a CardDAV address book", icon: "contacts" },
@@ -36,7 +39,10 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
   accounts: Account[]; bases: Base[]; baseId?: string; onClose: () => void; onCreated: (t: TableInfo) => void; onManageAccounts: () => void;
 }) {
   const [base, setBase] = useState(baseId ?? bases[0]?.id ?? "");
-  const [kind, setKind] = useState<TableKind>("generic");
+  const [choice, setChoice] = useState<NewKind>("generic");
+  const kind = (choice === "template" ? "generic" : choice) as TableKind;
+  const [tpl, setTpl] = useState<{ id?: string; uploaded?: UploadedTemplate; name: string; records: number } | null>(null);
+  const [withRecords, setWithRecords] = useState(true);
   const [name, setName] = useState("");
   // The built-in account (sorted first) is the one that syncs to the user's phone.
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
@@ -107,6 +113,16 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
   }, [kind, accountId]);
 
   const create = async () => {
+    if (choice === "template") {
+      if (!tpl) return setError("Choose a template");
+      setBusy(true); setError("");
+      try {
+        onCreated(await api.post<TableInfo>("/tables/from-template", { template_id: tpl.id, body: tpl.uploaded?.body, base_id: base,
+          name: name.trim() || tpl.name, include_records: withRecords }));
+      } catch (e) { setError((e as Error).message); }
+      setBusy(false);
+      return;
+    }
     if (kind === "remote" && !pick) return checkLink();
     if (!name.trim()) return setError("Give the table a name");
     setBusy(true);
@@ -149,7 +165,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
       <div className="form">
         <div className="kind-picker">
           {KINDS.map((k) => (
-            <button key={k.kind} className={`kind ${kind === k.kind ? "active" : ""}`} onClick={() => setKind(k.kind)}>
+            <button key={k.kind} className={`kind ${choice === k.kind ? "active" : ""}`} onClick={() => setChoice(k.kind)}>
               <Icon name={k.icon} size={20} />
               <b>{k.title}</b>
               <span className="muted">{k.desc}</span>
@@ -168,6 +184,16 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
             placeholder={kind === "tasks" ? "My Tasks" : kind === "events" ? "My Events" : kind === "mixed" ? "Personal" : book ? "Contacts" : kind === "remote" ? "Name in your base" : kind === "files" ? "Documents" : "Projects"}
             onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
         </label>
+
+        {choice === "template" && (
+          <>
+            <TemplateGallery selected={tpl} onSelect={(t) => { setTpl(t); if (!name.trim() || name === tpl?.name) setName(t.name); }} />
+            {!!tpl?.records && (
+              <label className="inline-check"><input type="checkbox" checked={withRecords} onChange={(e) => setWithRecords(e.target.checked)} />
+                Add its {tpl.records} sample record{tpl.records === 1 ? "" : "s"}</label>
+            )}
+          </>
+        )}
 
         {needsAccount && (
           <div className="notice">

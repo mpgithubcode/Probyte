@@ -9,6 +9,8 @@ export const setAttachmentBase = (base: string) => {
 };
 
 export const isImage = (a: Attachment) => /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(a.mime);
+/** iPhone photos: shown through a JPEG the server makes (most browsers can't show HEIC). */
+export const isHeic = (a: Attachment) => !!a.file && (/^image\/hei[cf]$/.test(a.mime) || /\.hei[cf]$/i.test(a.name));
 
 export const attachmentUrl = (a: Attachment, download = false) => a.file
   ? `${fileBase}/${a.id}/content${download ? "?download=1" : ""}`
@@ -22,6 +24,8 @@ export const thumbUrl = (a: Attachment) => a.file
 export const textUrl = (a: Attachment) => (a.file ? `${fileBase}/${a.id}/content?text=1` : attachmentUrl(a, true));
 /** Word / PowerPoint / OpenDocument files as PDF (made by the server's document converter). */
 export const previewPdfUrl = (a: Attachment) => `${fileBase}/${a.id}/preview?s=${a.size}`;
+/** The picture the viewer shows: the file itself, or the JPEG made of an iPhone photo. */
+export const imageUrl = (a: Attachment) => (isHeic(a) ? previewPdfUrl(a) : attachmentUrl(a));
 
 export const fileExt = (name: string) => (name.includes(".") ? name.split(".").pop()!.toLowerCase().slice(0, 5) : "file");
 
@@ -38,7 +42,7 @@ const VIDEO = new Set(["video/mp4", "video/webm", "video/ogg", "video/quicktime"
 /** How the viewer shows a file. Spreadsheets as tables (CSV too), Word / PowerPoint as pages, Markdown as formatted text. */
 export function viewKind(a: Attachment): ViewKind {
   const ext = fileExt(a.name), mime = a.mime || "";
-  if (isImage(a)) return "image";
+  if (isImage(a) || isHeic(a)) return "image";
   if (mime === "application/pdf" || ext === "pdf") return "pdf";
   if (ext === "md" || ext === "markdown") return "markdown";
   if (SHEET.has(ext)) return "sheet";

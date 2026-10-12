@@ -1,0 +1,183 @@
+{
+  "probyte_template": 1,
+  "kind": "table",
+  "name": "Job tracker",
+  "icon": "🔧",
+  "description": "Service jobs from booking to payment: who, where, when, hours, materials and what to invoice.",
+  "fields": [
+    {
+      "name": "Job",
+      "type": "text",
+      "primary": true,
+      "required": true
+    },
+    {
+      "name": "Client",
+      "type": "text"
+    },
+    {
+      "name": "Address",
+      "type": "long_text"
+    },
+    {
+      "name": "Status",
+      "type": "single_select",
+      "options": {
+        "choices": [
+          {
+            "name": "Quote",
+            "color": "#94a3b8"
+          },
+          {
+            "name": "Booked",
+            "color": "#3b82f6"
+          },
+          {
+            "name": "In progress",
+            "color": "#f59e0b"
+          },
+          {
+            "name": "Done",
+            "color": "#22c55e"
+          },
+          {
+            "name": "Invoiced",
+            "color": "#a855f7"
+          },
+          {
+            "name": "Paid",
+            "color": "#14b8a6"
+          }
+        ],
+        "allowNew": false
+      },
+      "default": "Quote"
+    },
+    {
+      "name": "Scheduled",
+      "type": "date",
+      "options": {
+        "includeTime": true
+      }
+    },
+    {
+      "name": "Technician",
+      "type": "user",
+      "default": [
+        "me"
+      ]
+    },
+    {
+      "name": "Hours",
+      "type": "number",
+      "options": {
+        "precision": 1
+      }
+    },
+    {
+      "name": "Hourly rate",
+      "type": "number",
+      "options": {
+        "numberFormat": "currency",
+        "currency": "$",
+        "precision": 2
+      },
+      "default": 95
+    },
+    {
+      "name": "Materials",
+      "type": "number",
+      "options": {
+        "numberFormat": "currency",
+        "currency": "$",
+        "precision": 2
+      }
+    },
+    {
+      "name": "Invoice total",
+      "type": "formula",
+      "options": {
+        "expression": "{Hours} * {Hourly rate} + {Materials}",
+        "precision": 2
+      },
+      "description": "Hours × rate + materials"
+    },
+    {
+      "name": "Photos",
+      "type": "attachment"
+    },
+    {
+      "name": "Notes",
+      "type": "long_text"
+    }
+  ],
+  "views": [
+    {
+      "name": "All jobs",
+      "type": "grid",
+      "config": {
+        "summary": {
+          "{{field:Invoice total}}": "sum",
+          "{{field:Hours}}": "sum"
+        }
+      }
+    },
+    {
+      "name": "Board",
+      "type": "kanban",
+      "config": {
+        "groupBy": "{{field:Status}}"
+      }
+    },
+    {
+      "name": "Schedule",
+      "type": "calendar",
+      "config": {
+        "dateField": "{{field:Scheduled}}",
+        "colorField": "{{field:Status}}",
+        "calMode": "week"
+      }
+    },
+    {
+      "name": "To invoice",
+      "type": "grid",
+      "config": {
+        "filter": {
+          "conjunction": "and",
+          "items": [
+            {
+              "field": "{{field:Status}}",
+              "op": "is",
+              "value": "Done"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "records": [
+    {
+      "Job": "Panel upgrade to 200A",
+      "Client": "Rivera family",
+      "Status": "Booked",
+      "Hours": 6,
+      "Hourly rate": 95,
+      "Materials": 1450
+    },
+    {
+      "Job": "EV charger install",
+      "Client": "Chen",
+      "Status": "Quote",
+      "Hourly rate": 95,
+      "Materials": 620
+    },
+    {
+      "Job": "Kitchen lighting",
+      "Client": "Okafor",
+      "Status": "Done",
+      "Hours": 4.5,
+      "Hourly rate": 95,
+      "Materials": 310
+    }
+  ]
+}

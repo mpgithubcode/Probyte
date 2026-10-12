@@ -1,0 +1,142 @@
+{
+  "probyte_template": 1,
+  "kind": "table",
+  "name": "Clients",
+  "icon": "🤝",
+  "description": "A simple CRM: companies and people, their stage, contact details and when to follow up.",
+  "fields": [
+    {
+      "name": "Name",
+      "type": "text",
+      "primary": true,
+      "required": true
+    },
+    {
+      "name": "Company",
+      "type": "text"
+    },
+    {
+      "name": "Stage",
+      "type": "single_select",
+      "options": {
+        "choices": [
+          {
+            "name": "Lead",
+            "color": "#94a3b8"
+          },
+          {
+            "name": "Contacted",
+            "color": "#3b82f6"
+          },
+          {
+            "name": "Proposal",
+            "color": "#f59e0b"
+          },
+          {
+            "name": "Customer",
+            "color": "#22c55e"
+          },
+          {
+            "name": "Lost",
+            "color": "#ef4444"
+          }
+        ]
+      },
+      "default": "Lead"
+    },
+    {
+      "name": "Email",
+      "type": "email",
+      "unique": true
+    },
+    {
+      "name": "Phone",
+      "type": "text"
+    },
+    {
+      "name": "Follow up",
+      "type": "date"
+    },
+    {
+      "name": "Value",
+      "type": "number",
+      "options": {
+        "numberFormat": "currency",
+        "currency": "$",
+        "precision": 0
+      }
+    },
+    {
+      "name": "Tags",
+      "type": "multi_select",
+      "options": {
+        "choices": [
+          {
+            "name": "Residential",
+            "color": "#14b8a6"
+          },
+          {
+            "name": "Commercial",
+            "color": "#6366f1"
+          },
+          {
+            "name": "Referral",
+            "color": "#ec4899"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Notes",
+      "type": "long_text"
+    }
+  ],
+  "views": [
+    {
+      "name": "Everyone",
+      "type": "grid",
+      "config": {}
+    },
+    {
+      "name": "Pipeline",
+      "type": "kanban",
+      "config": {
+        "groupBy": "{{field:Stage}}"
+      }
+    },
+    {
+      "name": "Follow-ups",
+      "type": "list",
+      "config": {
+        "sorts": [
+          {
+            "field": "{{field:Follow up}}",
+            "dir": "asc"
+          }
+        ],
+        "filter": {
+          "conjunction": "and",
+          "items": [
+            {
+              "field": "{{field:Follow up}}",
+              "op": "not_empty"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "records": [
+    {
+      "Name": "Dana Rivera",
+      "Company": "Rivera Homes",
+      "Stage": "Customer",
+      "Value": 8400
+    },
+    {
+      "Name": "Sam Chen",
+      "Stage": "Proposal",
+      "Value": 2200
+    }
+  ]
+}

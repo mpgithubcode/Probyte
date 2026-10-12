@@ -4,6 +4,7 @@ import type { DavInfo, Prefs, User, Workspace } from "../types";
 import { ApiPanel } from "./ApiPanel";
 import { AccountsPanel } from "./AccountsModal";
 import { StoragesPanel } from "./StorageForm";
+import { TemplatesPanel } from "./Templates";
 import { SharesPanel } from "./SharesPanel";
 import { BackupsPanel } from "./BackupsPanel";
 import { Icon } from "./Icon";
@@ -29,10 +30,10 @@ function CopyField({ label, value, secret }: { label: string; value: string; sec
   );
 }
 
-export type Tab = "account" | "accounts" | "storage" | "phone" | "links" | "keys" | "backups";
+export type Tab = "account" | "accounts" | "storage" | "templates" | "phone" | "links" | "keys" | "backups";
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "account", label: "Account", icon: "user" }, { id: "accounts", label: "Sync accounts", icon: "calendar" },
-  { id: "storage", label: "File storage", icon: "folder" }, { id: "phone", label: "Phone sync", icon: "phone" },
+  { id: "storage", label: "File storage", icon: "folder" }, { id: "templates", label: "Templates", icon: "layers" }, { id: "phone", label: "Phone sync", icon: "phone" },
   { id: "links", label: "Public links", icon: "share" }, { id: "keys", label: "API & MCP", icon: "key" },
   { id: "backups", label: "Backups", icon: "download" },  // the server's admin only
 ];
@@ -104,6 +105,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
           </section>
         )}
         {tab === "storage" && <section className="settings-section"><StoragesPanel /></section>}
+        {tab === "templates" && <section className="settings-section"><TemplatesPanel /></section>}
         {tab === "phone" && !dav?.enabled && <p className="muted">The built-in CalDAV server isn't configured on this Probyte instance.</p>}
         {tab === "phone" && dav?.enabled && (
           <section className="settings-section">

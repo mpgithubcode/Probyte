@@ -1,0 +1,136 @@
+{
+  "probyte_template": 1,
+  "kind": "table",
+  "name": "Project tracker",
+  "icon": "📋",
+  "description": "Projects with an owner, status, priority, dates and budget, as a board and a timeline.",
+  "fields": [
+    {
+      "name": "Project",
+      "type": "text",
+      "primary": true
+    },
+    {
+      "name": "Status",
+      "type": "single_select",
+      "options": {
+        "choices": [
+          {
+            "name": "Planned",
+            "color": "#94a3b8"
+          },
+          {
+            "name": "Active",
+            "color": "#3b82f6"
+          },
+          {
+            "name": "On hold",
+            "color": "#f59e0b"
+          },
+          {
+            "name": "Done",
+            "color": "#22c55e"
+          }
+        ]
+      },
+      "default": "Planned"
+    },
+    {
+      "name": "Priority",
+      "type": "single_select",
+      "options": {
+        "choices": [
+          {
+            "name": "Low",
+            "color": "#64748b"
+          },
+          {
+            "name": "Medium",
+            "color": "#f59e0b"
+          },
+          {
+            "name": "High",
+            "color": "#ef4444"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Owner",
+      "type": "user",
+      "default": [
+        "me"
+      ]
+    },
+    {
+      "name": "Start",
+      "type": "date"
+    },
+    {
+      "name": "End",
+      "type": "date"
+    },
+    {
+      "name": "Budget",
+      "type": "number",
+      "options": {
+        "numberFormat": "currency",
+        "currency": "$",
+        "precision": 0
+      }
+    },
+    {
+      "name": "Progress",
+      "type": "rating",
+      "options": {
+        "max": 5
+      }
+    },
+    {
+      "name": "Notes",
+      "type": "long_text"
+    }
+  ],
+  "views": [
+    {
+      "name": "Projects",
+      "type": "grid",
+      "config": {
+        "summary": {
+          "{{field:Budget}}": "sum"
+        }
+      }
+    },
+    {
+      "name": "Board",
+      "type": "kanban",
+      "config": {
+        "groupBy": "{{field:Status}}",
+        "colorField": "{{field:Priority}}"
+      }
+    },
+    {
+      "name": "Timeline",
+      "type": "timeline",
+      "config": {
+        "dateField": "{{field:Start}}",
+        "endField": "{{field:End}}",
+        "colorField": "{{field:Status}}"
+      }
+    }
+  ],
+  "records": [
+    {
+      "Project": "Website relaunch",
+      "Status": "Active",
+      "Priority": "High",
+      "Budget": 12000
+    },
+    {
+      "Project": "Office move",
+      "Status": "Planned",
+      "Priority": "Medium",
+      "Budget": 5000
+    }
+  ]
+}

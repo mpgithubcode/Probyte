@@ -1318,3 +1318,15 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
   /* phone header: the title gets the room; where a files table's files are, and the sync time, are in table settings */
   .page-head .storage-badge, .page-head .sync-text { display: none; }
 }
+
+/* templates */
+.template-gallery { display: flex; flex-direction: column; gap: 8px; }
+.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+.template-card { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--bg); cursor: pointer; font: inherit; color: var(--text); }
+.template-card:hover { border-color: var(--border-strong); }
+.template-card.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+.template-icon { font-size: 22px; line-height: 1; }
+.template-icon.sm { font-size: 18px; }
+.template-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.templates-panel { display: flex; flex-direction: column; gap: 6px; }

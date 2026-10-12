@@ -1,0 +1,143 @@
+{
+  "probyte_template": 1,
+  "kind": "table",
+  "name": "Inventory",
+  "icon": "📦",
+  "description": "Stock on hand with reorder levels, suppliers and value; a view of what to reorder.",
+  "fields": [
+    {
+      "name": "Item",
+      "type": "text",
+      "primary": true,
+      "required": true
+    },
+    {
+      "name": "SKU",
+      "type": "text",
+      "unique": true
+    },
+    {
+      "name": "Category",
+      "type": "single_select",
+      "options": {
+        "choices": [
+          {
+            "name": "Wire",
+            "color": "#3b82f6"
+          },
+          {
+            "name": "Breakers",
+            "color": "#ef4444"
+          },
+          {
+            "name": "Fixtures",
+            "color": "#f59e0b"
+          },
+          {
+            "name": "Tools",
+            "color": "#64748b"
+          }
+        ]
+      }
+    },
+    {
+      "name": "In stock",
+      "type": "number",
+      "options": {
+        "precision": 0
+      },
+      "default": 0
+    },
+    {
+      "name": "Reorder at",
+      "type": "number",
+      "options": {
+        "precision": 0
+      }
+    },
+    {
+      "name": "Unit cost",
+      "type": "number",
+      "options": {
+        "numberFormat": "currency",
+        "currency": "$",
+        "precision": 2
+      }
+    },
+    {
+      "name": "Stock value",
+      "type": "formula",
+      "options": {
+        "expression": "{In stock} * {Unit cost}",
+        "precision": 2
+      }
+    },
+    {
+      "name": "Reorder",
+      "type": "formula",
+      "options": {
+        "expression": "IF({In stock} <= {Reorder at}, \"Reorder\", \"\")"
+      }
+    },
+    {
+      "name": "Supplier",
+      "type": "text"
+    },
+    {
+      "name": "Photo",
+      "type": "attachment"
+    }
+  ],
+  "views": [
+    {
+      "name": "Stock",
+      "type": "grid",
+      "config": {
+        "summary": {
+          "{{field:Stock value}}": "sum"
+        }
+      }
+    },
+    {
+      "name": "To reorder",
+      "type": "grid",
+      "config": {
+        "filter": {
+          "conjunction": "and",
+          "items": [
+            {
+              "field": "{{field:Reorder}}",
+              "op": "is",
+              "value": "Reorder"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Cards",
+      "type": "gallery",
+      "config": {
+        "coverField": "{{field:Photo}}"
+      }
+    }
+  ],
+  "records": [
+    {
+      "Item": "12/2 NM-B cable, 250 ft",
+      "SKU": "W-122",
+      "Category": "Wire",
+      "In stock": 3,
+      "Reorder at": 4,
+      "Unit cost": 118
+    },
+    {
+      "Item": "20A single-pole breaker",
+      "SKU": "B-20",
+      "Category": "Breakers",
+      "In stock": 24,
+      "Reorder at": 10,
+      "Unit cost": 9.5
+    }
+  ]
+}

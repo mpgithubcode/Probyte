@@ -8,8 +8,9 @@ import { Modal } from "./Overlay";
 import { PAGE_SIZES, PAGED_VIEWS } from "./Pager";
 import { FieldSelect, VIEW_TYPES } from "./Toolbar";
 import { BoardOptions, FilterEditor, GroupEditorList, ListOptions, SortEditor } from "./ViewControls";
+import { TemplateActions } from "./Templates";
 
-type Tab = "general" | "layout" | "fields" | "filter" | "sort" | "group";
+type Tab = "general" | "layout" | "fields" | "filter" | "sort" | "group" | "template";
 
 /** Everything about one view, in one window: its name and kind, layout, fields, filters, sorting and grouping, and
  * what can be done with it (duplicate, move, calendar link, delete). Changes apply as they're made. */
@@ -47,6 +48,7 @@ export function ViewSettings({ view, views, fields, setConfig, onClose, onRename
     { id: "general", label: "General" }, { id: "layout", label: "Layout" }, { id: "fields", label: "Fields" },
     { id: "filter", label: "Filter", badge: countConditions(filter) }, { id: "sort", label: "Sort", badge: sorts.length },
     ...(canGroup ? [{ id: "group" as Tab, label: "Group", badge: groups.length }] : []),
+    { id: "template", label: "Template" },
   ];
 
   return (
@@ -102,6 +104,7 @@ export function ViewSettings({ view, views, fields, setConfig, onClose, onRename
           {tab === "fields" && <FieldsPane fields={fields} config={config} setConfig={setConfig} />}
           {tab === "filter" && <FilterEditor fields={fields} filter={filter} onChange={(g) => setConfig({ filter: g })} />}
           {tab === "sort" && <SortEditor fields={fields} sorts={sorts} onChange={(x) => setConfig({ sorts: x })} />}
+          {tab === "template" && <TemplateActions kind="view" viewId={view.id} defaultName={view.name} />}
           {tab === "group" && canGroup && <GroupEditorList fields={fields} groups={groups} onChange={(x) => setConfig({ groups: x })} />}
         </div>
       </div>

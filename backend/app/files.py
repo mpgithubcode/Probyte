@@ -44,6 +44,8 @@ THUMB_DIR = ATTACH_DIR / "thumbs"
 PREVIEW_DIR = ATTACH_DIR / "previews"      # Word / PowerPoint / OpenDocument files converted to PDF for viewing
 CONVERTER = os.environ.get("OFFICE_CONVERTER_URL", "").strip().rstrip("/")
 CONVERT_MAX = 100 * 1024 * 1024
+SHEET_EXT = {"xlsx", "xlsm", "xls", "ods"}   # shown as tables in the browser; converted only for their cover image
+HEIC_MIME = {"image/heic", "image/heif"}       # iPhone photos: most browsers can't show them, so a JPEG is made
 CONVERT_EXT = {"doc", "docx", "docm", "dot", "dotx", "odt", "ott", "rtf", "wpd", "pptx", "ppt", "pps", "ppsx", "pptm", "odp", "otp", "odg", "vsd", "vsdx"}
 MAX_UPLOAD = int(os.environ.get("FILES_MAX_UPLOAD_MB", "2048")) * 1024 * 1024
 THUMB_PX = 480
@@ -89,8 +91,18 @@ def is_text(mime: str, name: str) -> bool:
 
 
 def convertible(name: str) -> bool:
-    """Shown as PDF made by the document converter (Word, PowerPoint, OpenDocument…)."""
-    return _ext(name) in CONVERT_EXT
+    """Can be turned into PDF by the document converter (Word, PowerPoint, OpenDocument…; spreadsheets for covers)."""
+    return _ext(name) in CONVERT_EXT or _ext(name) in SHEET_EXT
+
+
+def _heic(mime: str, name: str) -> bool:
+    return mime in HEIC_MIME or _ext(name) in ("heic", "heif")
+
+
+def previewable(mime: str, name: str) -> bool:
+    """A cover image (and / or searchable text) can be made for it."""
+    return (mime in _RASTER or mime in ("image/tiff", "application/pdf") or _heic(mime, name) or is_text(mime, name)
+            or convertible(name) or _ext(name) in ("odt", "ods", "odp", "docx", "xlsx", "pptx"))
 
 
 def _drop_cache(rid):
@@ -165,6 +177,7 @@ def _refresh(conn, rec, keys, meta, *, note=True):
     vals = file_values(keys, rec["id"], meta, mime)
     if rec["caldav_etag"] == meta["etag"] and (old.get(keys["file"]) or [{}])[0].get("thumb"):
         vals[keys["file"]][0]["thumb"] = True       # only moved: the preview is still right
+        vals[keys["file"]][0]["previewed"] = rec["caldav_etag"]
     else:
         vals[keys["text"]] = None
         _queue_preview(conn, rec["id"], mime, meta["path"])
@@ -312,6 +325,12 @@ def sync(table, stats: dict, full: bool = False) -> dict:
             elif not rec["deleted"] and rec["caldav_etag"] != meta["etag"]:
                 _refresh(conn, rec, keys, meta)
                 stats["updated"] += 1
+        # files without a cover that could have one (e.g. added before the document converter was set up): try once per version
+        for path, rec in by_path.items():
+            if path in objects and not rec["deleted"]:
+                it = (rec["data"].get(keys["file"]) or [{}])[0]
+                if it and not it.get("thumb") and it.get("previewed") != rec["caldav_etag"] and previewable(it.get("mime") or "", path):
+                    _queue_preview(conn, rec["id"], it.get("mime") or "", path)
         for path, rec in by_path.items():
             if path not in objects and not rec["deleted"]:
                 conn.execute("DELETE FROM records WHERE id = %s", (rec["id"],))
@@ -326,8 +345,7 @@ def sync(table, stats: dict, full: bool = False) -> dict:
 # ---------------------------------------------------------------- previews (worker)
 
 def _queue_preview(conn, rid, mime, path):
-    if mime in _RASTER or mime in ("image/tiff", "application/pdf") or is_text(mime, path) or convertible(path) \
-            or _ext(path) in ("odt", "ods", "odp", "docx", "xlsx", "pptx"):
+    if previewable(mime, path):
         jobs.enqueue(conn, "file_preview", {"record_id": str(rid)}, key=f"preview:{rid}", delay=0.5, max_attempts=2)
 
 
@@ -379,16 +397,99 @@ def preview_pdf(drv, rec, item) -> "os.PathLike":
 
 
 def _pdf_thumb(pdf_path, rid):
-    from PIL import Image
+    """The first page as the cover, without its blank margins (so a small table or a letter's text shows larger)."""
+    from PIL import Image, ImageChops
     with tempfile.TemporaryDirectory() as d:
-        subprocess.run(["pdftoppm", "-f", "1", "-l", "1", "-scale-to", str(THUMB_PX), "-png", str(pdf_path), os.path.join(d, "p")],
+        subprocess.run(["pdftoppm", "-f", "1", "-l", "1", "-scale-to", str(THUMB_PX * 3), "-png", str(pdf_path), os.path.join(d, "p")],
                        check=True, capture_output=True, timeout=60)
         page = next((os.path.join(d, x) for x in os.listdir(d) if x.endswith(".png")), None)
         if not page:
             return False
         with Image.open(page) as img:
-            _save_thumb(img.copy(), rid)
+            img = img.convert("RGB")
+            box = ImageChops.difference(img, Image.new("RGB", img.size, (255, 255, 255))).point(lambda v: 255 if v > 12 else 0).getbbox()
+            if box:
+                pad = int(img.width * 0.04)
+                l, t, r, b = max(0, box[0] - pad), max(0, box[1] - pad), min(img.width, box[2] + pad), min(img.height, box[3] + pad)
+                w = r - l
+                b = min(b, t + int(w * 1.4))  # at most a page's shape: a long document shows its top
+                if w < img.width * 0.5:        # very little on the page: keep some room around it
+                    r = min(img.width, l + int(img.width * 0.5))
+                img = img.crop((l, t, r, b))
+            _save_thumb(img, rid)
         return True
+
+
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+
+
+def _font(size: int, bold=False, mono=False):
+    from PIL import ImageFont
+    name = "DejaVuSansMono" if mono else "DejaVuSans"
+    try:
+        return ImageFont.truetype(f"{FONT_DIR}/{name}{'-Bold' if bold else ''}.ttf", size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _text_thumb(text: str, rid, name: str):
+    """A text file's cover: its first lines on a page (Markdown headings larger), like a document preview."""
+    from PIL import Image, ImageDraw
+    w, h, pad = THUMB_PX, int(THUMB_PX * 1.3), 28
+    img = Image.new("RGB", (w, h), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    md = _ext(name) in ("md", "markdown")
+    mono = not md and _ext(name) not in ("txt", "log", "rst")
+    y = pad
+    for raw in text.replace("\t", "    ").splitlines()[:80]:
+        line = raw.rstrip()
+        size, bold, color = (15, False, (32, 33, 36)) if not mono else (13, False, (55, 65, 81))
+        if md and line.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            line = line.lstrip("#").strip()
+            size, bold, color = {1: (26, True, (17, 24, 39)), 2: (21, True, (17, 24, 39))}.get(level, (17, True, (31, 41, 55)))
+        elif md:
+            line = re.sub(r"[*_`]", "", line)
+            if line.lstrip().startswith(("- ", "* ", "+ ")):
+                line = "•  " + line.lstrip()[2:]
+        f = _font(size, bold, mono)
+        # wrap long lines to the page width
+        while True:
+            cut = len(line)
+            while cut > 0 and d.textlength(line[:cut], font=f) > w - 2 * pad:
+                cut -= 1
+            d.text((pad, y), line[:cut], font=f, fill=color)
+            y += int(size * 1.45)
+            line = line[cut:]
+            if not line or y > h - pad:
+                break
+        if y > h - pad:
+            break
+    _save_thumb(img, rid)
+    return True
+
+
+def heic_jpeg(drv, rec, item) -> "os.PathLike":
+    """An iPhone photo (HEIC) as JPEG, up to 2400 px, made once per version."""
+    from PIL import Image, ImageOps
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    out = PREVIEW_DIR / f"{rec['id']}.{re.sub(r'[^A-Za-z0-9]', '', rec['caldav_etag'] or 'x')[:16]}.jpg"
+    if out.exists():
+        return out
+    size = item.get("size") or 0
+    if size > 60 * 1024 * 1024:
+        raise HTTPException(413, "This photo is too large to preview; download it instead")
+    with Image.open(io.BytesIO(drv.read(rec["caldav_href"], size + 1))) as img:
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        img.thumbnail((2400, 2400))
+        PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        for old in PREVIEW_DIR.glob(f"{rec['id']}.*.jpg"):
+            old.unlink(missing_ok=True)
+        tmp = PREVIEW_DIR / f".{rec['id']}.jpg"
+        img.save(tmp, "JPEG", quality=85)
+        tmp.replace(out)
+    return out
 
 
 def _docx_text(data: bytes) -> str:
@@ -413,7 +514,11 @@ def _job_preview(payload):
     mime, path, size = item.get("mime") or "", rec["caldav_href"], item.get("size") or 0
     thumb, text = False, None
     try:
-        if (mime in _RASTER or mime == "image/tiff") and size <= 40 * 1024 * 1024:
+        if _heic(mime, path):
+            with Image.open(heic_jpeg(drv, rec, item)) as img:
+                _save_thumb(img.copy(), rid)
+            thumb = True
+        elif (mime in _RASTER or mime == "image/tiff") and size <= 40 * 1024 * 1024:
             with Image.open(io.BytesIO(drv.read(path, size + 1))) as img:
                 img.seek(0)
                 _save_thumb(img.copy(), rid)
@@ -442,21 +547,20 @@ def _job_preview(payload):
         elif is_text(mime, path):
             raw = drv.read(path, TEXT_CHARS * 4)
             text = raw.decode("utf-8", "replace")[:TEXT_CHARS]
+            if text.strip() and "\x00" not in text[:2000]:
+                thumb = _text_thumb(text, rid, path)
     except FileNotFoundError:
         return
     except Exception as e:
         log.info("no preview for %s: %s", path, e)
-    if not thumb and text is None:
-        return
     with connection() as conn:
-        cur = conn.execute("SELECT data FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
+        cur = conn.execute("SELECT data, caldav_etag FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
         if not cur:
             return  # moved or changed again meanwhile: its own preview job follows
         patch = {}
-        if thumb:
-            items = cur["data"].get(keys["file"]) or []
-            if items:
-                patch[keys["file"]] = [{**items[0], "thumb": True}]
+        items = cur["data"].get(keys["file"]) or []
+        if items:  # tried for this version (so the next sync doesn't try again), and whether there's a cover now
+            patch[keys["file"]] = [{**items[0], "previewed": cur["caldav_etag"], **({"thumb": True} if thumb else {})}]
         if text is not None:
             patch[keys["text"]] = text.replace("\x00", "")
         conn.execute("UPDATE records SET data = data || %s, updated_at = now() WHERE id = %s", (Jsonb(patch), rid))
@@ -521,7 +625,11 @@ def file_content(record_id: str, request: Request, download: bool = False, text:
 def preview_response(table, rec, keys):
     with connection() as conn:
         drv = _storage(conn, table)
-    pdf = preview_pdf(drv, rec, (rec["data"].get(keys["file"]) or [{}])[0])
+    item = (rec["data"].get(keys["file"]) or [{}])[0]
+    if _heic(item.get("mime") or "", item.get("name") or ""):
+        return FileResponse(heic_jpeg(drv, rec, item), media_type="image/jpeg", content_disposition_type="inline",
+                            headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
+    pdf = preview_pdf(drv, rec, item)
     return FileResponse(pdf, media_type="application/pdf", content_disposition_type="inline",
                         headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
 

@@ -551,7 +551,12 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
           </div>
         )}
         <ViewTabs views={ds.views} active={view} onSelect={(v) => onNavigate(v.id)} onCreate={createView}
-          onReorder={reorderViews} onSettings={(v) => setViewSettings(v.id)} />
+          onReorder={reorderViews} onSettings={(v) => setViewSettings(v.id)}
+          onFromTemplate={async (t) => {
+            const v = await api.post<View>("/views/from-template", { ...t, ...(ds.kind === "table" ? { table_id: ds.id } : { combo_id: ds.id }) });
+            setDs({ ...ds, views: [...ds.views, v] });
+            onNavigate(v.id);
+          }} />
         <ViewOptions view={view} fields={vfields} config={view.config} setConfig={setConfig} search={search} setSearch={setSearch}
           onAdd={ops.can.add ? (isFiles ? uploadPop.open : () => ops.create({}, true)) : undefined} addLabel={ops.addLabel} />
       </header>
