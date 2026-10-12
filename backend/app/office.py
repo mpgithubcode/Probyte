@@ -180,7 +180,10 @@ def open_session(body: SessionIn, request: Request, user=User):
             raise HTTPException(403, "The link's owner doesn't let you change its files")
         mode = "edit" if edit else "view"
         convert = CONVERT.get(ext) if edit else None
-        base = re.sub(r"[^0-9A-Za-z_-]", "", f["base"] + (f"-{convert}" if convert else ""))
+        # the settings are part of the key: the Document Server keeps a document (and a failed download) by its key
+        stamp = hashlib.sha1("|".join((cfg["url"], cfg["probyte_url"], cfg["server_url"], cfg["secret"],
+                                       "1" if cfg["via_probyte"] else "")).encode()).hexdigest()[:6]
+        base = re.sub(r"[^0-9A-Za-z_-]", "", f["base"] + (f"-{convert}" if convert else "") + f"-{stamp}")
         discards = conn.execute("SELECT count(*) AS n FROM office_sessions WHERE record_id = %s AND discarded AND doc_key LIKE %s",
                                 (f["rid"], base + "-%")).fetchone()["n"]
         key = _key(base, discards)
@@ -573,7 +576,9 @@ def _relay_headers(headers, request_base: str) -> dict:
     u = urlparse(request_base)
     out = {k: v for k, v in headers.items() if k.lower() not in _HOP and k.lower() not in ("cookie", "authorization")}
     out["X-Forwarded-Host"] = u.netloc + PREFIX
-    out["X-Forwarded-Proto"] = u.scheme
+    # the web scheme, also for the editor's WebSocket (ws / wss): the Document Server writes the document's download
+    # address with it, and a wss:// one can't be downloaded ("Download failed")
+    out["X-Forwarded-Proto"] = {"ws": "http", "wss": "https"}.get(u.scheme, u.scheme)
     return out
 
 
