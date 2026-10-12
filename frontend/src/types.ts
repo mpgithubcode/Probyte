@@ -232,7 +232,8 @@ export interface Dataset {
   sources?: Source[];
   comboFields?: { id: string; name: string; mapping: Record<string, string> }[];
   linkSources?: LinkSource[] | null;  // linked table pointing at a combined database: its tables
-  dav?: { account: string | null; builtin: boolean; shared: boolean; items: number; collection: "calendar" | "address book" } | null;
+  // a calendar / contacts table: on Probyte's own server (builtin, with its path there) or synced with an account's server
+  dav?: { account: string | null; builtin: boolean; shared: boolean; items: number; collection: "calendar" | "address book"; path?: string } | null;
   storage?: { name: string | null; kind: "s3" | "webdav" | null; location: string | null } | null;  // files tables
   baseId?: string;
   fields: Field[];

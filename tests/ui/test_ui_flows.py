@@ -1201,14 +1201,15 @@ def test_table_settings_show_what_applies(browser, table_user):
     expect(pg.locator(".modal button:has-text('Import…')")).to_have_count(0)
     expect(pg.locator(".modal")).to_contain_text("Files are added with Upload")
     pg.click(".modal-foot button:has-text('Done')")
-    # a synced calendar table: its sync and calendar links
+    # a calendar table on Probyte's own server: where phones find it, and its calendar links
     cal = u.table("mixed", "Agenda")
     pg.goto(f"{BASE}/#/table/{cal['id']}")
     pg.click(".page-head [aria-label=More]")
-    expect(nav.locator("button:has-text('Sync')")).to_have_count(1)
+    expect(nav.locator("button:has-text('Phones')")).to_have_count(1)
     expect(nav.locator("button:has-text('Calendar links')")).to_have_count(1)
-    nav.locator("button:has-text('Sync')").click()
-    expect(pg.locator(".modal button:has-text('Sync now')")).to_be_visible()
+    nav.locator("button:has-text('Phones')").click()
+    expect(pg.locator(".modal .settings-facts")).to_contain_text("/dav/")
+    expect(pg.locator(".modal button:has-text('Sync now')")).to_have_count(0)
     assert not pg.errors, pg.errors
 
 

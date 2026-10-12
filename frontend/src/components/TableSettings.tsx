@@ -51,7 +51,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
   const sections: { id: Section; label: string }[] = [
     { id: "general", label: "General" },
     ...(ds.kind === "table" && !remote ? [{ id: "fields" as Section, label: "Fields" }] : []),
-    ...(synced ? [{ id: "sync" as Section, label: "Sync" }] : files ? [{ id: "sync" as Section, label: "Storage" }]
+    ...(synced ? [{ id: "sync" as Section, label: ds.dav?.builtin ? "Phones" : "Sync" }] : files ? [{ id: "sync" as Section, label: "Storage" }]
       : remote ? [{ id: "sync" as Section, label: "Link" }] : ds.kind === "combo" ? [{ id: "sync" as Section, label: "Sources" }] : []),
     ...(actions.feeds && hasDates && !files ? [{ id: "sharing" as Section, label: "Calendar links" }] : []),
     { id: "data", label: "Import & export" },
@@ -71,7 +71,19 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
         <div className="settings-pane">
           {section === "general" && <General ds={ds} kind={kind} bases={bases} currentBase={currentBase} hiddenInSidebar={hiddenInSidebar} actions={actions} word={word} />}
           {section === "fields" && <Fields ds={ds} canManage={canManage} actions={actions} />}
-          {section === "sync" && synced && t && (
+          {section === "sync" && synced && t && ds.dav?.builtin && (
+            <div className="form">
+              <dl className="settings-facts">
+                <dt>{ds.dav.collection === "address book" ? "Address book" : "Calendar"}</dt>
+                <dd className="mono small">{location.origin}{ds.dav.path}</dd>
+                <dt>Items</dt><dd>{ds.dav.items}</dd>
+              </dl>
+              <p className="hint">This table is a {ds.dav.collection} on Probyte's own server: phones and calendar apps signed in with your
+                device login (Settings → Phone sync) read and change it directly. A change made here is there the next time a phone
+                refreshes, and a change made on a phone is here at once. There's nothing to sync.</p>
+            </div>
+          )}
+          {section === "sync" && synced && t && !ds.dav?.builtin && (
             <div className="form">
               <dl className="settings-facts">
                 <dt>Account</dt><dd>{ds.dav?.account ?? "—"}{ds.dav?.builtin ? " (Probyte's own server: your phone syncs with it)" : ""}</dd>
@@ -273,12 +285,13 @@ function DeletePane({ ds, files, word, actions }: { ds: Dataset; files: boolean;
         ? <p>Deleting a combined database removes only this combined view; its source tables and their records stay.</p>
         : <p>The table goes to the <b>trash</b>, where it can be restored for 30 days, then it's deleted for good.</p>}
       {files && <p className="hint">The files stay in {ds.storage?.location ?? "the storage"}: deleting a files table never deletes files.</p>}
-      {ds.dav && (ds.dav.shared
+      {ds.dav?.builtin && <p className="hint">Phones stop showing the {ds.dav.collection} while the table is in the trash, and show it
+        again if it's restored.</p>}
+      {ds.dav && !ds.dav.builtin && (ds.dav.shared
         ? <p className="hint">The {ds.dav.collection} on the server is kept: another table uses it too.</p>
         : <label className="inline-check">
-            <input type="checkbox" checked={onServer ?? ds.dav.builtin} onChange={(e) => setOnServer(e.target.checked)} />
-            <span>{ds.dav.builtin ? `When the trash is emptied, also delete the ${ds.dav.collection} on Probyte's server (phones lose it then)`
-              : `When the trash is emptied, also delete its ${ds.dav.items} item${ds.dav.items === 1 ? "" : "s"} from ${ds.dav.account ?? "the account"}`}</span>
+            <input type="checkbox" checked={onServer ?? false} onChange={(e) => setOnServer(e.target.checked)} />
+            <span>When the trash is emptied, also delete its {ds.dav.items} item{ds.dav.items === 1 ? "" : "s"} from {ds.dav.account ?? "the account"}</span>
           </label>)}
       <div className="settings-actions">
         {confirm

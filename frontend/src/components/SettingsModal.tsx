@@ -85,7 +85,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
     }
   };
 
-  // Probyte passes calendar traffic through to its CalDAV server, so this page's own address works too.
+  // Probyte is the CalDAV / CardDAV server itself: this page's own address works (phones find /dav/ through /.well-known/).
   const serverUrl = dav?.public_url ?? `${location.origin}/`;
 
   return (
@@ -112,13 +112,13 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
         )}
         {tab === "storage" && <section className="settings-section"><StoragesPanel /></section>}
         {tab === "templates" && <section className="settings-section"><TemplatesPanel /></section>}
-        {tab === "phone" && !dav?.enabled && <p className="muted">The built-in CalDAV server isn't configured on this Probyte instance.</p>}
-        {tab === "phone" && dav?.enabled && (
+        {tab === "phone" && dav && (
           <section className="settings-section">
             <h3><Icon name="phone" size={16} /> Sync with your phone</h3>
             <p className="muted">
-              Probyte includes a CalDAV and CardDAV server. Add this account on your iPhone, Mac or Android (DAVx⁵) and your
-              Probyte calendars show up in Calendar and Reminders, and your contact tables in Contacts.
+              Probyte is a CalDAV and CardDAV server. Add this account on your iPhone, Mac or Android (DAVx⁵) and your
+              Probyte calendars show up in Calendar and Reminders, and your contact tables in Contacts. What you change on the
+              phone is in Probyte at once, and what you change here is on the phone the next time it refreshes.
             </p>
             {dav.provisioned ? (
               <>
@@ -141,7 +141,8 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
                     <li>Enter the server, username and password above, then tap Next.</li>
                     <li>Turn on Calendars and Reminders. Events appear in Calendar and tasks appear in Reminders.</li>
                   </ol>
-                  <p className="hint">In Probyte, create databases on the “Probyte CalDAV” account so they sync to your phone.</p>
+                  <p className="hint">Every Tasks & events, Tasks or Events table on the “Probyte” account is a calendar there; a list made in
+                    Reminders or a calendar made on the phone becomes a table here. Apps that ask for a full address: {serverUrl}dav/</p>
                 </details>
                 <details className="howto">
                   <summary>iPhone / iPad contacts</summary>
@@ -150,7 +151,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
                     <li>Enter the same server, username and password, then tap Next.</li>
                     <li>Contacts from your Probyte <b>Contacts</b> tables appear in the Contacts app, and changes on the phone sync back.</li>
                   </ol>
-                  <p className="hint">Create the table with New table → Contacts on the “Probyte CalDAV” account. Android: DAVx⁵ syncs contacts with the same login.</p>
+                  <p className="hint">Create the table with New table → Contacts on the “Probyte” account. Android: DAVx⁵ syncs contacts with the same login.</p>
                 </details>
                 {confirmReset ? (
                   <div className="row">

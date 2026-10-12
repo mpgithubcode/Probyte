@@ -99,8 +99,12 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
     setBusy(false);
   };
 
+  // On Probyte's own account the table is the calendar / address book: nothing to pick.
+  const ownServer = !!accounts.find((a) => a.id === accountId)?.is_builtin;
+
   useEffect(() => {
     if (kind === "generic" || kind === "remote" || kind === "files" || !accountId) return;
+    if (ownServer) { setCalendars([]); setCalendarUrl("__new"); setError(""); return; }
     setCalendars(null);
     setCalendarUrl("");  // never keep another kind's calendar (a contacts table on a calendar) while loading
     setError("");
@@ -111,7 +115,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
         setCalendarUrl(usable[0]?.url ?? "__new");
       })
       .catch((e) => { setCalendars([]); setCalendarUrl("__new"); setError(e.message); });
-  }, [kind, accountId]);
+  }, [kind, accountId, ownServer]);
 
   const create = async () => {
     if (choice === "template") {
@@ -275,7 +279,7 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             </label>
-            <label className="stack">{book ? "Address book" : "Calendar"}
+            {!ownServer && <label className="stack">{book ? "Address book" : "Calendar"}
               <select className="input" value={calendarUrl} disabled={!calendars} onChange={(e) => setCalendarUrl(e.target.value)}>
                 {!calendars && <option>Loading {coll}s…</option>}
                 {calendars?.map((c) => (
@@ -285,13 +289,15 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
                 ))}
                 {calendars && <option value="__new">+ Create a new {coll}…</option>}
               </select>
-            </label>
-            {calendarUrl === "__new" && (
+            </label>}
+            {calendarUrl === "__new" && !ownServer && (
               <label className="stack">New {coll} name
                 <input className="input" value={newCal} placeholder={name || "Probyte"} onChange={(e) => setNewCal(e.target.value)} />
               </label>
             )}
-            <p className="hint">{book
+            <p className="hint">{ownServer
+              ? `The table is ${book ? "an address book" : "a calendar"} on Probyte's own server: phones signed in with your device login (Settings → Phone sync) show it right away, and their changes are here at once.`
+              : book
               ? "Existing contacts are imported, and changes sync both ways. Photos, extra numbers and other details Probyte doesn't show are kept."
               : "Existing items in the calendar are imported, and changes sync both ways."}
               {(() => {
