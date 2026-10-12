@@ -1,0 +1,402 @@
+"""Bases, tables, fields and views: creating them, checking a field's settings (formulas, links, lookups…), the
+synced fields of calendar and contacts tables, and what kind of table is where. Also the errors every part of the
+store raises."""
+from datetime import datetime, timezone
+
+from fastapi import HTTPException
+
+from app.calc import formula as F
+from app.calc.compute import COMPUTED_TYPES, Engine, FIELD_TYPES, FILTER_OPS
+from app.core.context import api_bases
+from app.core.db import Jsonb
+from app.formats.ical import component_kind, ical_to_values, PALETTE, SYSTEM_FIELDS
+
+
+SELECT_TYPES = ("single_select", "multi_select")
+DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables that are a calendar / address book (CalDAV, CardDAV)
+
+
+# A record's primary (title) field must hold plain text.
+PRIMARY_TYPES = {"text", "long_text", "number", "url", "email", "phone", "single_select", "date", "autonumber", "formula"}
+
+
+def not_found(what="Not found"):
+    raise HTTPException(404, what)
+
+
+def bad(msg):
+    raise HTTPException(400, msg)
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def base_allowed(base_id) -> bool:
+    """False when the request uses an API key limited to other bases."""
+    allowed = api_bases.get()
+    return allowed is None or str(base_id) in allowed
+
+
+def get_base(conn, base_id, user_id):
+    b = conn.execute("SELECT * FROM bases WHERE id = %s AND user_id = %s", (base_id, user_id)).fetchone()
+    if not b or not base_allowed(b["id"]):
+        not_found("Base not found")
+    return b
+
+
+def ensure_base(conn, user_id):
+    """Every user has at least one base."""
+    b = conn.execute("SELECT * FROM bases WHERE user_id = %s ORDER BY position, created_at LIMIT 1", (user_id,)).fetchone()
+    return b or conn.execute("INSERT INTO bases (user_id, name) VALUES (%s, 'My Base') RETURNING *", (user_id,)).fetchone()
+
+
+def get_table(conn, table_id, user_id=None, trashed=False):
+    """Load a table; with user_id, only if that user owns it (and an API key may use its base).
+    Tables in the trash count as gone, except with trashed=True (restoring them)."""
+    t = conn.execute("SELECT * FROM tables WHERE id = %s AND (%s::uuid IS NULL OR user_id = %s) AND (trashed_at IS NULL OR %s)",
+                     (table_id, user_id, user_id, trashed)).fetchone()
+    if not t or (user_id and not base_allowed(t["base_id"])):
+        not_found("Table not found")
+    return t
+
+
+def get_fields(conn, table_id):
+    return conn.execute("SELECT * FROM fields WHERE table_id = %s ORDER BY position, name", (table_id,)).fetchall()
+
+
+def get_views(conn, *, table_id=None, combo_id=None):
+    col = "table_id" if table_id else "combo_id"
+    return conn.execute(f"SELECT * FROM views WHERE {col} = %s ORDER BY position, name", (table_id or combo_id,)).fetchall()
+
+
+def create_view(conn, *, name, type, config=None, table_id=None, combo_id=None):
+    pos = len(get_views(conn, table_id=table_id, combo_id=combo_id))
+    return conn.execute(
+        "INSERT INTO views (table_id, combo_id, name, type, config, position) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *",
+        (table_id, combo_id, name, type, Jsonb(config or {}), pos),
+    ).fetchone()
+
+
+def _name_taken(conn, table_id, name, exclude=None) -> bool:
+    return bool(conn.execute("SELECT 1 FROM fields WHERE table_id = %s AND lower(name) = lower(%s) AND id IS DISTINCT FROM %s",
+                             (table_id, name, exclude)).fetchone())
+
+
+def check_field_name(conn, table_id, name, exclude=None) -> str:
+    """A name a person chose for a field: not empty, and not the name of another field in the table (fields are
+    addressed by name in the API, formulas and imports)."""
+    name = (name or "").strip()
+    if not name:
+        bad("Give the field a name")
+    if _name_taken(conn, table_id, name, exclude):
+        bad(f"There's already a field called “{name}” in this table")
+    return name
+
+
+def unique_field_name(conn, table_id, name) -> str:
+    """A name made up by Probyte (a link's counterpart field): numbered when it's taken."""
+    out, n = name, 2
+    while _name_taken(conn, table_id, out):
+        out, n = f"{name} {n}", n + 1
+    return out
+
+
+def create_field(conn, table_id, name, type, options=None, system_key=None, is_primary=False):
+    if type not in FIELD_TYPES:
+        bad(f"Unknown field type {type}")
+    if not system_key:
+        name = check_field_name(conn, table_id, name)
+    pos = conn.execute("SELECT COALESCE(MAX(position) + 1, 0) AS n FROM fields WHERE table_id = %s", (table_id,)).fetchone()["n"]
+    f = conn.execute(
+        "INSERT INTO fields (table_id, name, type, options, system_key, is_primary, position) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+        (table_id, name, type, Jsonb(options or {}), system_key, is_primary, pos),
+    ).fetchone()
+    if type != "record_id":  # Record ID stays the last column
+        conn.execute("UPDATE fields SET position = %s WHERE table_id = %s AND type = 'record_id'", (pos + 1, table_id))
+    return f
+
+
+def create_table(conn, user_id, base_id, name, kind="generic", account_id=None, calendar_url=None):
+    t = conn.execute(
+        "INSERT INTO tables (user_id, base_id, name, kind, account_id, calendar_url) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *",
+        (user_id, base_id, name, kind, account_id, calendar_url),
+    ).fetchone()
+    tid = t["id"]
+    if kind == "generic":
+        create_field(conn, tid, "Name", "text", is_primary=True)
+        create_field(conn, tid, "Notes", "long_text")
+        create_field(conn, tid, "Status", "single_select",
+                     {"choices": [{"name": n, "color": PALETTE[i]} for i, n in enumerate(["Todo", "Doing", "Done"])]})
+        create_view(conn, table_id=tid, name="Table", type="grid")
+    else:
+        by_key = {}
+        for key, fname, ftype, opts, primary in SYSTEM_FIELDS[kind]:
+            by_key[key] = _create_system_field(conn, tid, key, fname, ftype, opts, primary)
+        create_view(conn, table_id=tid, name="Table", type="grid",
+                    config={"sort": {"field": str(by_key["fn"]["id"]), "dir": "asc"}} if kind == "contacts" else None)
+        if kind == "contacts":
+            create_view(conn, table_id=tid, name="Cards", type="gallery")
+            create_view(conn, table_id=tid, name="A–Z", type="list", config={"sort": {"field": str(by_key["fn"]["id"]), "dir": "asc"}})
+        elif kind == "tasks":
+            create_view(conn, table_id=tid, name="Board", type="kanban", config={"groupBy": str(by_key["status"]["id"])})
+            create_view(conn, table_id=tid, name="Calendar", type="calendar",
+                        config={"dateField": str(by_key["due"]["id"]), "colorField": str(by_key["status"]["id"])})
+        elif kind == "files":
+            conn.execute("UPDATE views SET config = %s WHERE table_id = %s",
+                         (Jsonb({"hidden": [str(by_key["text"]["id"]), str(by_key["mime"]["id"])]}), tid))
+            create_view(conn, table_id=tid, name="Gallery", type="gallery",
+                        config={"coverField": str(by_key["file"]["id"]), "hidden": [str(by_key["text"]["id"]), str(by_key["mime"]["id"])]})
+            create_view(conn, table_id=tid, name="By kind", type="kanban", config={"groupBy": str(by_key["kind"]["id"])})
+        elif kind == "mixed":
+            create_view(conn, table_id=tid, name="Calendar", type="calendar",
+                        config={"dateField": str(by_key["dtstart"]["id"]), "endField": str(by_key["dtend"]["id"]),
+                                "colorField": str(by_key["component"]["id"])})
+            create_view(conn, table_id=tid, name="Board", type="kanban", config={"groupBy": str(by_key["status"]["id"])})
+        else:
+            create_view(conn, table_id=tid, name="Calendar", type="calendar",
+                        config={"dateField": str(by_key["dtstart"]["id"]), "endField": str(by_key["dtend"]["id"])})
+    _add_record_id_field(conn, tid)
+    return t
+
+
+def _create_system_field(conn, tid, key, fname, ftype, opts, primary):
+    if ftype == "link":  # Parent Task / Subtasks link the table to itself
+        opts = {**opts, "foreignTableId": str(tid)}
+    return create_field(conn, tid, fname, ftype, opts, system_key=key, is_primary=primary)
+
+
+def _add_record_id_field(conn, tid):
+    """Every table has a Record ID column (the row's UUID). Views hide it until someone shows it."""
+    return create_field(conn, tid, "Record ID", "record_id", {}, system_key="record_id")
+
+
+def _place_after(conn, table_id, field, after):
+    """Move a field to just after another one in the table's field order."""
+    order = [f for f in get_fields(conn, table_id) if f["id"] != field["id"]]
+    i = next((n for n, f in enumerate(order) if f["id"] == after["id"]), len(order) - 1)
+    order.insert(i + 1, field)
+    for n, f in enumerate(order):
+        conn.execute("UPDATE fields SET position = %s WHERE id = %s", (n, f["id"]))
+
+
+def ensure_system_fields(conn):
+    """Add synced fields defined in code (ical.SYSTEM_FIELDS) that a table doesn't have yet. Runs at startup."""
+    for t in conn.execute("SELECT id, kind FROM tables WHERE kind IN ('tasks', 'events', 'mixed', 'contacts')").fetchall():
+        by_key = {f["system_key"]: f for f in get_fields(conn, t["id"]) if f["system_key"]}
+        added = set()
+        for key, fname, ftype, opts, primary in SYSTEM_FIELDS[t["kind"]]:
+            if key not in by_key:
+                by_key[key] = _create_system_field(conn, t["id"], key, fname, ftype, opts, primary)
+                added.add(key)
+        if "alarm" in added:
+            _backfill_reminders(conn, t, by_key["alarm"])
+        if added:
+            if "done" in by_key and by_key.get("summary"):
+                _place_after(conn, t["id"], by_key["done"], by_key["summary"])
+                if by_key.get("status"):
+                    d, st = str(by_key["done"]["id"]), str(by_key["status"]["id"])
+                    conn.execute("UPDATE records SET data = jsonb_set(data, %s, to_jsonb(COALESCE(data->>%s, '') = 'Completed')) "
+                                 "WHERE table_id = %s AND NOT data ? %s", ([d], st, t["id"], d))
+
+
+def _backfill_reminders(conn, table, field):
+    """A newly added Reminder field starts with the alerts the items already have (set on a phone), so the next
+    edit here doesn't remove them."""
+    fid = str(field["id"])
+    for r in conn.execute("SELECT id, caldav_raw FROM records WHERE table_id = %s AND caldav_raw LIKE %s",
+                          (table["id"], "%BEGIN:VALARM%")).fetchall():
+        try:
+            kind = component_kind(r["caldav_raw"]) if table["kind"] == "mixed" else table["kind"]
+            _, vals = ical_to_values(kind, r["caldav_raw"])
+        except Exception:
+            continue
+        if vals.get("alarm"):
+            ensure_choices(conn, field, vals["alarm"])
+            conn.execute("UPDATE records SET data = jsonb_set(data, %s, to_jsonb(%s::text)) WHERE id = %s", ([fid], vals["alarm"], r["id"]))
+
+
+def rename_choices(conn, field, renames: dict):
+    """Select options renamed in the field editor: records holding an old name get the new one."""
+    fid, tid = str(field["id"]), str(field["table_id"])
+    for old, new in renames.items():
+        if not isinstance(old, str) or not isinstance(new, str) or old == new or not new.strip():
+            continue
+        if field["type"] == "single_select":
+            conn.execute("UPDATE records SET data = jsonb_set(data, %s, to_jsonb(%s::text)) WHERE table_id = %s AND data->>%s = %s",
+                         ([fid], new, tid, fid, old))
+        else:
+            conn.execute(
+                "UPDATE records SET data = jsonb_set(data, %s, (SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN x = %s THEN %s ELSE x END), '[]')"
+                " FROM jsonb_array_elements_text(data->%s) x)) WHERE table_id = %s AND jsonb_typeof(data->%s) = 'array' AND data->%s ? %s",
+                ([fid], old, new, fid, tid, fid, fid, old))
+
+
+def ensure_choices(conn, field, values):
+    """Add unseen select values to a field's choices."""
+    if field["type"] not in SELECT_TYPES:
+        return
+    vals = values if isinstance(values, list) else [values]
+    choices = list(field["options"].get("choices", []))
+    names = {c["name"] for c in choices}
+    added = False
+    for v in vals:
+        if v not in (None, "") and str(v) not in names:
+            choices.append({"name": str(v), "color": PALETTE[len(choices) % len(PALETTE)]})
+            names.add(str(v))
+            added = True
+    if added:
+        field["options"] = {**field["options"], "choices": choices}
+        conn.execute("UPDATE fields SET options = %s WHERE id = %s", (Jsonb(field["options"]), field["id"]))
+
+
+def _own_table_id(conn, table_id, user_id):
+    if not table_id or not conn.execute("SELECT 1 FROM tables WHERE id = %s AND user_id = %s AND trashed_at IS NULL", (table_id, user_id)).fetchone():
+        bad("Choose one of your tables")
+    return str(table_id)
+
+
+def _field_in(conn, field_id, table_id, what="field"):
+    f = conn.execute("SELECT * FROM fields WHERE id = %s AND table_id = %s", (field_id, table_id)).fetchone() if field_id else None
+    if not f:
+        bad(f"Choose a {what}")
+    return f
+
+
+def compile_formula(conn, table_id, expression: str, field_id=None) -> str:
+    """{Field name} expression -> {field_id} expression, validated (syntax, references, cycles)."""
+    fields = get_fields(conn, table_id)
+    by_id = {str(f["id"]): f for f in fields}
+    by_name = {f["name"]: f for f in fields}
+    by_lower = {f["name"].lower(): f for f in fields}
+
+    def to_id(ref):
+        f = by_id.get(ref) or by_name.get(ref) or by_lower.get(ref.lower())
+        if not f:
+            raise F.FormulaError(f"There is no field called {{{ref}}}")
+        if field_id and str(f["id"]) == str(field_id):
+            raise F.FormulaError("A formula can't refer to itself")
+        if f["type"] == "button":
+            raise F.FormulaError(f"{{{f['name']}}} is a button and has no value")
+        return str(f["id"])
+
+    try:
+        compiled = F.rewrite_refs(expression, to_id)
+        ast = F.parse(compiled)
+    except F.FormulaError as e:
+        bad(str(e))
+
+    # Cycle check through other formulas / conditional fields of this table.
+    eng = Engine(conn)
+    graph = {str(f["id"]): eng._deps(f) for f in fields if f["type"] in COMPUTED_TYPES}
+    me = str(field_id) if field_id else "__new__"
+    graph[me] = F.field_refs(ast)
+    seen, stack = set(), list(graph[me])
+    while stack:
+        cur = stack.pop()
+        if cur == me:
+            bad("Circular reference: this formula ends up depending on itself")
+        if cur in seen:
+            continue
+        seen.add(cur)
+        stack.extend(graph.get(cur, ()))
+    return compiled
+
+
+def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -> dict:
+    """Validate and normalise options for a field of the given type."""
+    if ftype not in FIELD_TYPES:
+        bad(f"Unknown field type {ftype}")
+    tid, o = str(table["id"]), dict(options or {})
+    if field and field["is_primary"] and ftype not in PRIMARY_TYPES:
+        bad("The primary field can't be that type")
+    if table["kind"] == "remote":
+        bad("A linked table's fields come from its source link")
+    if ftype == "link":
+        o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), user_id)
+        if is_remote_table(conn, o["foreignTableId"]):
+            o["symmetric"] = False  # a linked table's fields belong to its source: the link is one-way
+        o["relationship"] = "one" if o.get("relationship") == "one" else "many"
+        if field and field["type"] == "link":
+            o["symmetricFieldId"] = field["options"].get("symmetricFieldId")
+            if str(field["options"].get("foreignTableId")) != o["foreignTableId"]:
+                bad("The linked table of an existing link field can't be changed; create a new field instead")
+    elif ftype in ("lookup", "rollup"):
+        link = _field_in(conn, o.get("linkFieldId"), tid, "link field")
+        if link["type"] != "link":
+            bad("Choose a link field")
+        _field_in(conn, o.get("lookupFieldId"), link["options"]["foreignTableId"], "field to look up")
+        if ftype == "rollup" and o.get("func") not in F.ROLLUPS:
+            bad("Choose a rollup function")
+    elif ftype in ("conditional_lookup", "conditional_rollup"):
+        ftid = o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), user_id)
+        _field_in(conn, o.get("lookupFieldId"), ftid, "field to look up")
+        filters = []
+        for c in o.get("filters") or []:
+            _field_in(conn, c.get("field"), ftid, "filter field")
+            if c.get("op") not in FILTER_OPS:
+                bad("Unknown filter condition")
+            entry = {"field": str(c["field"]), "op": c["op"]}
+            if c.get("valueField"):
+                _field_in(conn, c["valueField"], tid, "field of this table")
+                entry["valueField"] = str(c["valueField"])
+            else:
+                entry["value"] = c.get("value")
+            filters.append(entry)
+        o["filters"] = filters
+        if o.get("sortField"):
+            _field_in(conn, o["sortField"], ftid, "sort field")
+        o["limit"] = int(o["limit"]) if o.get("limit") not in (None, "", 0) else None
+        if ftype == "conditional_rollup" and o.get("func") not in F.ROLLUPS:
+            bad("Choose a rollup function")
+    elif ftype == "formula":
+        expr = (o.get("expression") or "").strip()
+        o = {"expression": compile_formula(conn, tid, expr, field["id"] if field else None),
+             **({"precision": int(o["precision"])} if o.get("precision") not in (None, "") else {}),
+             **({"includeTime": bool(o["includeTime"])} if "includeTime" in o else {})}
+    elif ftype == "button":
+        o["label"] = (o.get("label") or "Click").strip()[:40]
+        o["action"] = "url" if o.get("action") == "url" else "update"
+        if o["action"] == "update":
+            ups = []
+            for u in o.get("updates") or []:
+                f = _field_in(conn, u.get("fieldId"), tid, "field to update")
+                if f["type"] in COMPUTED_TYPES:
+                    bad(f"{f['name']} is computed and can't be set by a button")
+                ups.append({"fieldId": str(f["id"]), "value": u.get("value")})
+            if not ups:
+                bad("Add at least one field for the button to set")
+            o["updates"] = ups
+        elif not (o.get("url") or "").strip():
+            bad("Enter the URL the button opens")
+    elif ftype == "user":
+        o["multiple"] = bool(o.get("multiple"))
+    return o
+
+
+def is_remote_table(conn, table_id) -> bool:
+    return bool(conn.execute("SELECT 1 FROM tables WHERE id = %s AND kind = 'remote'", (table_id,)).fetchone())
+
+
+def create_link_pair(conn, table, name, options, user_id):
+    """Create a link field and (unless it links a table to itself, or to a linked table) its counterpart."""
+    f = create_field(conn, table["id"], name, "link", options)
+    ftid = options["foreignTableId"]
+    if options.get("symmetric", True) and str(ftid) != str(table["id"]) and not is_remote_table(conn, ftid):
+        sym = create_field(conn, ftid, unique_field_name(conn, ftid, table["name"]), "link",
+                           {"foreignTableId": str(table["id"]), "relationship": "many", "symmetricFieldId": str(f["id"])})
+        opts = {**f["options"], "symmetricFieldId": str(sym["id"])}
+        opts.pop("symmetric", None)
+        f = conn.execute("UPDATE fields SET options = %s WHERE id = %s RETURNING *", (Jsonb(opts), f["id"])).fetchone()
+    return f
+
+
+def is_synced(table) -> bool:
+    """Linked to a collection on another DAV server (and synced with it)."""
+    return table["kind"] in DAV_KINDS and bool(table.get("account_id")) and bool(table.get("calendar_url"))
+
+
+def is_served(table) -> bool:
+    """On Probyte's own CalDAV/CardDAV server (phones read and write it directly)."""
+    return table["kind"] in DAV_KINDS and bool(table.get("dav_slug"))
