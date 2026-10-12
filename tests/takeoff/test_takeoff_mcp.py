@@ -7,10 +7,10 @@ import uuid
 import pytest
 import requests
 
-from conftest import API, BASE, Client
+from conftest import API, BASE, Client, S3_URL
 from drawing_set import make
 
-S3 = {"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
+S3 = {"kind": "s3", "endpoint": S3_URL, "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
 
 
 def rpc(h, method, params=None):

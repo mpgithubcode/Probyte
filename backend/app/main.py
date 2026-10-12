@@ -13,9 +13,21 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import builtin_dav, contacts, extensions, feeds, files, live, mcp_server, oauth, office, rest_v1, shares, store, templates
-from .routes import admin, auth as auth_routes, records, tables, views, workspace
-from .db import connection, init_db
+from app.dav import devices as builtin_dav
+from app.adapters import contacts
+from app import extensions
+from app.adapters import feeds
+from app.files import catalog as files
+from app.adapters import live, mcp_server
+from app.identity import oauth
+from app import office
+from app.adapters import rest_v1
+from app.sharing import links as shares
+from app.data import store, templates
+from app.web import admin
+from app.identity import routes as auth_routes
+from app.web import records, tables, views, workspace
+from app.core.db import connection, init_db
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,8 +40,8 @@ async def lifespan(app: FastAPI):
     builtin_dav.sync_on_startup()
     stop = threading.Event()
     if os.environ.get("RUN_WORKER", "").lower() == "embedded":  # single-container setups: run the worker in here too
-        from . import worker
-        from .db import pool
+        from app import worker
+        from app.core.db import pool
         pool.resize(pool.min_size, pool.max_size + worker.THREADS * 2 + 4)  # room for the worker's syncs next to web requests
         worker.start(stop)
     yield

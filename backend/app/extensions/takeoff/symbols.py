@@ -5,7 +5,7 @@ matching on grey pictures), turned four ways and a little larger and smaller. Ev
 import cv2
 import numpy as np
 
-from . import drawings
+from app.extensions.takeoff import drawings
 
 DPI = 100  # sheets are looked at at this resolution (a 36" × 24" sheet: 3600 × 2400)
 

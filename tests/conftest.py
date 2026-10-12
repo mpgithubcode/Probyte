@@ -9,6 +9,9 @@ import requests
 BASE = os.environ.get("PROBYTE_URL", "http://app:8000").rstrip("/")
 API = BASE + "/api"
 RADICALE = os.environ.get("RADICALE_URL", "http://radicale:5232").rstrip("/")
+# test storage servers (tests/docker-compose.storage.yml); overridable to run the suite outside Docker
+S3_URL = os.environ.get("TEST_S3_URL", "http://s3:9000")
+WEBDAV_URL = os.environ.get("TEST_WEBDAV_URL", "http://webdav:8080/")
 
 
 class Client(requests.Session):

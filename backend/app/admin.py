@@ -14,8 +14,8 @@ import sys
 
 from fastapi import HTTPException
 
-from . import auth
-from .db import connection, init_db
+from app.identity import auth
+from app.core.db import connection, init_db
 
 
 def reset_password(username: str) -> str:
@@ -30,7 +30,7 @@ def reset_password(username: str) -> str:
 
 
 def create_user(username: str, admin: bool, password: str | None = None) -> str:
-    from . import builtin_dav
+    from app.dav import devices as builtin_dav
     password = password or secrets.token_urlsafe(12)
     try:
         username = auth.validate_credentials(username, password)
@@ -47,7 +47,7 @@ def create_user(username: str, admin: bool, password: str | None = None) -> str:
 
 
 def main(argv: list[str]) -> None:
-    from . import backup
+    from app.ops import backup
     cmd = argv[0] if argv else ""
     if cmd == "reset-password" and len(argv) == 2:
         init_db()

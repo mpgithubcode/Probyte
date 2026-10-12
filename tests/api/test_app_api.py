@@ -441,7 +441,7 @@ def test_search_includes_linked_tables(user, other_user):
     user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Copperline Wire Co"}})
     s, view = make_share(user, t)
     lt = other_user.j("POST", "/tables", json={"name": "Their suppliers", "kind": "remote", "base_id": other_user.base_id,
-                                               "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+                                               "remote": {"url": f"{BASE}/s/{s['token']}", "view_id": view["id"]}})
     mine = other_user.table(name="Mine")
     M = other_user.fields(mine["id"])
     other_user.j("POST", f"/tables/{mine['id']}/records", json={"data": {M["Name"]: "Copper notes", M["Notes"]: "about copperline"}})

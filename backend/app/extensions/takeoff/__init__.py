@@ -6,9 +6,9 @@ drawing set marked up, or a Probyte table.
 """
 from pathlib import Path
 
-from .. import Extension
-from . import mcp
-from .api import router
+from app.extensions import Extension
+from app.extensions.takeoff import mcp
+from app.extensions.takeoff.api import router
 
 EXTENSION = Extension(
     id="takeoff",

@@ -19,10 +19,11 @@ from fastapi.responses import FileResponse, Response
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from ... import files, store
-from ...db import connection
-from ...routes.common import User
-from . import drawings, symbols
+from app.files import catalog as files
+from app.data import store
+from app.core.db import connection
+from app.web.common import User
+from app.extensions.takeoff import drawings, symbols
 
 router = APIRouter()
 DIR = files.ATTACH_DIR / "takeoff"

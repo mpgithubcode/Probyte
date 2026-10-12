@@ -3,8 +3,8 @@ Probyte's MCP server (shown while the extension is on). Sheets are named by thei
 number; items by name or id. Finds are suggestions until reviewed; only accepted marks are in the takeoff."""
 from fastapi import HTTPException
 
-from ...db import connection
-from . import api
+from app.core.db import connection
+from app.extensions.takeoff import api
 
 PROJECT = {"type": "string", "description": "Takeoff project id or name"}
 SHEET = {"type": ["string", "integer"], "description": "Sheet number as on the drawing (E1.1) or page number (1 = first page)"}
@@ -226,7 +226,7 @@ def call(user, name: str, a: dict):
     if name == "takeoff_summary":
         return {"takeoff": api.summary(pid, user)}
     if name == "takeoff_export_table":
-        from ... import apiv1
+        from app.adapters import apiv1
         with connection() as conn:
             bases = apiv1.list_bases(conn, user)
         base = next((b for b in bases if not a.get("base") or a["base"] in (b["id"], b["name"])), None)
@@ -237,7 +237,7 @@ def call(user, name: str, a: dict):
 
 
 def _parse_scale(text: str):
-    from . import drawings
+    from app.extensions.takeoff import drawings
     t = " ".join(text.split())
     m = drawings.ARCH_RE.search(t)
     if m:

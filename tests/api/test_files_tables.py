@@ -5,10 +5,10 @@ import uuid
 
 import requests
 
-from conftest import API
+from conftest import API, BASE, S3_URL, WEBDAV_URL
 
-S3 = {"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
-DAV = {"kind": "webdav", "endpoint": "http://webdav:8080/shared/", "username": "dav", "secret": "davpass1234"}
+S3 = {"kind": "s3", "endpoint": S3_URL, "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
+DAV = {"kind": "webdav", "endpoint": WEBDAV_URL + "shared/", "username": "dav", "secret": "davpass1234"}
 DAV_AUTH = ("dav", "davpass1234")
 # a 2x2 red PNG
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==")
@@ -115,7 +115,7 @@ def test_webdav_files_table_and_outside_changes(user):
     t = user.table("files", "NAS files", storage_id=s["id"], storage_prefix=prefix)
     user.sync(t["id"])  # after the first sync (started when the table is made), so the counts below are this test's
     F = user.fields(t["id"])
-    base = f"http://webdav:8080/shared/{prefix}/"
+    base = f"{WEBDAV_URL}shared/{prefix}/"
     # uploaded here: on the server, in a folder
     rec = upload(user, t, ("plan.md", b"# Plan", "text/markdown"), folder="projects/a")[0]
     assert requests.get(base + "projects/a/plan.md", auth=DAV_AUTH).content == b"# Plan"
@@ -262,7 +262,7 @@ def test_files_through_a_linked_table(user, other_user):
     wait(lambda: user.get(API + f"/files/{pic['id']}/thumb").status_code == 200)
     view = user.j("GET", f"/tables/{t['id']}")["views"][0]
     s = user.j("POST", "/shares", json={"name": "Files", "base_id": user.base_id, "items": [{"kind": "table", "id": t["id"], "views": [view["id"]]}]})
-    link = f"http://app:8000/s/{s['token']}"
+    link = f"{BASE}/s/{s['token']}"
     lt = other_user.j("POST", "/tables", json={"name": "Their files", "kind": "remote", "base_id": other_user.base_id,
                                                "remote": {"url": link, "view_id": view["id"]}})
 
@@ -275,17 +275,17 @@ def test_files_through_a_linked_table(user, other_user):
         got = items()
         a, b = got["pic.png"], got["note.txt"]
         assert a["file"] and a["url"].startswith(f"/api/remote/{lt['id']}/files/")
-        root = "http://app:8000" + a["url"]
+        root = BASE + a["url"]
         r = other_user.get(root + "/content")
         assert r.status_code == 200 and r.content == PNG and r.headers["content-type"] == "image/png"
         assert other_user.get(root + "/thumb").headers["content-type"] == "image/webp"
-        r = other_user.get("http://app:8000" + b["url"] + "/content", headers={"Range": "bytes=11-16"})
+        r = other_user.get(BASE + b["url"] + "/content", headers={"Range": "bytes=11-16"})
         assert r.status_code == 206 and r.content == b"shared"
-        assert other_user.get("http://app:8000" + b["url"] + "/content", params={"text": 1}).text.startswith("0123")
-        assert other_user.get("http://app:8000" + b["url"] + "/content", params={"download": 1}).headers["content-type"] == "application/octet-stream"
+        assert other_user.get(BASE + b["url"] + "/content", params={"text": 1}).text.startswith("0123")
+        assert other_user.get(BASE + b["url"] + "/content", params={"download": 1}).headers["content-type"] == "application/octet-stream"
         # only the linked table's owner, and only files the link shows
         assert user.get(root + "/content").status_code == 404
-        assert other_user.get(f"http://app:8000/api/remote/{lt['id']}/files/{uuid.uuid4()}/content").status_code == 404
+        assert other_user.get(f"{BASE}/api/remote/{lt['id']}/files/{uuid.uuid4()}/content").status_code == 404
 
     check()  # same server: straight from the share
     # as if the link were on another server: through its public address

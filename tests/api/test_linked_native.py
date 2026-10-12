@@ -4,9 +4,9 @@ import uuid
 
 import requests
 
-from conftest import API
+from conftest import API, BASE, S3_URL
 
-S3 = {"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
+S3 = {"kind": "s3", "endpoint": S3_URL, "bucket": "test-bucket", "username": "testkey", "secret": "testsecret12345"}
 ROOT = API.replace("/api", "")
 
 
@@ -19,7 +19,7 @@ def share(user, t, **perms):
 
 def link(viewer, s, view, name="Linked"):
     return viewer.j("POST", "/tables", json={"name": name, "kind": "remote", "base_id": viewer.base_id,
-                                             "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+                                             "remote": {"url": f"{BASE}/s/{s['token']}", "view_id": view["id"]}})
 
 
 def over_the_network(table_id):

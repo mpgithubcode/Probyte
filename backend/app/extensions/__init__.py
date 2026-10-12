@@ -17,8 +17,8 @@ from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..db import connection
-from ..routes.common import User
+from app.core.db import connection
+from app.web.common import User
 
 log = logging.getLogger("probyte.extensions")
 

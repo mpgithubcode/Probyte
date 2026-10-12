@@ -9,9 +9,15 @@ import os
 import signal
 import threading
 
-from . import attachments, audit, backup, files, jobs, sync, webhooks  # noqa: F401  (importing registers the job handlers)
-from .db import connection, init_db
-from .routes.tables import purge_expired
+from app.blobs import attachments  # noqa: F401  (importing registers the job handlers)
+from app.data import audit
+from app.ops import backup
+from app.files import catalog as files
+from app.core import jobs
+from app.dav import sync
+from app.adapters import webhooks
+from app.core.db import connection, init_db
+from app.web.tables import purge_expired
 
 log = logging.getLogger("probyte.worker")
 THREADS = int(os.environ.get("WORKER_THREADS", "4"))
@@ -47,7 +53,7 @@ def start(stop: threading.Event):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     init_db()
-    from .db import pool
+    from app.core.db import pool
     pool.resize(pool.min_size, max(pool.max_size, THREADS * 2 + 4))  # every thread may be syncing (2 connections each)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
