@@ -212,6 +212,10 @@ Connect an [ONLYOFFICE Docs](https://www.onlyoffice.com/docs) Document Server (t
       - "8081:80"   # or behind your reverse proxy (it uses WebSockets)
 ```
 
+Also under **Network settings**:
+- **Protocol browsers use to reach Probyte** (through Probyte only): *Automatic* takes what your reverse proxy reports; choose *HTTPS* or *HTTP* when it reports it wrongly. The Document Server writes it into the addresses it gives the browser, so a wrong one shows as *Download failed* in the editor.
+- **Check the document server's certificate**: on by default; turn it off for a Document Server on HTTPS with a self-signed or private certificate (Probyte still talks to it encrypted).
+
 Under **Network settings**, give *Probyte's address for the Document Server* (`http://probyte:8000` in the same Compose file, or `http://<this machine's IP>:<Probyte's port>` when the Document Server runs in another stack) when it can't use Probyte's public address. (In *Directly* mode, a Probyte served over HTTPS needs the Document Server on HTTPS too: browsers don't load an HTTP editor into an HTTPS page.)
 
 ## Extensions

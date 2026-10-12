@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { resetOfficeStatus } from "./OfficeEditor";
 
-interface Cfg { url: string; probyte_url: string; server_url: string; via_probyte: boolean; has_secret: boolean }
+interface Cfg {
+  url: string; probyte_url: string; server_url: string; via_probyte: boolean; has_secret: boolean;
+  browser_scheme: "" | "https" | "http"; verify_tls: boolean;
+}
 
 /** Settings → Document editing (the server's admin): the ONLYOFFICE Document Server that edits files of files tables. */
 export function OfficeSettings() {
@@ -12,7 +15,7 @@ export function OfficeSettings() {
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api.get<Cfg>("/office/settings").then((c) => { setCfg(c); setAdvanced(!!(c.probyte_url || c.server_url)); }).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => { api.get<Cfg>("/office/settings").then((c) => { setCfg(c); setAdvanced(!!(c.probyte_url || c.server_url || c.browser_scheme || !c.verify_tls)); }).catch((e) => setErr(e.message)); }, []);
   if (!cfg) return <p className="muted">{err || "Loading…"}</p>;
   const set = (p: Partial<Cfg>) => setCfg({ ...cfg, ...p });
 
@@ -20,7 +23,7 @@ export function OfficeSettings() {
     setBusy(true); setErr(""); setMsg("");
     try {
       const saved = await api.put<Cfg>("/office/settings", { url: cfg.url, probyte_url: cfg.probyte_url, server_url: cfg.server_url,
-        via_probyte: cfg.via_probyte, secret: secret || undefined });
+        via_probyte: cfg.via_probyte, browser_scheme: cfg.browser_scheme, verify_tls: cfg.verify_tls, secret: secret || undefined });
       setCfg(saved); setSecret(""); resetOfficeStatus();
       if (test && saved.url) {
         const r = await api.post<{ version?: string }>("/office/settings/test");
@@ -62,6 +65,22 @@ export function OfficeSettings() {
           <input className="input" value={cfg.server_url} placeholder="(the address above)" onChange={(e) => set({ server_url: e.target.value })} />
           <span className="hint">Where Probyte sends commands (Save) and gets saved files, e.g. <code>http://onlyoffice</code> in the same Docker network.</span>
         </label>}
+        {cfg.via_probyte && <label className="stack">Protocol browsers use to reach Probyte
+          <select className="input" value={cfg.browser_scheme} onChange={(e) => set({ browser_scheme: e.target.value as Cfg["browser_scheme"] })}>
+            <option value="">Automatic (as your reverse proxy reports it)</option>
+            <option value="https">HTTPS</option>
+            <option value="http">HTTP</option>
+          </select>
+          <span className="hint">The Document Server writes it into the addresses it gives the browser (the document's download, its pictures).
+            Leave it automatic, unless the editor says <i>Download failed</i> or shows no pictures: then choose how you open Probyte
+            (HTTPS when its address starts with https://).</span>
+        </label>}
+        <label className="inline-check">
+          <input type="checkbox" checked={cfg.verify_tls} onChange={(e) => set({ verify_tls: e.target.checked })} />
+          Check the document server's certificate (HTTPS)
+        </label>
+        <span className="hint">Turn this off for a document server on HTTPS with a self-signed or private certificate
+          (Probyte still talks to it encrypted). It doesn't matter for an http:// address.</span>
       </>)}
       <div className="settings-actions">
         <button className="btn primary" disabled={busy} onClick={() => save(true)}>{busy ? "Checking…" : "Save and test"}</button>

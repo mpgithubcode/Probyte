@@ -61,7 +61,7 @@ EDITABLE = {"docx", "docm", "dotx", "odt", "ott", "rtf", "txt", "xlsx", "xlsm", 
 # opened for editing as their newer format (the saved version replaces the file, with the new extension)
 CONVERT = {"doc": "docx", "dot": "docx", "dotm": "docx", "xls": "xlsx", "xlt": "xlsx", "xltm": "xlsx",
            "ppt": "pptx", "pps": "pptx", "pot": "pptx", "potm": "pptx"}
-SETTINGS = ("url", "secret", "probyte_url", "server_url", "via_probyte")
+SETTINGS = ("url", "secret", "probyte_url", "server_url", "via_probyte", "browser_scheme", "verify_tls")
 PREFIX = "/office-ds"   # where Probyte relays the Document Server for browsers
 CONVERTED_DIR = files.ATTACH_DIR / "office"   # converted copies, while they're edited
 
@@ -73,6 +73,10 @@ def settings(conn) -> dict:
     out = {k: rows.get(f"office.{k}", "") for k in SETTINGS}
     out["secret"] = unseal(out["secret"]) or ""
     out["via_probyte"] = rows.get("office.via_probyte", "1") == "1"   # (on unless turned off)
+    # the protocol browsers use to reach Probyte, as the Document Server is told it (relay): "" = as it arrives
+    out["browser_scheme"] = out["browser_scheme"] if out["browser_scheme"] in ("http", "https") else ""
+    # check the Document Server's TLS certificate (off: an HTTPS Document Server with a self-signed one)
+    out["verify_tls"] = rows.get("office.verify_tls", "1") == "1"
     return out
 
 
@@ -272,7 +276,7 @@ def _post(cfg: dict, paths: tuple, payload: dict) -> dict:
     last = None
     for path in paths:
         try:
-            r = requests.post(base + path, json=body, headers=headers, timeout=120)
+            r = requests.post(base + path, json=body, headers=headers, timeout=120, verify=cfg["verify_tls"])
         except requests.RequestException as e:
             raise HTTPException(502, f"The document server isn't reachable from Probyte ({e.__class__.__name__})")
         if r.status_code == 404:
@@ -376,7 +380,7 @@ def _from_server(cfg: dict, url: str) -> bytes:
         base = (cfg["server_url"] or cfg["url"]).rstrip("/")
         path = u.path[len(PREFIX):] if u.path.startswith(PREFIX + "/") else u.path  # (reported through Probyte's relay)
         url = base + path + (f"?{u.query}" if u.query else "")
-    r = requests.get(url, timeout=(10, 600))
+    r = requests.get(url, timeout=(10, 600), verify=cfg["verify_tls"])
     if r.status_code != 200:
         raise HTTPException(502, f"Couldn't get the saved document (HTTP {r.status_code})")
     return r.content
@@ -467,6 +471,8 @@ class SettingsIn(BaseModel):
     probyte_url: str = ""
     server_url: str = ""
     via_probyte: bool = True
+    browser_scheme: str = ""         # "", "https" or "http"
+    verify_tls: bool = True
 
 
 def _admin(user):
@@ -480,7 +486,7 @@ def get_settings(user=User):
     with connection() as conn:
         cfg = settings(conn)
     return {"url": cfg["url"], "probyte_url": cfg["probyte_url"], "server_url": cfg["server_url"], "via_probyte": cfg["via_probyte"],
-            "has_secret": bool(cfg["secret"])}
+            "browser_scheme": cfg["browser_scheme"], "verify_tls": cfg["verify_tls"], "has_secret": bool(cfg["secret"])}
 
 
 def _clean_url(u: str) -> str:
@@ -494,7 +500,10 @@ def _clean_url(u: str) -> str:
 def put_settings(body: SettingsIn, user=User):
     _admin(user)
     vals = {"url": _clean_url(body.url), "probyte_url": _clean_url(body.probyte_url), "server_url": _clean_url(body.server_url),
-            "via_probyte": "1" if body.via_probyte else ""}
+            "via_probyte": "1" if body.via_probyte else "", "verify_tls": "1" if body.verify_tls else "0"}
+    if body.browser_scheme not in ("", "http", "https"):
+        raise HTTPException(400, "The protocol is automatic, https or http")
+    vals["browser_scheme"] = body.browser_scheme
     with connection() as conn:
         for k, v in vals.items():
             conn.execute("INSERT INTO app_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
@@ -526,7 +535,10 @@ def test_settings(request: Request, user=User):
         raise HTTPException(400, "Enter the document server's address first")
     base = (cfg["server_url"] or cfg["url"]).rstrip("/")
     try:
-        h = requests.get(base + "/healthcheck", timeout=10)
+        h = requests.get(base + "/healthcheck", timeout=10, verify=cfg["verify_tls"])
+    except requests.exceptions.SSLError:
+        raise HTTPException(400, f"{base}'s certificate isn't trusted (self-signed?): turn off “Check the document server's certificate” "
+                                 "in the network settings, or give it a trusted certificate")
     except requests.RequestException as e:
         raise HTTPException(400, f"Probyte can't reach {base} ({e.__class__.__name__})")
     if h.status_code != 200 or "true" not in h.text:
@@ -562,15 +574,15 @@ _NOT_RELAYED = re.compile(r"^(coauthoring/commandservice\.ashx|command|convertse
 _client = None
 
 
-def _relay_target(path: str) -> str:
+def _relay_target(path: str) -> tuple[str, dict]:
     with connection() as conn:
         cfg = settings(conn)
     if not cfg["url"] or not cfg["via_probyte"] or _NOT_RELAYED.match(path.lstrip("/")) or ".." in path.split("/"):
         raise HTTPException(404, "Not found")
-    return (cfg["server_url"] or cfg["url"]).rstrip("/") + "/" + path.lstrip("/")
+    return (cfg["server_url"] or cfg["url"]).rstrip("/") + "/" + path.lstrip("/"), cfg
 
 
-def _relay_headers(headers, request_base: str) -> dict:
+def _relay_headers(headers, request_base: str, scheme: str = "") -> dict:
     """The browser's request headers, plus where it sees the Document Server (so the addresses it makes point back
     through Probyte, as an nginx in front of it would say)."""
     u = urlparse(request_base)
@@ -578,7 +590,8 @@ def _relay_headers(headers, request_base: str) -> dict:
     out["X-Forwarded-Host"] = u.netloc + PREFIX
     # the web scheme, also for the editor's WebSocket (ws / wss): the Document Server writes the document's download
     # address with it, and a wss:// one can't be downloaded ("Download failed")
-    out["X-Forwarded-Proto"] = {"ws": "http", "wss": "https"}.get(u.scheme, u.scheme)
+    # (the admin can set it: Settings → Document editing → network settings, when the proxy in front reports it wrongly)
+    out["X-Forwarded-Proto"] = scheme or {"ws": "http", "wss": "https"}.get(u.scheme, u.scheme)
     return out
 
 
@@ -607,14 +620,17 @@ async def relay(path: str, request: Request):
     from starlette.responses import StreamingResponse
     from .oauth import public_base
     global _client
-    target = await run_in_threadpool(_relay_target, path)
+    target, cfg = await run_in_threadpool(_relay_target, path)
     if request.url.query:
         target += "?" + request.url.query
-    _client = _client or httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), follow_redirects=False)
+    _client = _client or {}
+    client = _client.get(cfg["verify_tls"]) or _client.setdefault(
+        cfg["verify_tls"], httpx.AsyncClient(timeout=httpx.Timeout(30, read=600), follow_redirects=False, verify=cfg["verify_tls"]))
     body = await request.body() if request.method in ("POST", "PUT") else None  # (with its length: not every server takes chunks)
     try:
-        up = await _client.send(_client.build_request(request.method, target, headers=_relay_headers(request.headers, public_base(request)),
-                                                      content=body), stream=True)
+        up = await client.send(client.build_request(request.method, target, content=body,
+                                                    headers=_relay_headers(request.headers, public_base(request), cfg["browser_scheme"])),
+                               stream=True)
     except httpx.HTTPError as e:
         raise HTTPException(502, f"Probyte can't reach the document server ({e.__class__.__name__})")
     headers = {k: v for k, v in up.headers.items() if k.lower() not in _HOP and k.lower() != "set-cookie"}
@@ -635,15 +651,21 @@ async def relay_ws(ws: WebSocket, path: str):
     from starlette.concurrency import run_in_threadpool
     from .oauth import public_base
     try:
-        target = await run_in_threadpool(_relay_target, path)
+        target, cfg = await run_in_threadpool(_relay_target, path)
     except HTTPException:
         await ws.close(code=1008)
         return
     target = re.sub(r"^http", "ws", target) + (f"?{ws.url.query}" if ws.url.query else "")
     headers = _relay_headers({k: v for k, v in ws.headers.items() if k.lower() not in ("sec-websocket-key", "sec-websocket-version",
-                              "sec-websocket-extensions", "sec-websocket-protocol")}, public_base(ws))
+                              "sec-websocket-extensions", "sec-websocket-protocol")}, public_base(ws), cfg["browser_scheme"])
+    tls = None
+    if target.startswith("wss:") and not cfg["verify_tls"]:  # an HTTPS Document Server with a self-signed certificate
+        import ssl
+        tls = ssl.create_default_context()
+        tls.check_hostname = False
+        tls.verify_mode = ssl.CERT_NONE
     try:
-        up = await websockets.connect(target, extra_headers=headers, subprotocols=ws.scope.get("subprotocols") or None,
+        up = await websockets.connect(target, extra_headers=headers, subprotocols=ws.scope.get("subprotocols") or None, ssl=tls,
                                       max_size=None, open_timeout=20, ping_interval=None)
     except Exception as e:  # noqa: BLE001
         log.warning("relay: can't open the document server's WebSocket: %s", e)

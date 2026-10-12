@@ -122,6 +122,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, d["versions"][int(n)].encode(), "application/octet-stream") if d else self._send(404, {})
         if self.path == "/fake/log":
             return self._send(200, log)
+        if self.path.startswith("/fake/headers"):  # what the relay told it (X-Forwarded-Proto, X-Forwarded-Host)
+            return self._send(200, {k.lower(): v for k, v in self.headers.items()})
         self._send(404, {})
 
     def do_POST(self):
@@ -218,4 +220,11 @@ class H(BaseHTTPRequestHandler):
         self._send(404, {})
 
 
+if os.path.exists("/cert.pem"):  # the same over HTTPS, with a self-signed certificate
+    import ssl
+    tls = ThreadingHTTPServer(("0.0.0.0", 8443), H)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain("/cert.pem", "/key.pem")
+    tls.socket = ctx.wrap_socket(tls.socket, server_side=True)
+    threading.Thread(target=tls.serve_forever, daemon=True).start()
 ThreadingHTTPServer(("0.0.0.0", 8000), H).serve_forever()

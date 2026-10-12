@@ -530,3 +530,32 @@ def test_a_failed_download_is_tried_again_with_a_new_key(doc):
         expect(pg.locator(".office-frame .fake-office-text")).to_have_value("first draft", timeout=15000)
         expect(pg.locator(".viewer-err")).to_have_count(0)
         b.close()
+
+
+
+def test_protocol_and_certificate_settings(admin, doc):
+    """Network settings: the protocol the Document Server is told browsers use, and an HTTPS Document Server with a
+    self-signed certificate."""
+    relay = "http://app:8000/office-ds"
+    base = {"url": FAKE, "secret": None, "probyte_url": "http://app:8000"}
+    try:
+        # automatic: as it arrives (here http; behind an HTTPS proxy, https)
+        assert requests.get(relay + "/fake/headers").json()["x-forwarded-proto"] == "http"
+        assert requests.get(relay + "/fake/headers", headers={"X-Forwarded-Proto": "https"}).json()["x-forwarded-proto"] == "https"
+        # set by the admin
+        admin.j("PUT", "/office/settings", json={**base, "browser_scheme": "https"})
+        assert admin.j("GET", "/office/settings")["browser_scheme"] == "https"
+        assert requests.get(relay + "/fake/headers").json()["x-forwarded-proto"] == "https"
+        assert admin.put(API + "/office/settings", json={**base, "browser_scheme": "ftp"}).status_code == 400
+        # an HTTPS Document Server with a self-signed certificate: refused while the certificate is checked…
+        tls = {**base, "url": "https://fakeoffice:8443", "browser_scheme": ""}
+        admin.j("PUT", "/office/settings", json=tls)
+        r = admin.post(API + "/office/settings/test")
+        assert r.status_code == 400 and "certificate" in r.json()["detail"]
+        # …and works with the check off (the test, and the relay)
+        admin.j("PUT", "/office/settings", json={**tls, "verify_tls": False})
+        assert admin.j("GET", "/office/settings")["verify_tls"] is False
+        assert admin.j("POST", "/office/settings/test")["ok"]
+        assert requests.get(relay + "/healthcheck").text == "true"
+    finally:
+        admin.j("PUT", "/office/settings", json={**base, "browser_scheme": "", "verify_tls": True})
