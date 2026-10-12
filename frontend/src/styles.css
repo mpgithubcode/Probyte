@@ -1276,3 +1276,4 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .pdf-controls button { border: 0; background: transparent; color: inherit; min-width: 32px; height: 28px; border-radius: 999px; cursor: pointer; font: inherit; }
 .pdf-controls button:hover { background: #3c3d42; }
 .rich-text-body .ProseMirror strong { font-weight: 700; }
+.gallery-cover img.doc { object-position: top; background: #fff; }  /* documents: the top of the first page */

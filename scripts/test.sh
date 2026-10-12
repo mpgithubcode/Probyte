@@ -25,7 +25,7 @@ docker compose exec -T app python -m app.admin create-user testadmin --admin --p
 target=tests
 cmd="python -m pytest -q -p no:cacheprovider --rootdir tests -c /dev/null"
 if [ "${1:-}" = bench ]; then shift; cmd="pip install -q 'psycopg[binary]' 2>/dev/null; python tests/bench/bench.py"; target=""; fi
-if [ "${1:-}" = screens ]; then shift; cmd="python tests/screens/capture.py"; target=""; fi
+if [ "${1:-}" = screens ]; then shift; cmd="pip install -q pillow 2>/dev/null; python tests/screens/capture.py"; target=""; fi
 if [ "${1:-}" = api ] || [ "${1:-}" = ui ]; then target="tests/$1"; shift; fi
 case "${1:-}" in tests/*) target="" ;; esac  # a file or test id given: run just that
 args=""; [ $# -gt 0 ] && args=$(printf "%q " "$@")  # keep quoted pytest arguments (-k "a or b") intact

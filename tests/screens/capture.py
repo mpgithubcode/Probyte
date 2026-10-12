@@ -1,6 +1,7 @@
 """Screenshots and short recordings of Probyte for the README, made on the isolated test stack with demo data.
 
     scripts/test.sh screens        → docs/screenshots/*.png and *.gif
+    scripts/test.sh screens files  → only the files-table pictures (files.png, file-viewer.png)
 
 Run it again after UI changes to refresh the pictures.
 """
@@ -99,6 +100,67 @@ def seed():
     return u, {"projects": p["id"], "personal": t["id"], "combo": combo["id"], "share": share["token"]}, views
 
 
+def demo_image(w, h, top, bottom, label):
+    """A gradient picture with a caption (demo photos for the files table)."""
+    import io
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (w, h))
+    d = ImageDraw.Draw(img)
+    for y in range(h):
+        t = y / h
+        d.line([(0, y), (w, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)))
+    d.ellipse([w * 0.62, h * 0.12, w * 0.82, h * 0.12 + w * 0.2], fill=(255, 236, 179))
+    d.polygon([(0, h), (w * 0.3, h * 0.55), (w * 0.55, h), ], fill=tuple(max(0, c - 60) for c in bottom))
+    d.polygon([(w * 0.35, h), (w * 0.7, h * 0.48), (w, h * 0.9), (w, h)], fill=tuple(max(0, c - 90) for c in bottom))
+    d.text((24, 20), label, fill=(255, 255, 255))
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=88)
+    return out.getvalue()
+
+
+def seed_files(u):
+    """A files table on the test S3 server: photos, a Word report, a spreadsheet, a Markdown plan, a PDF."""
+    fx = os.path.join(os.path.dirname(__file__), "..", "fixtures")
+    t = u.j("POST", "/tables", json={"name": "Shared drive", "kind": "files", "base_id": u.base_id, "storage_prefix": f"demo{random.randint(1000, 9999)}",
+                                     "storage": {"name": "Office S3", "kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket",
+                                                 "username": "testkey", "secret": "testsecret12345"}})
+    docx = open(os.path.join(fx, "report.docx"), "rb").read()
+    files = [("files", ("site-visit-north.jpg", demo_image(1200, 800, (94, 140, 214), (46, 125, 90), "Site visit, north"), "image/jpeg")),
+             ("files", ("site-visit-lake.jpg", demo_image(1200, 800, (240, 150, 90), (60, 90, 160), "Lake panel"), "image/jpeg")),
+             ("files", ("Quarterly report.docx", docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
+             ("files", ("stock.xlsx", open(os.path.join(fx, "stock.xlsx"), "rb").read(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+             ("files", ("Project plan.md", b"# Project plan\n\n## Goals\n\n- Finish the **north site** wiring by Friday\n- Order panels for the lake house\n"
+                                          b"- Send the *quarterly report* to the client\n\n## Notes\n\n> Inspection is booked for the 14th.\n", "text/markdown"))]
+    for f in files:
+        u.post(f"{BASE}/api/tables/{t['id']}/files", files=[f], data={"folder": "Projects" if f[1][0].endswith((".docx", ".md", ".xlsx")) else "Photos"})
+    # an own field next to the file's: a status
+    st = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Status", "type": "single_select", "options": {"choices": [
+        {"name": "Draft", "color": "#f59e0b"}, {"name": "Final", "color": "#22c55e"}]}})
+    F = u.fields(t["id"])
+    for r in u.records(t["id"]):
+        u.j("PATCH", f"/records/{r['id']}", json={"data": {st["id"]: "Final" if "report" in r["data"][F["name"]].lower() else "Draft"}})
+    return t, F
+
+
+def files_shots(b, u):
+    import time
+    t, F = seed_files(u)
+    time.sleep(6)  # cover images and the Word file's PDF are made in the background
+    rid = {r["data"][F["name"]]: r["id"] for r in u.records(t["id"])}
+    ctx = b.new_context(**DESK)
+    pg = ctx.new_page()
+    sign_in(pg, u)
+    gallery = next(v for v in u.j("GET", f"/tables/{t['id']}")["views"] if v["type"] == "gallery")
+    go(pg, "table", t["id"], gallery["id"])
+    pg.wait_for_timeout(1200)
+    pg.screenshot(path=f"{OUT}/files.png")
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rid['Quarterly report.docx']}")
+    pg.wait_for_selector(".pdf-page canvas", timeout=60000)
+    pg.wait_for_timeout(800)
+    pg.screenshot(path=f"{OUT}/file-viewer.png")
+    ctx.close()
+
+
 def sign_in(pg, u):
     pg.goto(BASE)
     pg.fill("input[autocomplete=username]", u.username)
@@ -117,9 +179,17 @@ def go(pg, kind, id, view=None):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    if sys.argv[1:] == ["files"]:
+        with sync_playwright() as p:
+            b = p.chromium.launch()
+            files_shots(b, Client("sam"))
+            b.close()
+        print("saved to", OUT)
+        return
     u, ids, views = seed()
     with sync_playwright() as p:
         b = p.chromium.launch()
+        files_shots(b, u)
         ctx = b.new_context(**DESK)
         pg = ctx.new_page()
         sign_in(pg, u)

@@ -38,7 +38,8 @@ export function GalleryView({ fields, visible, records, view, ops }: ViewProps) 
       <div key={r.id} className="card gallery-card" style={{ borderTopColor: ops.colorFor(r) ?? "transparent" }} onClick={() => ops.open(r)}>
         {cover && (
           <div className="gallery-cover">
-            {src ? <img src={src} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+            {src ? <img src={src} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }}
+                className={Array.isArray(r.data[cover.id]) && !/^image\//.test(r.data[cover.id][0]?.mime ?? "image/") ? "doc" : undefined} />
               : Array.isArray(r.data[cover.id]) && r.data[cover.id][0]?.name
                 ? <span className="file-ext big">{fileExt(r.data[cover.id][0].name)}</span> : null}
           </div>

@@ -1,13 +1,57 @@
 # Probyte
 
-A small, self-hosted, multi-user, [Teable](https://teable.ai/)-style database app backed by PostgreSQL. Each user's work is organised as **bases → tables**. A base groups related tables (normal tables, CalDAV task/event tables) and combined databases. Use the sidebar to create, rename, recolour or delete bases, and a table's ⋯ menu to move it to another base.
+**The self-hosted database that syncs with your phone, works on the files you already have, and talks to your AI.**
+
+Probyte is an Airtable/Teable-style database you run yourself: tables, formulas, links and seven kinds of views on PostgreSQL. What sets it apart is what it connects to. Your tables can *be* your phone's calendar, reminders and contacts. Your S3 bucket or Nextcloud folder can *be* a table you browse, preview and link. And Claude or ChatGPT can work with all of it, after you paste one URL.
 
 <p align="center"><img src="docs/screenshots/editing.gif" alt="Adding a record, typing into the grid and searching" width="860"></p>
+
+## Why Probyte
+
+**📅 Your tables are your phone's calendar, reminders and contacts.**
+Not an export or a read-only feed: real two-way sync with CalDAV and CardDAV. Tick a task off in Apple Reminders and it's done in Probyte; drag an event on the calendar here and your phone moves it. Repeats, reminders and alerts, time zones and edits made offline all sync. A calendar server is built in, so it works out of the box, with your iPhone or any CalDAV app (DAVx5 on Android, Thunderbird…), or with your own CalDAV server such as Nextcloud, iCloud or Fastmail. [More ↓](#feature-tour)
+
+**📁 Your files stay where they are, and become a database.**
+Point a table at an **S3 bucket** (AWS, MinIO, Cloudflare R2, Backblaze, SeaweedFS…) or a **WebDAV folder** (Nextcloud, ownCloud, a NAS). Every file becomes a record you can search, tag, sort and link to your projects, clients or jobs. Open one and it's shown full screen, whole: PDF, **Word, PowerPoint, Excel**, video and images. Markdown files are edited WYSIWYG. Rename, move, upload whole folders or replace a file: the change happens in your storage, because Probyte never keeps its own copies. [More ↓](#files-tables-s3-and-webdav)
+
+**🤖 Made for AI assistants.**
+Probyte is an **MCP server** with proper sign-in (OAuth): paste its address into Claude, ChatGPT, Claude Code, Cursor or VS Code, approve read-only or read & write access for chosen bases, and the assistant can search, create and update your records. Alongside: a clean REST API (with OpenAPI docs and a **JSON Schema** of every table), signed webhooks with retries, and history that shows which edits an assistant made. [More ↓](#api-mcp-and-webhooks)
+
+**🔗 Share a table as an app, and link tables across servers.**
+A public link turns a view into a page anyone can open, embed, or **install on a phone** as its own app, with exactly the rights you choose (view, add, edit, delete), a password and an expiry date. Another Probyte server can add that link as a **linked table**, and **combined databases** merge tables, even from different servers, into one calendar, board or list. [More ↓](#public-links-embeds-and-phone-apps)
+
+**🧮 Real spreadsheet power.**
+Teable-compatible formulas (about 80 functions, with autocomplete and live preview), links, lookups, rollups and *conditional* lookups, validation rules and default values, and Table, Board, Calendar, Timeline, List, Gallery and Chart views. Also: keyboard-driven editing, pasting from Excel, nested filters, totals, and import/export in xlsx, csv, ods and json. [More ↓](#field-types)
+
+**🏠 Yours to run, and hard to lose.**
+One `docker compose up`, plain PostgreSQL, live updates in every open window, and 20,000-record tables that load in under a second. Daily backups (database, calendars and uploaded attachments) with one-command restore, a 30-day trash with **Undo**, per-record history, and encrypted stored passwords. [More ↓](#quick-start)
+
+### At a glance
+
+| | The usual no-code database | Probyte |
+|---|---|---|
+| **Calendar & contacts** | Export a read-only calendar feed | Two-way sync with your phone's Calendar, Reminders and Contacts |
+| **Files** | Uploaded into the app, as attachments | Stay in your own S3 / WebDAV; previewed, edited and linked in place |
+| **AI assistants** | An API key and glue code | MCP: paste the URL, sign in, done |
+| **Sharing** | A view-only link | An installable app with add / edit / delete rights, usable from other servers |
+| **Where it lives** | Someone else's cloud, often priced per seat | Your server, your PostgreSQL, your backups |
+
+### Up and running
+
+```bash
+cp .env.example .env    # set a database password
+docker compose up -d --build
+```
+
+Open http://localhost:8080 and create an account: the first one is the admin. [Full setup ↓](#quick-start)
+
+## Screenshots
 
 | | |
 |---|---|
 | ![Table view with a frozen title column, links, lookups and formulas](docs/screenshots/table.png) **Table** — links, lookups, formulas, a frozen title column | ![Board view grouped by status](docs/screenshots/board.png) **Board** — drag cards between columns |
 | ![Week calendar with events and tasks](docs/screenshots/calendar-week.png) **Calendar** — tasks & events synced with your phone (week view) | ![To-do list with checkboxes, grouped by status](docs/screenshots/list.png) **List** — checkboxes first, grouped, columns that line up |
+| ![A files table on an S3 bucket, as a gallery with cover images](docs/screenshots/files.png) **Files** — an S3 bucket as a table, with cover images | ![A Word document open in the full-screen viewer with its details](docs/screenshots/file-viewer.png) **File viewer** — Word, PDF, Excel and more, full screen |
 | ![Timeline of projects](docs/screenshots/timeline.png) **Timeline** | ![Bar chart of budget by status](docs/screenshots/chart.png) **Chart** |
 | ![Combined database calendar](docs/screenshots/combined.png) **Combined database** — several tables in one view, here as a calendar | ![Record panel](docs/screenshots/record.png) **Record panel** |
 | ![Settings: connecting AI assistants and the API](docs/screenshots/settings-api.png) **API & MCP** — connect Claude and other assistants | ![Dark mode](docs/screenshots/dark.png) **Dark mode** |
@@ -23,7 +67,10 @@ A small, self-hosted, multi-user, [Teable](https://teable.ai/)-style database ap
 
 The pictures are made by `scripts/test.sh screens` from demo data on the test stack; run it again after UI changes.
 
-On top of that, Probyte has these extras:
+## Feature tour
+
+Each user's work is organised as **bases → tables**. A base groups related tables (normal tables, synced calendar and contacts tables, files tables) and combined databases; use the sidebar to create, rename, recolour or delete bases, and a table's ⋯ menu to move it to another base.
+
 
 1. **CalDAV task & event databases.** A database can be bound to a calendar collection and sync both ways with any CalDAV server (Nextcloud, Radicale, Baïkal, iCloud, Fastmail…). A **Tasks & events** table syncs a calendar's tasks (`VTODO`) and events (`VEVENT`) together; each record has a **Type** field (Task / Event), and the record panel shows only the fields that apply to that type. Pick a calendar that holds only events (as iCloud's do) or only tasks, and the table holds just those. (Tables made earlier as tasks-only or events-only keep working.)
 
@@ -228,7 +275,7 @@ cp .env.example .env    # then edit it
 docker compose up -d --build
 ```
 
-This starts four containers: `app` (web app and API), `worker` (DAV sync, webhook deliveries and cleanup, from a job queue in Postgres), `db` (Postgres) and `radicale` (the bundled CalDAV/CardDAV server). Database migrations run automatically on start.
+This starts five containers: `app` (web app and API), `worker` (calendar and file syncs, webhook deliveries, previews and cleanup, from a job queue in Postgres), `db` (Postgres), `radicale` (the bundled CalDAV/CardDAV server) and `office` (converts Word / PowerPoint files to PDF for previews; internal only). Database migrations run automatically on start.
 
 Open http://localhost:8080 and create an account. The first account becomes the admin, and any data created before multi-user support belongs to it. Each user only sees their own databases, combined databases and CalDAV accounts.
 
