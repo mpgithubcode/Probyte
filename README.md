@@ -517,3 +517,7 @@ Records are stored as JSONB keyed by field id. A combined database stores only i
 - Password guessing is slowed down: after 5 wrong passwords an account (or a password-protected public link) is locked for 15 minutes, and one address gets 20 tries in that time, across sign-in, the AI-assistant consent page and password changes. Radicale also delays failed phone logins.
 - Probyte login passwords are hashed; passwords it must reuse are encrypted (see Backups for the key).
 - Don't change `RADICALE_URL` (the internal address) after creating databases on the built-in account. Their calendar URLs are stored with it.
+
+## License
+
+Probyte is free software under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0): you can use, study, change and share it. If you run a modified version for others over a network, you must offer them its source code too.
