@@ -1397,3 +1397,40 @@ def test_import_contacts_from_a_vcard_file(browser, tmp_path):
     expect(rows(pg)).to_have_count(2)
     expect(pg.locator(".grid tbody")).to_contain_text("Grace Hopper")
     assert not pg.errors, pg.errors
+
+
+def test_linked_tables_behave_like_their_source(browser):
+    import base64
+    owner, viewer = Client(), Client()
+    files = owner.table("files", "Drive", storage={"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket",
+                        "username": "testkey", "secret": "testsecret12345"}, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    owner.post(f"{API}/tables/{files['id']}/files", files=[("files", ("dot.png", base64.b64decode(PNG_B64), "image/png"))])
+    agenda = owner.table("mixed", "Agenda")
+    A = owner.fields(agenda["id"])
+    owner.j("POST", f"/tables/{agenda['id']}/records", json={"data": {A["summary"]: "Site visit", A["component"]: "Event",
+            A["dtstart"]: "2026-11-02T09:00:00Z", A["dtend"]: "2026-11-02T10:00:00Z"}})
+
+    def linked(t, name):
+        view = owner.j("GET", f"/tables/{t['id']}")["views"][0]
+        s = owner.j("POST", "/shares", json={"name": name, "base_id": owner.base_id, "permissions": {"add": True, "edit": True},
+                                            "items": [{"kind": "table", "id": t["id"], "views": [view["id"]]}]})
+        return viewer.j("POST", "/tables", json={"name": name, "kind": "remote", "base_id": viewer.base_id,
+                                                 "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+    lf, la = linked(files, "Their drive"), linked(agenda, "Their agenda")
+    pg = new_page(browser)
+    sign_in(pg, viewer)
+    # a linked files table: "Upload" instead of "New", the full-screen viewer with the file's details
+    pg.goto(f"{BASE}/#/table/{lf['id']}")
+    expect(pg.locator(".new-record-btn")).to_contain_text("Upload")
+    expect(pg.locator(".sidebar .side-item", has_text="Their drive").locator(".side-linked")).to_have_count(1)
+    pg.locator(".grid tbody tr").first.locator("td.rownum").click()
+    expect(pg.locator(".viewer .viewer-image img")).to_be_visible()
+    expect(pg.locator(".viewer-info")).to_contain_text("Kind")
+    pg.keyboard.press("Escape")
+    # a linked tasks & events table: an event's panel leaves out the task-only fields, as in the source
+    pg.goto(f"{BASE}/#/table/{la['id']}")
+    pg.locator(".grid tbody tr").first.locator("td.rownum").click()
+    expect(pg.locator(".modal")).to_contain_text("Site visit")
+    expect(pg.locator(".modal .form-label", has_text="Location")).to_have_count(1)
+    expect(pg.locator(".modal .form-label", has_text="Started At")).to_have_count(0)
+    assert not pg.errors, pg.errors

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api";
-import { attachmentUrl, editableKind, fetchBytes, fileExt, imageUrl, isSvg, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
+import { attachmentUrl, editableKind, fetchBytes, fileExt, fileWriteUrl, imageUrl, isSvg, previewPdfUrl, textUrl, thumbUrl, viewKind } from "../files";
 import type { Attachment, Field, Rec } from "../types";
 import { formatBytes, isEditable } from "../util";
 import { CellValue, FieldInput } from "./Cells";
@@ -93,7 +93,7 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
     if (!item || draft === null) return;
     setBusy(true); setErr("");
     try {
-      const rec = await api.put<Rec>(`/files/${item.id}/text`, { text: draft });
+      const rec = await api.put<Rec>(fileWriteUrl(item, "text"), { text: draft });
       setDraft(null); setVersion((v) => v + 1);
       onSaved?.(rec);
     } catch (e) { setErr((e as Error).message); }
@@ -106,7 +106,7 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, onUpdate,
     body.append("file", list[0]);
     setBusy(true); setErr("");
     try {
-      const rec = await api.upload<Rec>(`/records/${item.id}/file`, body, "PUT");
+      const rec = await api.upload<Rec>(fileWriteUrl(item, "file"), body, "PUT");
       setVersion((v) => v + 1);
       onSaved?.(rec);
     } catch (e) { setErr((e as Error).message); }

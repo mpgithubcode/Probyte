@@ -666,12 +666,11 @@ def _check_size(f: UploadFile):
         raise HTTPException(413, f"{f.filename} is larger than {MAX_UPLOAD // (1024 * 1024)} MB")
 
 
-@router.post("/api/tables/{table_id}/files")
-def upload(table_id: str, files: list[UploadFile] = File(...), folder: str = Form(""), user=User):
-    """Add files (to a folder inside the table's folder). A name that's taken gets a number: report (2).pdf."""
+def upload_files(table_id: str, files: list[UploadFile], folder: str, user_id) -> list[dict]:
+    """Add files to a files table (the app, a public link that may add, or a linked table through its link)."""
     out = []
     with connection() as conn:
-        table = store.get_table(conn, table_id, user["id"])
+        table = store.get_table(conn, table_id)
         if table["kind"] != "files":
             raise HTTPException(400, "Files can only be uploaded to a files table")
         fields = store.get_fields(conn, table_id)
@@ -689,30 +688,53 @@ def upload(table_id: str, files: list[UploadFile] = File(...), folder: str = For
                                if f.content_type and f.content_type != "application/octet-stream" else guess_mime(rel))
             except StorageError as e:
                 _bad(e)
-            r = _insert(conn, table, fields, {**meta, "mime": f.content_type}, user["id"])
+            r = _insert(conn, table, fields, {**meta, "mime": f.content_type}, user_id)
             out.append(store.clean_record(conn.execute("SELECT * FROM records WHERE id = %s", (r["id"],)).fetchone()))
-    return {"records": out}
+    return out
 
 
-def _replace(record_id, user, body_file, mime: str | None):
+@router.post("/api/tables/{table_id}/files")
+def upload(table_id: str, files: list[UploadFile] = File(...), folder: str = Form(""), user=User):
+    """Add files (to a folder inside the table's folder). A name that's taken gets a number: report (2).pdf."""
     with connection() as conn:
-        table, rec, keys = _own_record(conn, record_id, user["id"])
+        store.get_table(conn, table_id, user["id"])
+    return {"records": upload_files(table_id, files, folder, user["id"])}
+
+
+def replace_contents(table, rec, keys, body_file, mime: str | None) -> dict:
+    """New contents for a file (its record, fields and links stay)."""
+    with connection() as conn:
         drv = _storage(conn, table)
     try:
         meta = drv.put(rec["caldav_href"], body_file, mime or guess_mime(rec["caldav_href"]))
     except StorageError as e:
         _bad(e)
     with connection() as conn:
-        rec = conn.execute("SELECT * FROM records WHERE id = %s FOR UPDATE", (record_id,)).fetchone()
-        _refresh(conn, rec, keys, {**meta, "mime": mime})
-        return store.clean_record(conn.execute("SELECT * FROM records WHERE id = %s", (record_id,)).fetchone())
+        cur = conn.execute("SELECT * FROM records WHERE id = %s FOR UPDATE", (rec["id"],)).fetchone()
+        _refresh(conn, cur, keys, {**meta, "mime": mime})
+        return store.clean_record(conn.execute("SELECT * FROM records WHERE id = %s", (rec["id"],)).fetchone())
+
+
+def save_text_contents(table, rec, keys, text: str) -> dict:
+    item = (rec["data"].get(keys["file"]) or [{}])[0]
+    if not is_text(item.get("mime") or "", item.get("name") or ""):  # text, code, Markdown, SVG
+        raise HTTPException(400, "Only text files can be edited here")
+    if len(text) > 5 * 1024 * 1024:
+        raise HTTPException(413, "That's too much text to save here")
+    return replace_contents(table, rec, keys, io.BytesIO(text.encode()), None)
+
+
+def upload_mime(f: UploadFile) -> str | None:
+    return f.content_type if f.content_type and f.content_type != "application/octet-stream" else None
 
 
 @router.put("/api/records/{record_id}/file")
 def replace_file(record_id: str, file: UploadFile = File(...), user=User):
     """New contents for a file; its name, folder, links and your own fields stay."""
     _check_size(file)
-    return _replace(record_id, user, file.file, file.content_type if file.content_type != "application/octet-stream" else None)
+    with connection() as conn:
+        table, rec, keys = _own_record(conn, record_id, user["id"])
+    return replace_contents(table, rec, keys, file.file, upload_mime(file))
 
 
 class TextIn(BaseModel):
@@ -723,13 +745,8 @@ class TextIn(BaseModel):
 def save_text(record_id: str, body: TextIn, user=User):
     """Save a text file edited in the preview."""
     with connection() as conn:
-        _, rec, keys = _own_record(conn, record_id, user["id"])
-    item = (rec["data"].get(keys["file"]) or [{}])[0]
-    if not is_text(item.get("mime") or "", item.get("name") or ""):  # text, code, Markdown, SVG
-        raise HTTPException(400, "Only text files can be edited here")
-    if len(body.text) > 5 * 1024 * 1024:
-        raise HTTPException(413, "That's too much text to save here")
-    return _replace(record_id, user, io.BytesIO(body.text.encode()), None)
+        table, rec, keys = _own_record(conn, record_id, user["id"])
+    return save_text_contents(table, rec, keys, body.text)
 
 
 # ---------------------------------------------------------------- storage connections

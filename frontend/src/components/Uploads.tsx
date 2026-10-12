@@ -46,7 +46,8 @@ export function fromDrop(dt: DataTransfer, into = ""): Promise<UploadItem[]> {
   return Promise.all(entries.map((e) => walk(e!, into))).then(() => out);
 }
 
-export function useUploads(tableId: string | undefined, onFinished: (done: number, failed: number) => void) {
+/** uploadUrl: where files go (a files table's, or a linked files table's through its link); undefined = off. */
+export function useUploads(uploadUrl: string | undefined, onFinished: (done: number, failed: number) => void) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const xhrs = useRef(new Map<number, XMLHttpRequest>());
   const [open, setOpen] = useState(true);
@@ -60,7 +61,7 @@ export function useUploads(tableId: string | undefined, onFinished: (done: numbe
 
   // start queued uploads while fewer than PARALLEL are running
   useEffect(() => {
-    if (!tableId) return;
+    if (!uploadUrl) return;
     const running = jobs.filter((j) => j.status === "uploading").length;
     const next = jobs.filter((j) => j.status === "queued").slice(0, Math.max(0, PARALLEL - running));
     if (!next.length) return;
@@ -68,7 +69,7 @@ export function useUploads(tableId: string | undefined, onFinished: (done: numbe
     for (const job of next) {
       const xhr = new XMLHttpRequest();
       xhrs.current.set(job.id, xhr);
-      xhr.open("POST", `/api/tables/${tableId}/files`);
+      xhr.open("POST", uploadUrl);
       xhr.upload.onprogress = (e) => set(job.id, { loaded: e.loaded });
       xhr.onload = () => {
         xhrs.current.delete(job.id);
@@ -87,7 +88,7 @@ export function useUploads(tableId: string | undefined, onFinished: (done: numbe
       xhr.send(body);
     }
     setJobs((js) => js.map((x) => (next.some((n) => n.id === x.id) ? { ...x, status: "uploading" } : x)));
-  }, [jobs, tableId]);
+  }, [jobs, uploadUrl]);
 
   // a batch finished: tell the page (reload) once
   const active = jobs.some((j) => j.status === "queued" || j.status === "uploading");

@@ -186,6 +186,8 @@ A **Files** table (New table → **Files**) shows the files in an **S3 bucket** 
 
 ## Linked tables (from any Probyte server)
 
+**A linked table behaves like the table it links to.** A linked files table opens files in the full-screen viewer with their details, uploads files (with **Upload** instead of New), and replaces and edits them; a linked contacts table imports and downloads vCards; a linked tasks & events table knows which field is a task's status or an event's start (the record panel, calendars and task rules work as in the source), and fields keep their formats (currency, dates…), descriptions and rules. Everything goes through the link, so it can only do what the link's owner allowed (view, add, edit, delete). In the sidebar, a small link mark shows which tables are linked.
+
 Any Probyte public link, whether it's from this server or another Probyte server, can be added to one of your bases as a **linked table**. Choose **+ New table → From a link**, paste the link, enter its password if it has one, and pick which shared table and view to show.
 
 - The data is **live**. It's fetched through the link (cached for a few seconds), so you always see the owner's current records, including their formula and lookup results.

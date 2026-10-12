@@ -1,4 +1,4 @@
-import type { Field, FieldOptions, FieldType, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig } from "./types";
+import type { Field, FieldOptions, FieldType, TableInfo, TableKind, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig } from "./types";
 
 export const PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#ec4899", "#64748b", "#84cc16", "#f97316"];
 
@@ -482,4 +482,10 @@ export function withDisplayNames(fields: Field[], config: ViewConfig): Field[] {
   const names = config.fieldNames;
   if (!names || !Object.keys(names).length) return fields;
   return fields.map((f) => (names[f.id]?.trim() ? { ...f, name: names[f.id].trim(), realName: f.name } : f));
+}
+
+/** What a table really is: a linked table is treated like its source (files, contacts, tasks & events…). */
+export function nativeKind(t?: TableInfo | null): TableKind | "combo" | undefined {
+  if (!t) return undefined;
+  return t.kind === "remote" ? t.remote?.source_kind || "remote" : t.kind;
 }

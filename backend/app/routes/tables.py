@@ -2,7 +2,7 @@
 import logging
 
 import requests
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from .. import remote, store, sync, values
@@ -137,6 +137,64 @@ def remote_file(table_id: str, record_id: str, part: str, request: Request, down
         if t["kind"] != "remote":
             store.not_found()
     return remote.file(None, t, record_id, part, download=download, text=text, rng=request.headers.get("range"))
+
+
+def _linked(conn, table_id, user):
+    t = store.get_table(conn, table_id, user["id"])
+    if t["kind"] != "remote":
+        store.not_found()
+    return t
+
+
+@router.post("/api/remote/{table_id}/files")
+def remote_upload(table_id: str, files: list[UploadFile] = File(...), folder: str = Form(""), user=User):
+    """Add files to a linked files table (its link must allow adding)."""
+    with connection() as conn:
+        t = _linked(conn, table_id, user)
+    return {"records": remote.upload(t, files, folder)}
+
+
+@router.put("/api/remote/{table_id}/files/{record_id}/file")
+def remote_replace(table_id: str, record_id: str, file: UploadFile = File(...), user=User):
+    with connection() as conn:
+        t = _linked(conn, table_id, user)
+    return remote.replace_file(t, _source_id(table_id, record_id), file)
+
+
+class _Text(BaseModel):
+    text: str
+
+
+@router.put("/api/remote/{table_id}/files/{record_id}/text")
+def remote_text(table_id: str, record_id: str, body: _Text, user=User):
+    with connection() as conn:
+        t = _linked(conn, table_id, user)
+    return remote.save_text(t, _source_id(table_id, record_id), body.text)
+
+
+def _source_id(table_id, record_id) -> str:
+    """A linked table's file items carry the source's record id already; its own record ids are mapped back."""
+    with connection() as conn:
+        t = store.get_table(conn, table_id)
+        rev = remote.load(conn, t)["reverse"]
+    return rev.get(str(record_id), str(record_id))
+
+
+@router.post("/api/remote/{table_id}/vcards")
+async def remote_vcards_import(table_id: str, files: list[UploadFile] = File(...), existing: str = Form("skip"), user=User):
+    from .. import contacts
+    with connection() as conn:
+        t = _linked(conn, table_id, user)
+    from starlette.concurrency import run_in_threadpool
+    texts = await contacts.read_files(files)
+    return await run_in_threadpool(remote.import_vcards, t, texts, existing)  # (it may call another server: off the event loop)
+
+
+@router.get("/api/remote/{table_id}/vcards")
+def remote_vcards_export(table_id: str, user=User):
+    with connection() as conn:
+        t = _linked(conn, table_id, user)
+    return remote.export_vcards(t)
 
 
 @router.get("/api/tables/{table_id}/titles")

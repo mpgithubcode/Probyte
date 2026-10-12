@@ -151,6 +151,7 @@ export type TableKind = "generic" | "tasks" | "events" | "mixed" | "contacts" | 
 /** Where a linked table's data comes from (a Probyte public link, on this or another server). */
 export interface RemoteInfo {
   url: string; origin: string; local: boolean; name: string | null;
+  source_kind?: TableKind | "combo" | null;  // what the shared table is (files, contacts, tasks & events…): it behaves like one
   permissions: { add?: boolean; edit?: boolean; delete?: boolean }; error: string | null; has_password: boolean;
 }
 

@@ -216,9 +216,15 @@ class Engine:
         if self.is_remote(table_id):
             perms = ((self.table(table_id)["remote"] or {}).get("permissions") or {})
             for f in self.fields(table_id):
-                o = {k: v for k, v in f["options"].items() if k not in ("_remote_id", "_readonly")}
+                fo = f["options"]
+                o = {k: v for k, v in fo.items() if not k.startswith("_")}
                 out.append({**f, "options": o, "computed": f["type"] in COMPUTED_TYPES,
-                            "readonly": bool(f["options"].get("_readonly")) or not perms.get("edit")})
+                            "readonly": bool(fo.get("_readonly")) or not perms.get("edit"),
+                            # the role it has in the source (a task's status, an event's start, a file's File…), so the
+                            # app treats the linked table like that kind of table; "remote" for the others (locked)
+                            "system_key": fo.get("_source_key") or f["system_key"],
+                            "description": fo.get("_description"), "required": bool(fo.get("_required")),
+                            "unique_values": bool(fo.get("_unique_values"))})
             return out
         files = (self.table(table_id) or {}).get("kind") == "files"
         for f in self.fields(table_id):

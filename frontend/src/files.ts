@@ -14,8 +14,14 @@ export const isImage = (a: Attachment) => /^image\/(png|jpe?g|gif|webp|avif|bmp)
 /** iPhone photos: shown through a JPEG the server makes (most browsers can't show HEIC). */
 export const isHeic = (a: Attachment) => !!a.file && (/^image\/hei[cf]$/.test(a.mime) || /\.hei[cf]$/i.test(a.name));
 
-/** Where a file of a files table is served: here, or (a linked table's) through this server from the link's source. */
+/** Where a file of a files table is served: here, or (a linked table's) through this server from the link's source.
+ * Saving an edit / replacing it goes to the same place (`…/text`, `…/file`): see fileWriteUrl. */
 const fileRoot = (a: Attachment) => a.url ?? `${fileBase}/${a.id}`;
+
+/** Where to save an edited text file / a new version (api paths, without /api). */
+export const fileWriteUrl = (a: Attachment, what: "text" | "file") => a.url
+  ? `${a.url.replace(/^\/api/, "")}/${what}`
+  : what === "text" ? `/files/${a.id}/text` : `/records/${a.id}/file`;
 
 export const attachmentUrl = (a: Attachment, download = false) => a.file
   ? `${fileRoot(a)}/content${download ? "?download=1" : ""}`
@@ -60,8 +66,7 @@ export function viewKind(a: Attachment): ViewKind {
 }
 
 /** Can be edited in the viewer (files of files tables only). */
-export const editableKind = (a: Attachment) => !!a.file && !a.url && (  // not files of a linked table (read-only here)
-  viewKind(a) === "markdown" || viewKind(a) === "text" || isSvg(a))
+export const editableKind = (a: Attachment) => !!a.file && (viewKind(a) === "markdown" || viewKind(a) === "text" || isSvg(a))
   && !["csv", "tsv"].includes(fileExt(a.name));
 
 /** Still used by thumbnails: something to open (else the click downloads). */

@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Base, User, Workspace } from "../types";
 import { PALETTE } from "../util";
 import { Icon, tableIcon } from "./Icon";
+import { nativeKind } from "../util";
 import { Popover } from "./Overlay";
 
 const COLLAPSED_KEY = "probyte.collapsedBases";
@@ -130,7 +131,8 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                   <div className="base-items">
                     {tables.map((t) => (
                       <button key={t.id} className={`side-item ${is("table", t.id) ? "active" : ""} ${t.hidden ? "is-hidden" : ""}`} onClick={() => onOpen("table", t.id)}>
-                        {t.icon ? <span className="emoji-icon">{t.icon}</span> : <Icon name={tableIcon(t.kind)} size={15} />}
+                        {t.icon ? <span className="emoji-icon">{t.icon}</span> : <Icon name={tableIcon(nativeKind(t) ?? t.kind)} size={15} />}
+                        {t.kind === "remote" && t.remote?.source_kind && <span className="side-linked" title="Linked from a public link"><Icon name="link" size={10} /></span>}
                         <span className="side-name">{t.name}</span>
                         {t.kind === "remote"
                           ? t.remote?.error && <span className="side-dot err" title={t.remote.error} />

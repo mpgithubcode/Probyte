@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Attachment, Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
-import { applyView, choiceColor, debounce, hiddenIds, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
+import { applyView, choiceColor, debounce, hiddenIds, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
 import { FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
 import { FullViewer, type ViewerEntry } from "./FileViewer";
 import { fromDrop, fromPicker, useUploads } from "./Uploads";
@@ -113,7 +113,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   // opened from search: show that record once the table is here, then drop it from the address
   useEffect(() => {
     if (!openRecord || !ds || !ds.records.some((r) => r.id === openRecord)) return;
-    if (ds.table?.kind === "files") setViewing(openRecord); else setOpenRec(openRecord);
+    if (nativeKind(ds.table) === "files") setViewing(openRecord); else setOpenRec(openRecord);
     history.replaceState(null, "", location.hash.replace(/\?record=[^&]*/, ""));
     window.dispatchEvent(new HashChangeEvent("hashchange"));  // the app forgets it too, so the same link works again
   }, [openRecord, ds?.records.length]);
@@ -219,7 +219,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     can,
     create(data = {}, openAfter = false) {
       if (!ds) return;
-      if (ds.table?.kind === "files") {  // adding to a files table = uploading files (into a group's folder, if any)
+      if (nativeKind(ds.table) === "files") {  // adding to a files table = uploading files (into a group's folder, if any)
         const folderF = ds.fields.find((f) => f.system_key === "folder");
         const into = folderF && typeof data[folderF.id] === "string" ? data[folderF.id] : uploadInto;
         setUploadInto(into);
@@ -294,10 +294,10 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       else if (r.patch && Object.keys(r.patch).length) ops.update(rec, r.patch);
     },
     open: (rec) => {
-      if (ds?.table?.kind === "files") { setViewing(rec.id); return; }
+      if (nativeKind(ds?.table) === "files") { setViewing(rec.id); return; }
       setOpenRec(rec.id); setOpenOcc(rec.occurrence ?? null);
     },
-    addLabel: ds?.table?.kind === "files" ? "Upload" : undefined,
+    addLabel: nativeKind(ds?.table) === "files" ? "Upload" : undefined,
     editField: (f) => setFieldEdit(f && (ds?.fields.find((x) => x.id === f.id) ?? f)),  // the field itself, not a view's name for it
     colorFor(rec, colorField = view?.config.colorField) {
       if (!ds) return undefined;
@@ -354,7 +354,8 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   };
 
   /** Files tables: uploads (files or whole folders), shown in a panel with progress. */
-  const uploads = useUploads(ds?.table?.kind === "files" ? ds.id : undefined, (done, failed) => {
+  // a linked files table uploads through its link (to its source)
+  const uploads = useUploads(nativeKind(ds?.table) === "files" ? `/api/${ds!.table!.kind === "remote" ? "remote" : "tables"}/${ds!.id}/files` : undefined, (done, failed) => {
     if (failed) onError(`${failed} upload${failed === 1 ? "" : "s"} failed; see the upload panel`);
     else if (done) showToast(`Uploaded ${done} file${done === 1 ? "" : "s"}`);
     reload();
@@ -451,16 +452,18 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const rec = openRec ? ds.records.find((r) => r.id === openRec) : undefined;
   const props = { ds, view, fields: vfields, visible, records, allRecords, ops, setConfig };
   const t = ds.table;
-  const isFiles = t?.kind === "files";
-  const isContacts = t?.kind === "contacts" && can.add;
+  const isFiles = nativeKind(t) === "files";
+  const isContacts = nativeKind(t) === "contacts" && can.add;
   // files tables: the view's files, for the viewer (it goes through them in the view's order)
   const fileF = isFiles ? ds.fields.find((f) => f.system_key === "file") : undefined;
   const fileEntries: ViewerEntry[] = fileF
     ? allRecords.flatMap((r) => { const it = (r.data[fileF.id] as Attachment[] | undefined)?.[0]; return it ? [{ item: it, rec: r }] : []; })
     : [];
   const openFile = (a: Attachment) => {
-    if (!a.file || !ds.records.some((r) => r.id === a.id)) return false;
-    setViewing(a.id);
+    // (a linked table's records have their own ids; its file items keep the source's)
+    const rec = a.file && fileF ? ds.records.find((r) => (r.data[fileF.id] as Attachment[] | undefined)?.[0]?.id === a.id) : undefined;
+    if (!rec) return false;
+    setViewing(rec.id);
     return true;
   };
   const isCaldav = t && ["tasks", "events", "mixed", "contacts", "files"].includes(t.kind);
@@ -490,7 +493,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
           <button className="title-icon-btn" title="Change icon" aria-label="Change icon" onClick={iconPop.open}>
             {(ds.kind === "combo" ? ds.icon : t?.icon)
               ? <span className="emoji-icon big">{ds.kind === "combo" ? ds.icon : t?.icon}</span>
-              : <Icon name={ds.kind === "combo" ? "layers" : tableIcon(t!.kind)} size={20} className="title-icon" />}
+              : <Icon name={ds.kind === "combo" ? "layers" : tableIcon(nativeKind(t) ?? "generic")} size={20} className="title-icon" />}
           </button>
           {iconPop.anchor && (
             <Popover anchor={iconPop.anchor} onClose={iconPop.close} width={300}>
@@ -589,7 +592,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
         <FullViewer entries={fileEntries} index={fileEntries.findIndex((e) => e.rec!.id === viewing)} fields={vfields}
           canEdit={ops.can.edit} onClose={() => setViewing(null)} onUpdate={ops.update} onReplace
           onMove={(e) => e.rec && setViewing(e.rec.id)}
-          onDelete={(r) => {
+          onDelete={!ops.can.delete ? undefined : (r) => {
             const k = fileEntries.findIndex((e) => e.rec!.id === r.id);
             const next = fileEntries[k + 1] ?? fileEntries[k - 1];
             setViewing(next ? next.rec!.id : null);
@@ -599,7 +602,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       )}
       {uploads.panel}
       {vcards && ds.kind === "table" && (
-        <ContactsImport tableId={ds.id} initialFiles={vcards} onClose={() => setVcards(null)} onDone={() => reload()} />
+        <ContactsImport url={`/${ds.table?.kind === "remote" ? "remote" : "tables"}/${ds.id}/vcards`} canUpdate={can.edit} initialFiles={vcards} onClose={() => setVcards(null)} onDone={() => reload()} />
       )}
       {settings && (
         <TableSettings ds={ds} bases={bases} currentBase={currentBase} hiddenInSidebar={hiddenInSidebar} syncing={syncing}
@@ -622,7 +625,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             // these open their own window instead
             importFile: ds.kind === "table" && can.add && !isFiles && !link ? () => { setSettings(null); setTransfer("import"); } : undefined,
             exportData: () => { setSettings(null); setTransfer("export"); },
-            importVcards: t?.kind === "contacts" && can.add ? () => { setSettings(null); setVcards([]); } : undefined,
+            importVcards: nativeKind(t) === "contacts" && can.add ? () => { setSettings(null); setVcards([]); } : undefined,
             combine: ds.kind === "table" ? () => { setSettings(null); setCombineNew(true); } : undefined,
             sources: ds.kind === "combo" ? () => { setSettings(null); setComboEdit(true); } : undefined,
             linkSettings: link ? () => { setSettings(null); setLinkEdit(true); } : undefined,

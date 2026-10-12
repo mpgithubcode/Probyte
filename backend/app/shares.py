@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -179,7 +179,10 @@ def _items(conn, s):
         if it.get("views") is not None:
             views = [v for v in views if str(v["id"]) in it["views"]]
         if views:
-            out.append({"kind": it["kind"], "id": str(table["id"]), "name": table["name"], "table_kind": table.get("kind", "combo"), "views": views})
+            kind = table.get("kind", "combo")
+            if kind == "remote":  # a linked table shared on again: what its source is
+                kind = (conn.execute("SELECT remote FROM tables WHERE id = %s", (table["id"],)).fetchone()["remote"] or {}).get("source_kind") or "remote"
+            out.append({"kind": it["kind"], "id": str(table["id"]), "name": table["name"], "table_kind": kind, "views": views})
     return out
 
 
@@ -230,7 +233,8 @@ def _view_payload(conn, s, item, view):
 
 # Only what's needed to display values; formulas, conditions and table/field ids stay private.
 _DISPLAY_OPTIONS = {"choices", "includeTime", "max", "precision", "resultType", "label", "color", "action", "url",
-                    "updates", "multiple", "relationship"}
+                    "updates", "multiple", "relationship", "numberFormat", "currency", "separators", "dateFormat", "timeFormat",
+                    "allowNew"}
 
 
 def _display_options(o: dict) -> dict:
@@ -404,6 +408,95 @@ def core_file(token: str, record_id: str, cookie: str | None):
         return table, rec, files._keys(store.get_fields(conn, table["id"]))
 
 
+def _table_item(conn, s, view_id, need: str | None, kind: str):
+    """The shared table behind a view, when the link allows `need` ("add" / "edit") and it's that kind of table."""
+    _ok_or_403 = s["permissions"].get(need) if need else True
+    if not _ok_or_403:
+        raise HTTPException(403, {"add": "Adding isn't allowed on this link", "edit": "Editing isn't allowed on this link"}[need])
+    item, view = _find_view(conn, s, view_id)
+    if item["kind"] != "table" or item["table_kind"] != kind:
+        raise HTTPException(400, "That isn't possible with this table")
+    return item, view
+
+
+def core_upload(token: str, view_id: str, files, folder: str, cookie: str | None) -> list[dict]:
+    from . import files as files_mod
+    with connection() as conn:
+        s = _load(conn, token)
+        _require(s, cookie)
+        audit.set_actor(f"Public link “{s['name']}”")
+        item, _ = _table_item(conn, s, view_id, "add", "files")
+        table = store.get_table(conn, item["id"])
+    if table["kind"] == "remote":  # shared on again: through its own link
+        from . import remote
+        return remote.upload(table, files, folder)
+    return files_mod.upload_files(item["id"], files, folder, s["user_id"])
+
+
+def _editable_file(token, view_id, record_id, cookie):
+    from . import files as files_mod
+    with connection() as conn:
+        s = _load(conn, token)
+        _require(s, cookie)
+        audit.set_actor(f"Public link “{s['name']}”")
+        item, view = _table_item(conn, s, view_id, "edit", "files")
+        _visible_record(_view_payload(conn, s, item, view), record_id)
+        table = store.get_table(conn, item["id"])
+        if table["kind"] == "remote":
+            return table, None, None
+        rec = conn.execute("SELECT * FROM records WHERE id = %s AND table_id = %s AND NOT deleted", (record_id, item["id"])).fetchone()
+        if not rec:
+            raise HTTPException(404, "File not found")
+        return table, rec, files_mod._keys(store.get_fields(conn, table["id"]))
+
+
+def core_replace(token, view_id, record_id, upload, cookie):
+    from . import files as files_mod, remote
+    table, rec, keys = _editable_file(token, view_id, record_id, cookie)
+    if rec is None:
+        return remote.replace_file(table, record_id, upload)
+    files_mod._check_size(upload)
+    return files_mod.replace_contents(table, rec, keys, upload.file, files_mod.upload_mime(upload))
+
+
+def core_text(token, view_id, record_id, text, cookie):
+    from . import files as files_mod, remote
+    table, rec, keys = _editable_file(token, view_id, record_id, cookie)
+    if rec is None:
+        return remote.save_text(table, record_id, text)
+    return files_mod.save_text_contents(table, rec, keys, text)
+
+
+def core_vcards_import(token, view_id, texts, existing, cookie):
+    from . import contacts
+    with connection() as conn:
+        s = _load(conn, token)
+        _require(s, cookie)
+        audit.set_actor(f"Public link “{s['name']}”")
+        item, _ = _table_item(conn, s, view_id, "add", "contacts")
+        if existing == "update" and not s["permissions"].get("edit"):
+            existing = "skip"  # updating needs the right to edit
+        table = store.get_table(conn, item["id"])
+    if table["kind"] == "remote":
+        from . import remote
+        return remote.import_vcards(table, texts, existing)
+    return contacts.import_texts(item["id"], texts, existing, s["user_id"])
+
+
+def core_vcards_export(token, view_id, cookie):
+    from . import contacts
+    with connection() as conn:
+        s = _load(conn, token)
+        _require(s, cookie)
+        item, view = _table_item(conn, s, view_id, None, "contacts")
+        shown = {r["id"] for r in _view_payload(conn, s, item, view)["records"]}
+        table = store.get_table(conn, item["id"])
+    if table["kind"] == "remote":
+        from . import remote
+        return remote.export_vcards(table)
+    return contacts.vcards_response(item["id"], only=shown)
+
+
 # ---------------------------------------------------------------- HTTP endpoints for visitors
 
 def _cookie(request: Request, token: str) -> str | None:
@@ -482,6 +575,38 @@ def share_file_thumb(token: str, record_id: str, request: Request):
     from . import files
     core_file(token, record_id, _cookie(request, token))
     return files.thumb_response(record_id)
+
+
+@router.post("/api/public/{token}/views/{view_id}/files")
+def share_upload(token: str, view_id: str, request: Request, files: list[UploadFile] = File(...), folder: str = Form("")):
+    return {"records": core_upload(token, view_id, files, folder, _cookie(request, token))}
+
+
+@router.put("/api/public/{token}/views/{view_id}/files/{record_id}/file")
+def share_replace(token: str, view_id: str, record_id: str, request: Request, file: UploadFile = File(...)):
+    return core_replace(token, view_id, record_id, file, _cookie(request, token))
+
+
+class PublicText(BaseModel):
+    text: str
+
+
+@router.put("/api/public/{token}/views/{view_id}/files/{record_id}/text")
+def share_text(token: str, view_id: str, record_id: str, body: PublicText, request: Request):
+    return core_text(token, view_id, record_id, body.text, _cookie(request, token))
+
+
+@router.post("/api/public/{token}/views/{view_id}/vcards")
+async def share_vcards_import(token: str, view_id: str, request: Request, files: list[UploadFile] = File(...), existing: str = Form("skip")):
+    from . import contacts
+    from starlette.concurrency import run_in_threadpool
+    texts = await contacts.read_files(files)
+    return await run_in_threadpool(core_vcards_import, token, view_id, texts, existing, _cookie(request, token))
+
+
+@router.get("/api/public/{token}/views/{view_id}/vcards")
+def share_vcards_export(token: str, view_id: str, request: Request):
+    return core_vcards_export(token, view_id, _cookie(request, token))
 
 
 # ======================================================================== PWA: manifest, icons, page

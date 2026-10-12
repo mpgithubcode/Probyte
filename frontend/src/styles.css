@@ -1339,3 +1339,4 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
   border: 2px dashed var(--border-strong); border-radius: 10px; cursor: pointer; color: var(--text-soft); text-align: center; }
 .drop-box:hover { border-color: var(--accent); color: var(--accent); }
 .import-result ul { margin: 6px 0 0; padding-left: 18px; }
+.side-linked { display: inline-flex; color: var(--text-soft); margin-left: -4px; }

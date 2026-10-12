@@ -72,19 +72,33 @@ def _key(vals: dict) -> list[str]:
     return keys
 
 
-@router.post("/api/tables/{table_id}/vcards")
-async def import_vcards(table_id: str, files: list[UploadFile] = File(...), existing: str = Form("skip"), user=User):
-    """Add the contacts in .vcf files. existing: what to do with a contact that's already here, "skip" or "update"."""
+async def read_files(files: list[UploadFile]) -> list[tuple[str, str]]:
     texts = []
     for f in files:
         data = await f.read(MAX_BYTES + 1)
         if len(data) > MAX_BYTES:
             raise HTTPException(413, f"{f.filename} is too large (25 MB at most)")
         texts.append((f.filename or "file", _decode(data)))
+    return texts
+
+
+@router.post("/api/tables/{table_id}/vcards")
+async def import_vcards(table_id: str, files: list[UploadFile] = File(...), existing: str = Form("skip"), user=User):
+    """Add the contacts in .vcf files. existing: what to do with a contact that's already here, "skip" or "update"."""
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"])
+    from starlette.concurrency import run_in_threadpool
+    texts = await read_files(files)
+    return await run_in_threadpool(import_texts, table_id, texts, existing, user["id"])
+
+
+def import_texts(table_id: str, texts: list[tuple[str, str]], existing: str, user_id) -> dict:
+    """The contacts of vCard files' texts into a contacts table (the app, a public link that may add, a linked table)."""
     created = updated = skipped = 0
     errors: list[str] = []
+    user = {"id": user_id}
     with connection() as conn:
-        table = store.get_table(conn, table_id, user["id"])
+        table = store.get_table(conn, table_id)
         if table["kind"] != "contacts":
             raise HTTPException(400, "vCard files can be imported into contacts tables")
         fields = store.get_fields(conn, table_id)
@@ -148,12 +162,21 @@ async def import_vcards(table_id: str, files: list[UploadFile] = File(...), exis
 def export_vcards(table_id: str, user=User):
     """All the table's contacts as one .vcf file (with everything each card had: photos, extra numbers…)."""
     with connection() as conn:
-        table = store.get_table(conn, table_id, user["id"])
+        store.get_table(conn, table_id, user["id"])
+    return vcards_response(table_id)
+
+
+def vcards_response(table_id: str, only: set[str] | None = None) -> Response:
+    """The contacts (all, or the record ids in `only`: what a public link's view shows) as one .vcf file."""
+    with connection() as conn:
+        table = store.get_table(conn, table_id)
         if table["kind"] != "contacts":
             raise HTTPException(400, "Only contacts tables can be downloaded as vCards")
         keys = {f["system_key"]: str(f["id"]) for f in store.get_fields(conn, table_id) if f.get("system_key")}
-        rows = conn.execute("SELECT caldav_uid, caldav_raw, data FROM records WHERE table_id = %s AND NOT deleted ORDER BY seq",
+        rows = conn.execute("SELECT id, caldav_uid, caldav_raw, data FROM records WHERE table_id = %s AND NOT deleted ORDER BY seq",
                             (table_id,)).fetchall()
+    if only is not None:
+        rows = [r for r in rows if str(r["id"]) in only]
     cards = []
     for r in rows:
         vals = {k: r["data"].get(fid) for k, fid in keys.items()}

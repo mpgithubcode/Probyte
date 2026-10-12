@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FileView, FullViewer } from "./FileViewer";
 import type { Attachment, CreateTarget, Dataset, Field, Rec } from "../types";
 import { addExdate, anchorOf, findOverride, occurrenceData, overrideKey, seriesDateFields, setOverride } from "../recur";
-import { fieldApplies, fitField, formatDate, isEditable, recordKind, recordTitle } from "../util";
+import { fieldApplies, fitField, formatDate, isEditable, nativeKind, recordKind, recordTitle } from "../util";
 import { CellValue, Chip, FieldInput } from "./Cells";
 import { CAN_ALL, type Can } from "./viewTypes";
 import { FieldIcon, Icon } from "./Icon";
@@ -19,7 +19,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
   const [confirm, setConfirm] = useState(false);
   const [editOcc, setEditOcc] = useState(false);
   const source = ds.sources?.find((s) => s.table_id === rec.table_id);
-  const tkind = ds.kind === "table" ? ds.table?.kind : source?.kind;
+  const tkind = ds.kind === "table" ? nativeKind(ds.table) : source?.kind;  // a linked table: what its source is
   const files = tkind === "files";
   const caldav = tkind !== "generic" && tkind !== "remote" && !files;
   // files tables: the file itself, shown at the top

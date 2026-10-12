@@ -205,6 +205,11 @@ def sync_fields(conn, table, payload) -> str:
         opts = dict(f.get("options") or {})
         opts["_remote_id"] = str(f["id"])
         opts["_readonly"] = bool(f.get("readonly"))
+        if f.get("system_key") and f["system_key"] not in ("remote", "record_id"):
+            opts["_source_key"] = f["system_key"]  # its built-in role there (a task's status, a file's File…): the app acts on it
+        for k in ("description", "required", "unique_values"):
+            if f.get(k):
+                opts["_" + k] = f[k]
         if f["type"] == "button" and opts.get("updates"):
             opts["updates"] = [{**u, "fieldId": lid(tid, u["fieldId"])} for u in opts["updates"]]
         desired.append([lid(tid, f["id"]), f["name"], f["type"], opts, bool(f.get("is_primary")), i])
@@ -266,11 +271,13 @@ def load(conn, table, force=False) -> dict:
         return hit[1]
     link = dict(table["remote"] or {})
     error, perms, name = None, link.get("permissions") or {}, link.get("name")
+    source_kind = link.get("source_kind")
     try:
         payload = fetch_view(conn, link, link["view_id"])
         sig = sync_fields(conn, table, payload)
         perms = payload.get("permissions", perms)
         name = payload.get("link_name", name)
+        source_kind = (payload.get("item") or {}).get("table_kind") or link.get("source_kind")
         entry = _convert(tid, payload)
     except HTTPException as e:
         error = "The link needs its password again (it may have changed)" if e.detail == "password_required" else str(e.detail)
@@ -279,8 +286,9 @@ def load(conn, table, force=False) -> dict:
         # Access revoked (link off, deleted, expired, password changed): show nothing. If the source is just
         # unreachable for a moment, keep showing the last copy.
         entry = empty if e.status_code in (401, 403, 404) or not hit else hit[1]
-    if (error, sig, perms, name) != (link.get("error"), link.get("fields_hash"), link.get("permissions"), link.get("name")):
-        link.update(error=error, fields_hash=sig, permissions=perms, name=name)
+    if (error, sig, perms, name, source_kind) != (link.get("error"), link.get("fields_hash"), link.get("permissions"), link.get("name"),
+                                                   link.get("source_kind")):
+        link.update(error=error, fields_hash=sig, permissions=perms, name=name, source_kind=source_kind)
         conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), tid))
         table["remote"] = link
     with _lock:
@@ -302,6 +310,7 @@ def public_info(table) -> dict | None:
     if not r:
         return None
     return {"url": r.get("url"), "origin": r.get("origin"), "local": r.get("local"), "name": r.get("name"),
+            "source_kind": r.get("source_kind"),
             "permissions": r.get("permissions") or {}, "error": r.get("error"), "has_password": bool(r.get("cookie"))}
 
 
@@ -319,7 +328,8 @@ def create_table(conn, store, user_id, base_id, name, url, password, item_id, vi
     if not item:
         raise HTTPException(400, "That link doesn't share any tables")
     view = next((v for v in item["views"] if v["id"] == view_id), None) or item["views"][0]
-    link.update(item_id=item["id"], view_id=view["id"], name=meta["name"], permissions=meta.get("permissions") or {})
+    link.update(item_id=item["id"], view_id=view["id"], name=meta["name"], permissions=meta.get("permissions") or {},
+                source_kind=item.get("table_kind") or item.get("kind"))  # what it is there: it behaves like one here
     t = conn.execute(
         "INSERT INTO tables (user_id, base_id, name, kind, remote) VALUES (%s,%s,%s,'remote',%s) RETURNING *",
         (user_id, base_id, (name or "").strip() or item["name"], Jsonb(link)),
@@ -462,6 +472,86 @@ def file(conn, table, record_id: str, part: str, *, download=False, text=False, 
                     break
                 yield block
     return StreamingResponse(chunks(), status_code=r.status, media_type=ctype, headers=h)
+
+
+# ---- what a files / contacts source table can do, through its link (within the link's permissions)
+
+def _send(table, method: str, path: str, **kw):
+    """A request to the link's own server (HTTP), for uploads and other writes; returns the JSON answer."""
+    import requests
+    link = table["remote"]
+    url = f"{link['origin']}{_base(link)}{path}"
+    _check_host(url)
+    headers = {"User-Agent": "Probyte-link/1"}
+    if link.get("cookie"):
+        headers["Cookie"] = link["cookie"]
+    try:
+        r = requests.request(method, url, headers=headers, timeout=(10, 600), allow_redirects=False, **kw)
+    except requests.RequestException as e:
+        raise HTTPException(502, f"Couldn't reach {urlparse(url).hostname}: {e.__class__.__name__}")
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail")
+        except ValueError:
+            detail = r.reason
+        raise HTTPException(r.status_code if r.status_code in (400, 401, 403, 404, 413) else 502, detail or "The source server refused")
+    invalidate(table["id"])
+    return r
+
+
+def _view(table) -> str:
+    return quote(str(table["remote"]["view_id"]), safe="")
+
+
+def _done(table, result):
+    invalidate(table["id"])
+    return result
+
+
+def upload(table, files, folder: str):
+    """Add files to the linked files table (the link must allow adding)."""
+    from . import shares
+    link = table["remote"]
+    if link.get("local"):
+        return _done(table, shares.core_upload(link["token"], link["view_id"], files, folder, _cookie_value(link)))
+    sent = [("files", (f.filename or "file", f.file, f.content_type or "application/octet-stream")) for f in files]
+    return _send(table, "POST", f"/views/{_view(table)}/files", files=sent, data={"folder": folder}).json()["records"]
+
+
+def replace_file(table, record_id: str, upload_file):
+    from . import shares
+    link = table["remote"]
+    if link.get("local"):
+        return _done(table, shares.core_replace(link["token"], link["view_id"], record_id, upload_file, _cookie_value(link)))
+    return _send(table, "PUT", f"/views/{_view(table)}/files/{quote(record_id, safe='')}/file",
+                 files={"file": (upload_file.filename or "file", upload_file.file, upload_file.content_type or "application/octet-stream")}).json()
+
+
+def save_text(table, record_id: str, text: str):
+    from . import shares
+    link = table["remote"]
+    if link.get("local"):
+        return _done(table, shares.core_text(link["token"], link["view_id"], record_id, text, _cookie_value(link)))
+    return _send(table, "PUT", f"/views/{_view(table)}/files/{quote(record_id, safe='')}/text", json={"text": text}).json()
+
+
+def import_vcards(table, texts: list[tuple[str, str]], existing: str):
+    from . import shares
+    link = table["remote"]
+    if link.get("local"):
+        return _done(table, shares.core_vcards_import(link["token"], link["view_id"], texts, existing, _cookie_value(link)))
+    sent = [("files", (name, text.encode(), "text/vcard")) for name, text in texts]
+    return _send(table, "POST", f"/views/{_view(table)}/vcards", files=sent, data={"existing": existing}).json()
+
+
+def export_vcards(table):
+    from . import shares
+    link = table["remote"]
+    if link.get("local"):
+        return shares.core_vcards_export(link["token"], link["view_id"], _cookie_value(link))
+    r = _send(table, "GET", f"/views/{_view(table)}/vcards")
+    return Response(r.content, media_type="text/vcard; charset=utf-8",
+                    headers={"Content-Disposition": r.headers.get("Content-Disposition", 'attachment; filename="contacts.vcf"')})
 
 
 def attachment(conn, table, attachment_id, download: bool):

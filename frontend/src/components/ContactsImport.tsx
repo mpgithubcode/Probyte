@@ -6,8 +6,10 @@ import { Modal } from "./Overlay";
 interface Result { created: number; updated: number; skipped: number; errors: string[]; error_count: number }
 
 /** Contacts tables: add contacts from vCard files (.vcf) exported from a phone, Google, Outlook or iCloud. */
-export function ContactsImport({ tableId, initialFiles, onClose, onDone }: {
-  tableId: string; initialFiles?: File[]; onClose: () => void; onDone: () => void;
+export function ContactsImport({ url, canUpdate = true, initialFiles, onClose, onDone }: {
+  url: string;            // the table's (or a linked table's) vCard import address
+  canUpdate?: boolean;    // a linked table whose link doesn't allow editing can only add
+  initialFiles?: File[]; onClose: () => void; onDone: () => void;
 }) {
   const [files, setFiles] = useState<File[]>(initialFiles ?? []);
   const [existing, setExisting] = useState<"skip" | "update">("skip");
@@ -22,7 +24,7 @@ export function ContactsImport({ tableId, initialFiles, onClose, onDone }: {
     const body = new FormData();
     files.forEach((f) => body.append("files", f));
     body.append("existing", existing);
-    try { setResult(await api.upload<Result>(`/tables/${tableId}/vcards`, body)); onDone(); }
+    try { setResult(await api.upload<Result>(url, body)); onDone(); }
     catch (e) { setErr((e as Error).message); }
     setBusy(false);
   };
@@ -49,7 +51,7 @@ export function ContactsImport({ tableId, initialFiles, onClose, onDone }: {
           </div>
           <div className="stack">A contact that's already here (same card, email, or name and phone)
             <label className="inline-check"><input type="radio" checked={existing === "skip"} onChange={() => setExisting("skip")} /> Skip it</label>
-            <label className="inline-check"><input type="radio" checked={existing === "update"} onChange={() => setExisting("update")} /> Update it with the file's details</label>
+            {canUpdate && <label className="inline-check"><input type="radio" checked={existing === "update"} onChange={() => setExisting("update")} /> Update it with the file's details</label>}
           </div>
         </>)}
         {result && (

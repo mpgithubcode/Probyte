@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Base, Dataset, Field, Storage } from "../types";
-import { FIELD_TYPES, timeAgo } from "../util";
+import { FIELD_TYPES, nativeKind, timeAgo } from "../util";
 import { EmojiPicker } from "./EmojiPicker";
 import { FieldIcon, Icon, tableIcon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
@@ -43,8 +43,9 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
 }) {
   const t = ds.table;
   const kind = ds.kind === "combo" ? "combo" : t?.kind ?? "generic";
+  const native = ds.kind === "combo" ? "combo" : nativeKind(t) ?? "generic";   // a linked table: what its source is
   const synced = ["tasks", "events", "mixed", "contacts"].includes(kind);
-  const files = kind === "files";
+  const files = native === "files";
   const remote = kind === "remote";
   const hasDates = ds.fields.some((f) => f.type === "date" || f.type === "created_time" || f.type === "last_modified_time");
   const sections: { id: Section; label: string }[] = [
@@ -125,9 +126,9 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
                 <div><b>Import contacts</b><span className="muted small">vCard files (.vcf) from a phone, Google, Outlook or iCloud. You can also drop them on the table.</span></div>
                 <button className="btn sm" onClick={actions.importVcards}><Icon name="contacts" size={14} /> Import .vcf…</button>
               </div>)}
-              {kind === "contacts" && (<div className="settings-item">
+              {native === "contacts" && (<div className="settings-item">
                 <div><b>Download as vCard</b><span className="muted small">Every contact in one .vcf file, for a phone, another app or a backup.</span></div>
-                <a className="btn sm" href={`/api/tables/${ds.id}/vcards`}><Icon name="download" size={14} /> Download .vcf</a>
+                <a className="btn sm" href={`/api/${remote ? "remote" : "tables"}/${ds.id}/vcards`}><Icon name="download" size={14} /> Download .vcf</a>
               </div>)}
               <div className="settings-item">
                 <div><b>Export</b><span className="muted small">The current view (or everything) as xlsx, csv, tsv, ods, xls or json.</span></div>
