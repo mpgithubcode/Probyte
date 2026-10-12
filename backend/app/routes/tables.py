@@ -2,7 +2,7 @@
 import logging
 
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import remote, store, sync, values
@@ -127,6 +127,16 @@ def remote_attachment(table_id: str, attachment_id: str, download: bool = False,
         if t["kind"] != "remote":
             store.not_found()
         return remote.attachment(conn, t, attachment_id, download)
+
+
+@router.get("/api/remote/{table_id}/files/{record_id}/{part}")
+def remote_file(table_id: str, record_id: str, part: str, request: Request, download: bool = False, text: bool = False, user=User):
+    """A file of a linked files table (contents, cover image or document preview), fetched through its public link."""
+    with connection() as conn:
+        t = store.get_table(conn, table_id, user["id"])
+        if t["kind"] != "remote":
+            store.not_found()
+    return remote.file(None, t, record_id, part, download=download, text=text, rng=request.headers.get("range"))
 
 
 @router.get("/api/tables/{table_id}/titles")

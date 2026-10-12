@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 
 from fastapi import HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from .db import Jsonb
 
@@ -234,7 +234,10 @@ def _convert(tid, payload) -> dict:
             if k not in fmap:
                 continue
             if k in files and isinstance(v, list):
-                v = [{**a, "url": f"/api/remote/{tid}/attachments/{a['id']}"} for a in v if isinstance(a, dict) and a.get("id")]
+                # through this server: an attachment's own URL; a file of a files table, the base of its URLs
+                # (…/content, …/thumb, …/preview), see file() below
+                v = [{**a, "url": f"/api/remote/{tid}/files/{a['id']}" if a.get("file") else f"/api/remote/{tid}/attachments/{a['id']}"}
+                     for a in v if isinstance(a, dict) and a.get("id")]
             data[fmap[k]] = v
         created = _parse_dt(r.get("created_at"))
         records.append({"id": rid, "table_id": tid, "data": data, "sync_status": "synced", "created_at": created,
@@ -398,6 +401,67 @@ def delete(conn, table, record_id):
     _perm(table, "delete")
     _write(table["remote"], "DELETE", f"records/{_remote_record_id(conn, table, record_id)}")
     invalidate(table["id"])
+
+
+FILE_PARTS = {"content", "thumb", "preview"}
+# what may be shown inline when it comes from another server (anything else downloads)
+_INLINE = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/svg+xml", "application/pdf",
+           "text/plain"}
+
+
+def file(conn, table, record_id: str, part: str, *, download=False, text=False, rng: str | None = None):
+    """A file of a files table shared by the link: its contents (with byte ranges), cover image or document preview,
+    from the source (this server's own share, or the other server's public link), with this server's safety rules."""
+    from . import files, shares
+    if part not in FILE_PARTS:
+        raise HTTPException(404, "Not found")
+    link = table["remote"]
+    if link.get("local"):
+        t, rec, keys = shares.core_file(link["token"], record_id, _cookie_value(link))
+        if part == "thumb":
+            return files.thumb_response(record_id)
+        if part == "preview":
+            return files.preview_response(t, rec, keys)
+        return files.stream(t, rec, keys, download=download, as_text=text, rng=rng)
+    params = "&".join(k for k, on in (("download=1", download), ("text=1", text)) if on)
+    url = f"{link['origin']}{_base(link)}/files/{quote(record_id, safe='')}/{part}" + (f"?{params}" if params else "")
+    _check_host(url)
+    headers = {"User-Agent": "Probyte-link/1"}
+    if link.get("cookie"):
+        headers["Cookie"] = link["cookie"]
+    if rng and part == "content":
+        headers["Range"] = rng
+    try:
+        r = urllib.request.build_opener(_NoRedirect).open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT)
+    except urllib.error.HTTPError as e:
+        if e.code == 416:
+            return Response(status_code=416)
+        raise HTTPException(404 if e.code in (403, 404) else 502, "File not found" if e.code in (403, 404) else "The source server couldn't send the file")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise HTTPException(502, f"Couldn't reach {urlparse(url).hostname}: {getattr(e, 'reason', e)}")
+    ctype = r.headers.get("Content-Type", "application/octet-stream")
+    base = ctype.split(";")[0].strip().lower()
+    inline = (base in _INLINE or base.startswith(("video/", "audio/"))) and not download
+    h = {k: r.headers[k] for k in ("Content-Length", "Content-Range") if r.headers.get(k)}
+    h.update({"Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"})
+    disp = r.headers.get("Content-Disposition") or "attachment"
+    if inline:
+        h["Content-Disposition"] = disp.replace("attachment", "inline")
+        if base == "image/svg+xml":
+            h["Content-Security-Policy"] = files.SVG_CSP
+        elif base != "application/pdf":
+            h["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; media-src 'self'; sandbox"
+    else:
+        ctype, h["Content-Disposition"] = "application/octet-stream", disp.replace("inline", "attachment")
+
+    def chunks():
+        with r:
+            while True:
+                block = r.read(256 * 1024)
+                if not block:
+                    break
+                yield block
+    return StreamingResponse(chunks(), status_code=r.status, media_type=ctype, headers=h)
 
 
 def attachment(conn, table, attachment_id, download: bool):

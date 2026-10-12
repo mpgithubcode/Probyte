@@ -251,3 +251,49 @@ def test_svg_is_shown_as_a_picture_safely(user):
     a = user.post(API + "/attachments", files={"file": ("icon.svg", SVG, "image/svg+xml")}).json()
     r = user.get(API + f"/attachments/{a['id']}")
     assert r.headers["content-type"].startswith("image/svg+xml") and "sandbox" in r.headers["content-security-policy"]
+
+
+def test_files_through_a_linked_table(user, other_user):
+    """A files table shared by a public link and added on another account / server as a linked table: its files open."""
+    import os
+    import psycopg
+    t = user.table("files", "Shared files", storage=S3, storage_prefix=f"p{uuid.uuid4().hex[:8]}")
+    pic, note = upload(user, t, ("pic.png", PNG, "image/png"), ("note.txt", b"0123456789 shared words", "text/plain"))
+    wait(lambda: user.get(API + f"/files/{pic['id']}/thumb").status_code == 200)
+    view = user.j("GET", f"/tables/{t['id']}")["views"][0]
+    s = user.j("POST", "/shares", json={"name": "Files", "base_id": user.base_id, "items": [{"kind": "table", "id": t["id"], "views": [view["id"]]}]})
+    link = f"http://app:8000/s/{s['token']}"
+    lt = other_user.j("POST", "/tables", json={"name": "Their files", "kind": "remote", "base_id": other_user.base_id,
+                                               "remote": {"url": link, "view_id": view["id"]}})
+
+    def items():
+        info = other_user.j("GET", f"/tables/{lt['id']}")
+        fid = next(f["id"] for f in info["fields"] if f["type"] == "attachment")
+        return {r["data"][fid][0]["name"]: r["data"][fid][0] for r in info["records"] if r["data"].get(fid)}
+
+    def check():
+        got = items()
+        a, b = got["pic.png"], got["note.txt"]
+        assert a["file"] and a["url"].startswith(f"/api/remote/{lt['id']}/files/")
+        root = "http://app:8000" + a["url"]
+        r = other_user.get(root + "/content")
+        assert r.status_code == 200 and r.content == PNG and r.headers["content-type"] == "image/png"
+        assert other_user.get(root + "/thumb").headers["content-type"] == "image/webp"
+        r = other_user.get("http://app:8000" + b["url"] + "/content", headers={"Range": "bytes=11-16"})
+        assert r.status_code == 206 and r.content == b"shared"
+        assert other_user.get("http://app:8000" + b["url"] + "/content", params={"text": 1}).text.startswith("0123")
+        assert other_user.get("http://app:8000" + b["url"] + "/content", params={"download": 1}).headers["content-type"] == "application/octet-stream"
+        # only the linked table's owner, and only files the link shows
+        assert user.get(root + "/content").status_code == 404
+        assert other_user.get(f"http://app:8000/api/remote/{lt['id']}/files/{uuid.uuid4()}/content").status_code == 404
+
+    check()  # same server: straight from the share
+    # as if the link were on another server: through its public address
+    db = os.environ.get("BENCH_DB", "postgresql://probyte:probyte-test@db:5432/probyte")
+    try:
+        conn = psycopg.connect(db)
+    except Exception:
+        return
+    with conn:
+        conn.execute("UPDATE tables SET remote = remote || '{\"local\": false}' WHERE id = %s", (lt["id"],))
+    check()

@@ -1295,3 +1295,39 @@ def test_svg_files_show_as_pictures(browser):
     expect(img).to_be_visible()
     assert "#22c55e" in u.get(API + f"/files/{rec['id']}/content").text
     assert not pg.errors, pg.errors
+
+
+def test_files_open_on_a_public_link_and_in_a_linked_table(browser):
+    import base64
+    owner, viewer = Client(), Client()
+    t = owner.table("files", "Shared drive", storage={"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket",
+                    "username": "testkey", "secret": "testsecret12345"}, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    owner.post(f"{API}/tables/{t['id']}/files", files=[("files", ("dot.png", base64.b64decode(PNG_B64), "image/png"))])
+    eventually(lambda: any((r["data"].get(owner.fields(t["id"])["file"]) or [{}])[0].get("thumb") for r in owner.records(t["id"])) or None, timeout=15)
+    view = owner.j("GET", f"/tables/{t['id']}")["views"][0]
+    s = owner.j("POST", "/shares", json={"name": "Drive", "base_id": owner.base_id, "items": [{"kind": "table", "id": t["id"], "views": [view["id"]]}]})
+    # 1. anyone with the link, in a browser
+    pg = new_page(browser)
+    pg.goto(f"{BASE}/s/{s['token']}")
+    thumb = pg.locator(".thumb img").first
+    expect(thumb).to_be_visible()
+    eventually(lambda: thumb.evaluate("i => i.complete && i.naturalWidth > 0") or None)
+    thumb.click()
+    img = pg.locator(".viewer .viewer-image img")
+    expect(img).to_be_visible()
+    eventually(lambda: img.evaluate("i => i.naturalWidth") == 2 or None)
+    assert not pg.errors, pg.errors
+    # 2. someone who adds the link as a linked table
+    lt = viewer.j("POST", "/tables", json={"name": "Their drive", "kind": "remote", "base_id": viewer.base_id,
+                                           "remote": {"url": f"http://app:8000/s/{s['token']}", "view_id": view["id"]}})
+    pg2 = new_page(browser)
+    sign_in(pg2, viewer)
+    pg2.goto(f"{BASE}/#/table/{lt['id']}")
+    thumb = pg2.locator(".grid tbody .thumb img").first
+    expect(thumb).to_be_visible()
+    eventually(lambda: thumb.evaluate("i => i.complete && i.naturalWidth > 0") or None)
+    thumb.click()
+    img = pg2.locator(".viewer .viewer-image img")
+    expect(img).to_be_visible()
+    eventually(lambda: img.evaluate("i => i.naturalWidth") == 2 or None)
+    assert not pg2.errors, pg2.errors

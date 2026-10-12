@@ -14,18 +14,21 @@ export const isImage = (a: Attachment) => /^image\/(png|jpe?g|gif|webp|avif|bmp)
 /** iPhone photos: shown through a JPEG the server makes (most browsers can't show HEIC). */
 export const isHeic = (a: Attachment) => !!a.file && (/^image\/hei[cf]$/.test(a.mime) || /\.hei[cf]$/i.test(a.name));
 
+/** Where a file of a files table is served: here, or (a linked table's) through this server from the link's source. */
+const fileRoot = (a: Attachment) => a.url ?? `${fileBase}/${a.id}`;
+
 export const attachmentUrl = (a: Attachment, download = false) => a.file
-  ? `${fileBase}/${a.id}/content${download ? "?download=1" : ""}`
+  ? `${fileRoot(a)}/content${download ? "?download=1" : ""}`
   : `${a.url ?? `${attachmentBase}/${a.id}`}${download ? "?download=1" : ""}`;  // linked tables carry their own proxy URL
 
 /** The small preview image, if there is one (a file's size in the URL: a new version gets a new preview). */
 export const thumbUrl = (a: Attachment) => isSvg(a) ? attachmentUrl(a)   // an SVG is its own preview, sharp at any size
-  : a.file ? (a.thumb ? `${fileBase}/${a.id}/thumb?s=${a.size}` : null)
+  : a.file ? (a.thumb ? `${fileRoot(a)}/thumb?s=${a.size}` : null)
   : isImage(a) ? attachmentUrl(a) : null;
 
-export const textUrl = (a: Attachment) => (a.file ? `${fileBase}/${a.id}/content?text=1` : attachmentUrl(a, true));
+export const textUrl = (a: Attachment) => (a.file ? `${fileRoot(a)}/content?text=1` : attachmentUrl(a, true));
 /** Word / PowerPoint / OpenDocument files as PDF (made by the server's document converter). */
-export const previewPdfUrl = (a: Attachment) => `${fileBase}/${a.id}/preview?s=${a.size}`;
+export const previewPdfUrl = (a: Attachment) => `${fileRoot(a)}/preview?s=${a.size}`;
 /** The picture the viewer shows: the file itself, or the JPEG made of an iPhone photo. */
 export const imageUrl = (a: Attachment) => (isHeic(a) ? previewPdfUrl(a) : attachmentUrl(a));
 
@@ -57,7 +60,8 @@ export function viewKind(a: Attachment): ViewKind {
 }
 
 /** Can be edited in the viewer (files of files tables only). */
-export const editableKind = (a: Attachment) => !!a.file && (viewKind(a) === "markdown" || viewKind(a) === "text" || isSvg(a))
+export const editableKind = (a: Attachment) => !!a.file && !a.url && (  // not files of a linked table (read-only here)
+  viewKind(a) === "markdown" || viewKind(a) === "text" || isSvg(a))
   && !["csv", "tsv"].includes(fileExt(a.name));
 
 /** Still used by thumbnails: something to open (else the click downloads). */
