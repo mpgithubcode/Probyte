@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Checks the Docker Hub setup (deploy/docker-compose.yml) end to end with locally built images, on a throwaway stack:
-# zero-config start, sign-up, the built-in calendar server inside the container (through Probyte's own address, as a
-# phone does), a backup, the document converter, and a restart (the generated database password must stay valid).
+# zero-config start, sign-up, Probyte's own calendar server (through its own address, as a phone does), a backup, the document converter, and a restart (the generated database password must stay valid).
 #   scripts/test-deploy.sh            builds mpgithubcode/probyte:local etc. first
 #   SKIP_BUILD=1 scripts/test-deploy.sh
 set -euo pipefail

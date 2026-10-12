@@ -30,14 +30,12 @@ for f in s.get(B + f"/api/tables/{t['id']}").json()["fields"]:
     F[f.get("system_key") or f["name"]] = f["id"]
 s.post(B + f"/api/tables/{t['id']}/records", json={"data": {F["summary"]: "Dentist", F["component"]: "Event",
        F["dtstart"]: "2026-11-02T09:00:00Z", F["dtend"]: "2026-11-02T10:00:00Z"}}).raise_for_status()
-st = s.post(B + f"/api/tables/{t['id']}/sync").json()
-assert not st["errors"], st   # (the worker may have sent it already)
 
-# what a phone does: discovery and the calendar's items, through Probyte, with the device login
+# what a phone does: discovery and the calendar's items, from Probyte's own CalDAV server, with the device login
 auth = (dav["username"], dav["password"])
 r = requests.request("PROPFIND", B + "/.well-known/caldav", auth=auth, headers={"Depth": "0"})
 assert r.status_code in (207, 301, 302, 308), r.status_code
-path = "/" + t["calendar_url"].split("://", 1)[1].split("/", 1)[1]
+path = s.get(B + f"/api/tables/{t['id']}").json()["dav"]["path"]
 items = requests.request("PROPFIND", B + path, auth=auth, headers={"Depth": "1"})
 assert items.status_code == 207 and b".ics" in items.content, (items.status_code, items.text[:200])
 assert requests.request("PROPFIND", B + path, auth=(dav["username"], "wrong"), headers={"Depth": "1"}).status_code == 401

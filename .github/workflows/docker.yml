@@ -1,4 +1,4 @@
-# Builds the Probyte images (the app, which includes the calendar server, and the document converter) and pushes them to Docker Hub when a release is tagged (git tag v0.2.0 && git push --tags),
+# Builds the Probyte images (the app, which is also the calendar server, and the document converter) and pushes them to Docker Hub when a release is tagged (git tag v0.2.0 && git push --tags),
 # or by hand from the Actions tab. Needs two repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN
 # (a Docker Hub access token with read & write access: hub.docker.com → Account settings → Personal access tokens).
 name: Docker images

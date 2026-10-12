@@ -231,6 +231,10 @@ def write_item(conn, user, t, name, text, if_match=None, if_none_match=None) -> 
     et = make_etag(text)
     if existing:
         data = mapper.to_data(vals, existing["data"])
+        if data == existing["data"]:  # the same values written again (a new DTSTAMP, an alarm acknowledged…): no history, no webhook
+            conn.execute("UPDATE records SET caldav_uid = %s, caldav_raw = %s, caldav_etag = %s, sync_status = 'synced' WHERE id = %s",
+                         (uid, text, et, existing["id"]))
+            return 204, et
         conn.execute("UPDATE records SET data = %s, caldav_uid = %s, caldav_raw = %s, caldav_etag = %s, sync_status = 'synced', "
                      "updated_at = now(), updated_by = %s WHERE id = %s",
                      (Jsonb(data), uid, text, et, user["id"], existing["id"]))

@@ -22,11 +22,6 @@ services:
       DEFAULT_TZ: ${DEFAULT_TZ:-UTC}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-300}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
-      # Bundled CalDAV server: Probyte creates a login on it for every user.
-      RADICALE_URL: http://radicale:5232/
-      RADICALE_HTPASSWD: /radicale-users/users
-      # The address users enter on their phones (your reverse-proxied Radicale URL).
-      RADICALE_PUBLIC_URL: ${RADICALE_PUBLIC_URL:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       # Linked tables: allow links to Probyte servers on private/LAN addresses (off = safer on open sign-up servers)
       REMOTE_ALLOW_PRIVATE: ${REMOTE_ALLOW_PRIVATE:-false}
@@ -46,7 +41,6 @@ services:
       # Document converter for previews of Word / PowerPoint / OpenDocument files in files tables (empty = off)
       OFFICE_CONVERTER_URL: ${OFFICE_CONVERTER_URL-http://office:3000}
     volumes:
-      - radicale-users:/radicale-users
       - attachments:/data/attachments
       - backups:/backups:ro                 # listed and downloadable in Settings → Backups
       - keys:/keys                          # the key that encrypts stored passwords (not in backups: keep a copy)
@@ -56,16 +50,16 @@ services:
       db:
         condition: service_healthy
 
-  # Background jobs: calendar/contacts sync, webhook deliveries (with retries), cleanup. Same image as app.
+  # Background jobs: syncs with other calendar/files servers, webhook deliveries (with retries), previews, backups,
+  # cleanup. Same image as app.
   worker:
     build: .
     restart: unless-stopped
     command: ["python", "-m", "app.worker"]
     environment: *probyte-env
     volumes:
-      - radicale-users:/radicale-users
       - attachments:/data/attachments
-      - radicale-data:/radicale-data        # backed up (and put back by a restore)
+      - radicale-data:/radicale-data:ro     # calendars from before 0.9 (the bundled Radicale): brought in once, then unused
       - backups:/backups                    # one folder per backup; use a bind mount to keep them on another disk
       - keys:/keys
     depends_on:
@@ -79,21 +73,9 @@ services:
     restart: unless-stopped
     mem_limit: 1g
 
-  # CalDAV server for phones/desktop clients. Point your reverse proxy at port 5232
-  # (preferably on its own subdomain, e.g. https://dav.example.com).
-  radicale:
-    build: ./radicale
-    restart: unless-stopped
-    volumes:
-      - radicale-data:/data
-      - radicale-users:/radicale-users:ro
-    ports:
-      - "${RADICALE_PORT:-5232}:5232"
-
 volumes:
   attachments:
   backups:
   keys:
   pgdata:
   radicale-data:
-  radicale-users:

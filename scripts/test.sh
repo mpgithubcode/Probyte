@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the test suite against a throwaway copy of the stack (own database and Radicale; never your real data).
+# Run the test suite against a throwaway copy of the stack (its own database; never your real data).
 #   scripts/test.sh            all tests
 #   scripts/test.sh api        backend tests only
 #   scripts/test.sh -k sync    any pytest arguments
@@ -10,8 +10,8 @@
 #     (a container on the probyte-test_default network with that alias; see tests/office)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export COMPOSE_FILE=docker-compose.yml:tests/docker-compose.storage.yml COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080} RADICALE_PORT=${TEST_RADICALE_PORT:-15232}
-export POSTGRES_PASSWORD=probyte-test WEBHOOK_ALLOW_PRIVATE=true REMOTE_ALLOW_PRIVATE=true ALLOW_SIGNUP=true PUBLIC_URL= RADICALE_PUBLIC_URL= MCP_BEARER_TOKEN=
+export COMPOSE_FILE=docker-compose.yml:tests/docker-compose.storage.yml COMPOSE_PROJECT_NAME=probyte-test PROBYTE_PORT=${TEST_PROBYTE_PORT:-18080}
+export POSTGRES_PASSWORD=probyte-test WEBHOOK_ALLOW_PRIVATE=true REMOTE_ALLOW_PRIVATE=true ALLOW_SIGNUP=true PUBLIC_URL= MCP_BEARER_TOKEN=
 PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
 cleanup() { docker cp probyte-test-runner:/work/tests/.artifacts tests/ >/dev/null 2>&1 || true  # screenshots of failed UI tests
@@ -33,7 +33,7 @@ case "${1:-}" in tests/*) target="" ;; esac  # a file or test id given: run just
 args=""; [ $# -gt 0 ] && args=$(printf "%q " "$@")  # keep quoted pytest arguments (-k "a or b") intact
 docker rm -f probyte-test-runner >/dev/null 2>&1 || true
 docker create --name probyte-test-runner --network probyte-test_default -w /work \
-  -e PROBYTE_URL=http://app:8000 -e RADICALE_URL=http://radicale:5232 -e PROBYTE_ADMIN=testadmin:test-admin-pass-1 \
+  -e PROBYTE_URL=http://app:8000 -e PROBYTE_ADMIN=testadmin:test-admin-pass-1 \
   -e ONLYOFFICE_TEST_URL="${ONLYOFFICE_TEST_URL:-}" -e ONLYOFFICE_TEST_SECRET="${ONLYOFFICE_TEST_SECRET:-}" "$PLAYWRIGHT_IMAGE" \
   bash -c "pip install -q pytest requests playwright==1.48.0 'psycopg[binary]' pymupdf==1.24.10 2>/dev/null && $cmd $target $args" >/dev/null
 docker cp tests probyte-test-runner:/work/tests >/dev/null

@@ -19,12 +19,12 @@ services:
       - path: .env
         required: false
     environment:
-      PROBYTE_ALL_IN_ONE: "true"                    # web app, worker and calendar server in one container
+      PROBYTE_ALL_IN_ONE: "true"                    # web app (with the calendar server) and worker in one container
       POSTGRES_PASSWORD_FILE: /run/probyte/db-password
       DEFAULT_TZ: ${DEFAULT_TZ:-${TZ:-UTC}}
       OFFICE_CONVERTER_URL: ${OFFICE_CONVERTER_URL-http://office:3000}
     volumes:
-      - probyte-data:/data                          # attachments, calendars & contacts, backups, encryption key
+      - probyte-data:/data                          # attachments, backups, encryption key (calendars and contacts are in the database)
       - secrets:/run/probyte:ro
     depends_on:
       db:
