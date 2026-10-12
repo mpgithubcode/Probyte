@@ -19,7 +19,7 @@ CONTACT_FIELDS = [
     ("org", "Company", "text", {}, False),
     ("title", "Job Title", "text", {}, False),
     ("email", "Email", "email", {}, False),
-    ("phone", "Phone", "text", {}, False),
+    ("phone", "Phone", "phone", {}, False),
     ("address", "Address", "long_text", {}, False),
     ("birthday", "Birthday", "date", {}, False),
     ("url", "Website", "url", {}, False),

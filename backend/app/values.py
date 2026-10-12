@@ -11,7 +11,7 @@ import re
 
 from fastapi import HTTPException
 
-from . import formula as F
+from . import fieldformats, formula as F
 from . import recur, store
 from .compute import COMPUTED_TYPES, Engine
 from .db import Jsonb
@@ -48,7 +48,7 @@ class Lookups:
         return {}
 
 
-TEXT_TYPES = {"text", "long_text", "url", "email"}
+TEXT_TYPES = {"text", "long_text", "url", "email", "phone"}
 
 
 def snapshot(conn, field) -> dict:
@@ -86,6 +86,11 @@ def convert(raw, items, vt, old_type, new_type, opts, lookup):
     if new_type == "recurrence":
         try:
             return recur.normalize(raw if isinstance(raw, str) else text)
+        except ValueError:
+            return None
+    if new_type in fieldformats.FORMAT_TYPES:  # email / url / phone: only values that fit (the rest are left empty)
+        try:
+            return fieldformats.clean(new_type, raw if isinstance(raw, str) and old_type in TEXT_TYPES else text)
         except ValueError:
             return None
     if new_type in TEXT_TYPES:
@@ -159,6 +164,8 @@ def from_cell(field, cell, lookups: "Lookups"):
             return recur.normalize(text)
         except ValueError:
             return None
+    if t in fieldformats.FORMAT_TYPES:
+        return text  # checked when the record is saved: a value that doesn't fit makes that row an error, with the reason
     raw = cell if t in ("number", "rating", "checkbox") and not isinstance(cell, str) else text
     vt = "date" if t == "date" and re.match(r"^\d{4}-\d{2}-\d{2}", text) else "text"
     return convert(raw, [text], vt, "text", t, field["options"], lookup)

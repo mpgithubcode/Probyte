@@ -1434,3 +1434,34 @@ def test_linked_tables_behave_like_their_source(browser):
     expect(pg.locator(".modal .form-label", has_text="Location")).to_have_count(1)
     expect(pg.locator(".modal .form-label", has_text="Started At")).to_have_count(0)
     assert not pg.errors, pg.errors
+
+
+def test_email_url_and_phone_fields(browser):
+    u = Client()
+    t = u.table(name="Contacts list")
+    F = u.fields(t["id"])
+    em = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Email", "type": "email"})
+    ph = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Phone", "type": "phone"})
+    site = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Site", "type": "url"})
+    r = u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Ada", ph["id"]: "+1 (555) 010-0100", site["id"]: "https://example.com/"}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={r['id']}")
+    # a button next to the field calls the number / opens the site; in the table they're links
+    expect(pg.locator(".modal a.field-action[href='tel:+15550100100']")).to_have_count(1)
+    expect(pg.locator(".modal a.field-action[href='https://example.com/']")).to_have_count(1)
+    # an invalid email: an error, not saved; a valid one is saved
+    box = pg.locator(".modal .form-row", has_text="Email").locator("input")
+    box.fill("not-an-email")
+    box.press("Enter")
+    expect(pg.locator(".modal .input-error")).to_contain_text("valid email")
+    assert not u.record(t["id"], r["id"])["data"].get(em["id"])
+    box.fill("ada@example.com")
+    box.press("Enter")
+    eventually(lambda: u.record(t["id"], r["id"])["data"].get(em["id"]) == "ada@example.com" or None)
+    expect(pg.locator(".modal .input-error")).to_have_count(0)
+    pg.keyboard.press("Escape")
+    expect(pg.locator(".grid tbody a[href='tel:+15550100100']")).to_have_text("+1 (555) 010-0100")
+    expect(pg.locator(".grid tbody a[href='https://example.com/']")).to_have_text("example.com")
+    expect(pg.locator(".grid tbody a[href='mailto:ada@example.com']")).to_have_count(1)
+    assert not pg.errors, pg.errors

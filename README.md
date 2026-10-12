@@ -242,7 +242,7 @@ Probyte POSTs `record.created`, `record.updated` and `record.deleted` events (wi
 
 | Group | Types |
 |---|---|
-| Basic | Single line text, Long text, Number, Single select, Multiple select, User, Date, Rating, Checkbox, Attachment, URL, Email |
+| Basic | Single line text, Long text, Number, Single select, Multiple select, User, Date, Rating, Checkbox, Attachment, URL, Email, Phone number |
 | Advanced | Formula, Link to record, Lookup, Rollup, Conditional lookup, Conditional rollup, Button, Auto number |
 | System | Created time, Last modified time, Created by, Last modified by |
 
@@ -254,6 +254,7 @@ Probyte POSTs `record.created`, `record.updated` and `record.deleted` events (wi
 - **Field value validation rules**: **Required** (a record can't be added or saved with it empty; marked * on the column) and, for text, numbers, email, URL and dates, **Unique** (no two records share a value; case doesn't matter). Values synced in from phones aren't blocked.
 - **Default value** for new records: text, a number, an option, checked, *today* / *now* for dates, or *whoever adds the record* for user fields.
 
+- **Email, URL and phone number** fields follow the same rules in every table, however values arrive (typing, the API, imports, public and linked tables, type changes): an email must be name@domain.tld (its domain is stored in lower case); a URL must be a web address (`example.com` gets `https://`; `javascript:` and other links are refused); a phone number is digits with the usual punctuation and an optional extension. They show as links that write, open or call, and the record panel has a button for that. Contacts tables' Phone is a phone field. Values synced from phones are kept as they are.
 - **Link to record** connects records across tables, or within one table. By default it is two-way: adding a link also creates the matching field in the other table, and the two stay in sync. Deleting a record removes it from every link that points to it.
 - **Lookup** shows a field from the linked records. **Rollup** summarises it: count, sum, average, min, max, and/or/xor, join, unique.
 - **Conditional lookup** and **Conditional rollup** don't need a link field. They pick records from any table that match conditions. A condition can compare against a fixed value or against a field of the current record, for example "Project contains {Name}". They can also sort and limit the matches.

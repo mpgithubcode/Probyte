@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { api } from "../api";
 import type { Dataset, Field, FieldType, Refs, View } from "../types";
-import { applyView, displayText, hiddenIds, isDateOnly, isEditable, keyOf, valueType } from "../util";
+import { cleanFormatted, applyView, displayText, hiddenIds, isDateOnly, isEditable, keyOf, valueType } from "../util";
 import { FieldIcon, Icon } from "./Icon";
 import { Modal } from "./Overlay";
 
@@ -119,7 +119,7 @@ interface Sheet { name: string; rows: Cell[][] }
 const NEW_TYPES: { type: FieldType; label: string }[] = [
   { type: "text", label: "Single line text" }, { type: "long_text", label: "Long text" }, { type: "number", label: "Number" },
   { type: "date", label: "Date" }, { type: "checkbox", label: "Checkbox" }, { type: "single_select", label: "Single select" },
-  { type: "multi_select", label: "Multiple select" }, { type: "email", label: "Email" }, { type: "url", label: "URL" },
+  { type: "multi_select", label: "Multiple select" }, { type: "email", label: "Email" }, { type: "phone", label: "Phone number" }, { type: "url", label: "URL" },
 ];
 
 /** Where a column goes: an existing field, a new field of some type, or nowhere. */
@@ -135,6 +135,8 @@ function guessType(values: Cell[]): FieldType {
   if (vals.every((v) => v instanceof Date || (typeof v === "string" && /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2})?/.test(v)))) return "date";
   if (vals.every((v) => typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()))) return "email";
   if (vals.every((v) => typeof v === "string" && /^https?:\/\//i.test(v.trim()))) return "url";
+  if (vals.every((v) => typeof v === "string" && /[\s()+-]/.test(v.trim()) && "value" in cleanFormatted("phone", v)
+      && v.replace(/\D/g, "").length >= 7)) return "phone";
   const distinct = new Set(vals.map((v) => String(v).trim().toLowerCase()));
   if (vals.length >= 6 && distinct.size <= Math.max(3, vals.length / 4) && distinct.size <= 20) return "single_select";
   if (vals.some((v) => String(v).length > 120 || String(v).includes("\n"))) return "long_text";

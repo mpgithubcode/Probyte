@@ -1,5 +1,5 @@
 export type FieldType =
-  | "text" | "long_text" | "recurrence" | "record_id" | "number" | "checkbox" | "single_select" | "multi_select" | "date" | "url" | "email" | "rating"
+  | "text" | "long_text" | "recurrence" | "record_id" | "number" | "checkbox" | "single_select" | "multi_select" | "date" | "url" | "email" | "phone" | "rating"
   | "user" | "attachment" | "link"
   | "formula" | "lookup" | "rollup" | "conditional_lookup" | "conditional_rollup" | "button" | "autonumber"
   | "created_time" | "last_modified_time" | "created_by" | "last_modified_by";

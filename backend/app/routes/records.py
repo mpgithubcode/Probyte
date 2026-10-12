@@ -153,7 +153,7 @@ class ImportIn(BaseModel):
     rows: list[list[Any]]
 
 
-IMPORT_NEW_TYPES = {"text", "long_text", "number", "checkbox", "single_select", "multi_select", "date", "url", "email", "rating"}
+IMPORT_NEW_TYPES = {"text", "long_text", "number", "checkbox", "single_select", "multi_select", "date", "url", "email", "phone", "rating"}
 
 
 @router.post("/api/tables/{table_id}/import")

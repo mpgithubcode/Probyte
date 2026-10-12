@@ -2,7 +2,8 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Attachment, Field, Refs, User } from "../types";
 import {
-  choiceColor, displayText, formatDate, formatNumber, fromInputValue, innerField, isDateOnly, isEditable, isErrorValue,
+  choiceColor, cleanFormatted, displayText, formatDate, formatNumber, fromInputValue, innerField, isDateOnly, isEditable, isErrorValue,
+  FORMAT_TYPES, shortUrl, telHref,
   toInputValue, valueType,
 } from "../util";
 import { Icon } from "./Icon";
@@ -81,10 +82,17 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
       return <span className="repeat-value"><Icon name="repeat" size={12} /> {describeRepeat(value)}</span>;
     case "rating":
       return <span className="stars">{"★".repeat(Number(value) || 0)}</span>;
-    case "url":
-      return <a href={String(value)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{String(value)}</a>;
+    case "url": {
+      // only web addresses become links (anything else, e.g. synced in, is shown as text)
+      const u = String(value);
+      return /^https?:\/\//i.test(u)
+        ? <a className="cell-link" href={u} target="_blank" rel="noopener noreferrer nofollow" title={u} onClick={(e) => e.stopPropagation()}>{shortUrl(u)}</a>
+        : <span>{u}</span>;
+    }
     case "email":
-      return <a href={`mailto:${value}`} onClick={(e) => e.stopPropagation()}>{String(value)}</a>;
+      return <a className="cell-link" href={`mailto:${value}`} title={`Write to ${value}`} onClick={(e) => e.stopPropagation()}>{String(value)}</a>;
+    case "phone":
+      return <a className="cell-link" href={telHref(String(value))} title={`Call ${value}`} onClick={(e) => e.stopPropagation()}>{String(value)}</a>;
     case "link":
       return <span className="chips">{(value as string[]).map((id) => <RefChip key={id} kind="record" label={refs.records[id] ?? ""} />)}</span>;
     case "user": case "created_by": case "last_modified_by":
@@ -172,12 +180,24 @@ function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial,
   }, []);  // once, when editing starts
   const cancelled = useRef(false);
   const focused = useRef(false);
+  const [invalid, setInvalid] = useState("");
   useEffect(() => { if (!focused.current) setDraft(String(value ?? "")); }, [value]);
 
   const commit = () => {
     focused.current = false;
-    if (cancelled.current) { cancelled.current = false; setDraft(String(original)); onDone?.(); return; }
+    if (cancelled.current) { cancelled.current = false; setInvalid(""); setDraft(String(original)); onDone?.(); return; }
     let v: any = draft;
+    if (FORMAT_TYPES.has(field.type)) {  // email / web address / phone: the same rules as the server
+      const c = cleanFormatted(field.type, draft);
+      if ("error" in c) {
+        setInvalid(c.error);
+        setTimeout(() => inputRef.current?.focus(), 0);  // stay in the field to fix it (Escape cancels)
+        return;
+      }
+      setInvalid("");
+      v = c.value;
+      if (v !== null && v !== draft) setDraft(v);
+    }
     if (field.type === "number") v = draft.trim() === "" ? null : Number(draft);
     if (v === "") v = null;
     if (v !== (value ?? null) && !(field.type === "number" && Number.isNaN(v))) onCommit(v);
@@ -188,7 +208,7 @@ function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial,
     autoFocus,
     className: inline ? "cell-input" : "input",
     onFocus: () => { focused.current = true; },
-    onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
+    onChange: (e: { target: { value: string } }) => { setDraft(e.target.value); if (invalid) setInvalid(""); },
     onBlur: commit,
     ref: inputRef,
   };
@@ -201,11 +221,30 @@ function TextInput({ field, value, onCommit, onDone, autoFocus, inline, initial,
         if (e.key === "Enter" && inline && !e.shiftKey && !e.altKey) { e.preventDefault(); e.currentTarget.blur(); }
       }} />;
   }
-  return <input {...common} type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "url" ? "url" : "text"}
+  const input = <input {...common} type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "url" ? "url" : field.type === "phone" ? "tel" : "text"}
+    aria-invalid={invalid ? true : undefined} title={invalid || undefined}
+    className={`${common.className}${invalid ? " invalid" : ""}`}
+    placeholder={inline ? undefined : field.type === "url" ? "example.com" : field.type === "email" ? "name@example.com" : field.type === "phone" ? "+1 555 0100" : undefined}
     onKeyDown={(e) => {
-      if (e.key === "Escape") { cancelled.current = true; e.currentTarget.blur(); }
+      if (e.key === "Escape") { cancelled.current = true; setInvalid(""); e.currentTarget.blur(); }
       if (e.key === "Enter") e.currentTarget.blur();
     }} />;
+  // record panel: a button to call / write / open what's in the field
+  const action = !inline && FORMAT_TYPES.has(field.type) && typeof value === "string" && value
+    ? field.type === "phone" ? { href: telHref(value), icon: "phone", label: `Call ${value}` }
+      : field.type === "email" ? { href: `mailto:${value}`, icon: "external", label: `Write to ${value}` }
+        : /^https?:\/\//i.test(value) ? { href: value, icon: "external", label: `Open ${value}` } : null
+    : null;
+  if (!invalid && !action) return input;
+  if (!invalid) {
+    return (
+      <span className="input-with-action">{input}
+        <a className="icon-btn field-action" href={action!.href} title={action!.label} aria-label={action!.label}
+          {...(field.type === "url" ? { target: "_blank", rel: "noopener noreferrer nofollow" } : {})}><Icon name={action!.icon} size={14} /></a>
+      </span>
+    );
+  }
+  return <span className={`input-wrap${inline ? " inline" : ""}`}>{input}<span className="input-error" role="alert">{invalid}</span></span>;
 }
 
 function DateInput({ field, value, onCommit, onDone, autoFocus, inline }: InputProps) {

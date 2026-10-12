@@ -1340,3 +1340,16 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .drop-box:hover { border-color: var(--accent); color: var(--accent); }
 .import-result ul { margin: 6px 0 0; padding-left: 18px; }
 .side-linked { display: inline-flex; color: var(--text-soft); margin-left: -4px; }
+
+/* email / web address / phone */
+.cell-link { color: var(--accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+.cell-link:hover { text-decoration: underline; }
+.input.invalid, .cell-input.invalid { border-color: var(--danger, #ef4444) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger, #ef4444) 25%, transparent); }
+.input-wrap { display: flex; flex-direction: column; gap: 3px; width: 100%; }
+.input-wrap.inline { position: relative; }
+.input-error { color: var(--danger, #ef4444); font-size: 12px; }
+.input-wrap.inline .input-error { position: absolute; top: 100%; left: 0; z-index: 5; background: var(--bg); border: 1px solid var(--danger, #ef4444);
+  border-radius: 6px; padding: 3px 8px; white-space: nowrap; box-shadow: var(--shadow); }
+.input-with-action { display: flex; align-items: center; gap: 6px; width: 100%; }
+.input-with-action .input { flex: 1; min-width: 0; }
+.field-action { flex-shrink: 0; color: var(--accent); }

@@ -61,7 +61,7 @@ export function Icon({ name, size = 16, className }: { name: string; size?: numb
 
 const FIELD_ICONS: Record<string, string> = {
   text: "A", long_text: "¶", recurrence: "↻", record_id: "⌗", number: "#", checkbox: "☑", single_select: "◉", multi_select: "☰",
-  date: "◷", url: "⌁", email: "@", rating: "★", user: "☺", attachment: "⎘", link: "⇄",
+  date: "◷", url: "⌁", email: "@", phone: "☏", rating: "★", user: "☺", attachment: "⎘", link: "⇄",
   formula: "ƒ", lookup: "⤷", rollup: "Σ", conditional_lookup: "⤵", conditional_rollup: "∑", button: "▣",
   autonumber: "№", created_time: "◴", last_modified_time: "◵", created_by: "☻", last_modified_by: "☻",
 };

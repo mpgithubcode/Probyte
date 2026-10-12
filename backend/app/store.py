@@ -8,14 +8,14 @@ from . import formula as F
 from .auth import api_bases
 from .compute import COMPUTED_TYPES, FIELD_TYPES, FILTER_OPS, Engine
 from .db import Jsonb
-from . import audit, jobs, recur, webhooks
+from . import audit, fieldformats, jobs, recur, webhooks
 from .ical import DEFAULT_TZ, LOCAL_KEYS, PALETTE, SEMANTIC_KEY, SYSTEM_FIELDS, component_kind, ical_to_values, is_date_only, new_uid
 
 SELECT_TYPES = ("single_select", "multi_select")
 DAV_KINDS = ("tasks", "events", "mixed", "contacts")  # tables synced with a CalDAV calendar / CardDAV address book
 AUTO_PUSH_DELAY = float(os.environ.get("AUTO_PUSH_DELAY", "2"))  # seconds after an edit before it is pushed; <0 disables
 # A record's primary (title) field must hold plain text.
-PRIMARY_TYPES = {"text", "long_text", "number", "url", "email", "single_select", "date", "autonumber", "formula"}
+PRIMARY_TYPES = {"text", "long_text", "number", "url", "email", "phone", "single_select", "date", "autonumber", "formula"}
 
 
 def not_found(what="Not found"):
@@ -429,6 +429,11 @@ def normalize_data(conn, table, fields, data: dict, user_id=None, record_id=None
                 bad(f"{f['name']} needs a number, not “{v}”")
         elif t == "checkbox":
             v = bool(v) and str(v).lower() not in ("false", "0", "no", "off")
+        elif t in fieldformats.FORMAT_TYPES:
+            try:
+                v = fieldformats.clean(t, v)
+            except ValueError as e:
+                bad(f"{f['name']}: “{v}” {e}")
         elif t == "recurrence":
             try:
                 v = recur.normalize(v)
@@ -871,7 +876,7 @@ NAME_MEANINGS = {
     "location": ({"location", "place", "where", "venue"}, {"text", "long_text"}),
     "priority": ({"priority"}, {"single_select"}),
     "email": ({"email", "e-mail", "mail"}, {"email", "text"}),
-    "phone": ({"phone", "telephone", "mobile", "phone number"}, {"text"}),
+    "phone": ({"phone", "telephone", "mobile", "phone number"}, {"text", "phone"}),
     "company": ({"company", "organisation", "organization", "org"}, {"text"}),
 }
 

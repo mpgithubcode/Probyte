@@ -166,7 +166,9 @@ def _json_type(f) -> dict:
         t = {"number": "number", "boolean": "checkbox", "date": "date"}.get(o.get("resultType"), "text")
     choices = [c["name"] for c in o.get("choices") or []]
     strict = o.get("allowNew") is False
-    if t in ("text", "long_text", "phone", "recurrence"):
+    if t == "phone":
+        return {"type": "string", "pattern": r"^\+?[\d\s().\-/]+((\s*(ext\.?|x|#)\s*)\d{1,6})?$", "description": "A phone number"}
+    if t in ("text", "long_text", "recurrence"):
         return {"type": "string"} | ({"description": "iCalendar RRULE, e.g. FREQ=WEEKLY;BYDAY=MO"} if t == "recurrence" else {})
     if t == "email":
         return {"type": "string", "format": "email"}

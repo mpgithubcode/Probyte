@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from . import formula as F
 
-STORED_TYPES = {"text", "long_text", "number", "checkbox", "single_select", "multi_select", "date", "url", "email",
+STORED_TYPES = {"text", "long_text", "number", "checkbox", "single_select", "multi_select", "date", "url", "email", "phone",
                 "rating", "link", "user", "attachment", "recurrence"}
 COMPUTED_TYPES = {"formula", "lookup", "rollup", "conditional_lookup", "conditional_rollup", "autonumber", "record_id",
                   "created_time", "last_modified_time", "created_by", "last_modified_by", "button"}

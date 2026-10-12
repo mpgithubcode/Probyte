@@ -17,6 +17,7 @@ export const FIELD_TYPES: FieldTypeInfo[] = [
   { type: "attachment", label: "Attachment", desc: "Upload files and images", group: "Basic" },
   { type: "url", label: "URL", desc: "A web link", group: "Basic" },
   { type: "email", label: "Email", desc: "An email address", group: "Basic" },
+  { type: "phone", label: "Phone number", desc: "A phone number you can call", group: "Basic" },
   { type: "formula", label: "Formula", desc: "Calculate a value from other fields", group: "Advanced" },
   { type: "recurrence", label: "Repeat", desc: "Makes the record repeat on the calendar and timeline", group: "Advanced" },
   { type: "link", label: "Link to record", desc: "Connect records in another table", group: "Advanced" },
@@ -489,3 +490,51 @@ export function nativeKind(t?: TableInfo | null): TableKind | "combo" | undefine
   if (!t) return undefined;
   return t.kind === "remote" ? t.remote?.source_kind || "remote" : t.kind;
 }
+
+// ------------------------------------------------------------ email / URL / phone: the same rules as the server
+// (backend/app/fieldformats.py), for feedback while typing
+
+const EMAIL_RE = /^[^@\s<>"',;]+@[^@\s<>"',;]+\.[^@\s<>"',;.]{2,}$/;
+const PHONE_RE = /^\+?[\d\s().\-/]+(\s*(ext\.?|x|#)\s*\d{1,6})?$/i;
+const DOMAINISH_RE = /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#].*)?$/;
+
+/** A typed value as it will be stored, or why it can't be. */
+export function cleanFormatted(type: FieldType, input: string): { value: string | null } | { error: string } {
+  const text = input.split(/\s+/).filter(Boolean).join(" ");
+  if (!text) return { value: null };
+  if (type === "email") {
+    const t = text.replace(/^mailto:/i, "");
+    if (!EMAIL_RE.test(t)) return { error: "That isn't a valid email address" };
+    const at = t.lastIndexOf("@");
+    return { value: t.slice(0, at) + "@" + t.slice(at + 1).toLowerCase() };
+  }
+  if (type === "url") {
+    if (text.includes(" ")) return { error: "A web address can't have spaces" };
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(text);
+    let t = text;
+    if (!scheme || (!/^https?$/i.test(scheme[1]) && DOMAINISH_RE.test(text))) {
+      if (!DOMAINISH_RE.test(text)) return { error: "That isn't a web address" };
+      t = "https://" + text;
+    } else if (!/^https?$/i.test(scheme[1])) return { error: "A web address starts with http:// or https://" };
+    if (!/^https?:\/\/[^/\s]+/i.test(t)) return { error: "That isn't a web address" };
+    return { value: t };
+  }
+  if (type === "phone") {
+    const digits = text.split(/\s*(?:ext\.?|x|#)\s*/i)[0].replace(/\D/g, "");
+    if (!PHONE_RE.test(text) || digits.length < 3 || digits.length > 20) return { error: "That isn't a phone number" };
+    return { value: text };
+  }
+  return { value: text };
+}
+
+export const FORMAT_TYPES = new Set<FieldType>(["email", "url", "phone"]);
+
+/** tel: link for a phone number (digits and a leading +; an extension as ;ext=). */
+export function telHref(phone: string) {
+  const [main, ext] = phone.split(/\s*(?:ext\.?|x|#)\s*/i);
+  const num = (main.trim().startsWith("+") ? "+" : "") + main.replace(/\D/g, "");
+  return `tel:${num}${ext ? `;ext=${ext.replace(/\D/g, "")}` : ""}`;
+}
+
+/** A web address as shown: without https:// and a trailing slash. */
+export const shortUrl = (url: string) => url.replace(/^https?:\/\//i, "").replace(/\/$/, "");

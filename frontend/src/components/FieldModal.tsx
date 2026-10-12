@@ -66,10 +66,10 @@ function TypePicker({ value, onChange, disabled }: { value: FieldType; onChange:
 }
 
 /** Which settings of the field editor a type has. */
-const RULE_TYPES = new Set<FieldType>(["text", "long_text", "number", "rating", "email", "url", "date", "single_select", "multi_select",
+const RULE_TYPES = new Set<FieldType>(["text", "long_text", "number", "rating", "email", "url", "phone", "date", "single_select", "multi_select",
   "checkbox", "user", "link", "attachment", "recurrence"]);
-const UNIQUE_TYPES = new Set<FieldType>(["text", "number", "email", "url", "date"]);
-const DEFAULT_TYPES = new Set<FieldType>(["text", "long_text", "number", "rating", "email", "url", "date", "single_select", "multi_select",
+const UNIQUE_TYPES = new Set<FieldType>(["text", "number", "email", "url", "phone", "date"]);
+const DEFAULT_TYPES = new Set<FieldType>(["text", "long_text", "number", "rating", "email", "url", "phone", "date", "single_select", "multi_select",
   "checkbox", "user"]);
 
 function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode; hint?: ReactNode }) {
@@ -215,7 +215,7 @@ function DefaultInput({ type, o, value, onChange }: { type: FieldType; o: FieldO
         </select>
       );
     default:
-      return <input className="input" type={type === "email" ? "email" : type === "url" ? "url" : "text"} value={str} placeholder="No default"
+      return <input className="input" type={type === "email" ? "email" : type === "url" ? "url" : type === "phone" ? "tel" : "text"} value={str} placeholder="No default"
         onChange={(e) => onChange(e.target.value || null)} />;
   }
 }
