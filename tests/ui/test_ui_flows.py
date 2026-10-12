@@ -222,8 +222,9 @@ def test_rename_and_delete_table(browser, table_user):
     expect(pg.locator(".page-head h1")).to_have_text("Stock")
     expect(pg.locator(".sidebar")).to_contain_text("Stock")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Move to trash')")
-    pg.click(".menu-item:has-text('Click again to move to the trash')")
+    pg.click(".settings-nav button:has-text('Delete')")
+    pg.click(".modal button:has-text('Move to trash…')")
+    pg.click(".modal button.danger:has-text('Move to trash')")
     pg.wait_for_timeout(800)
     assert requests.Session.get(u, API + f"/tables/{t['id']}").status_code == 404
     expect(pg.locator(".sidebar")).not_to_contain_text("Stock")
@@ -271,7 +272,8 @@ def test_import_a_csv_file(browser, table_user, tmp_path):
     sign_in(pg, u)
     pg.goto(f"{BASE}/#/table/{t['id']}")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Import from file')")
+    pg.click(".settings-nav button:has-text('Import & export')")
+    pg.click(".modal button:has-text('Import…')")
     pg.set_input_files(".modal input[type=file]", str(csv))
     expect(pg.locator(".import-map-row")).to_have_count(3)
     pg.click(".modal-foot button:has-text('Import 2 rows')")
@@ -287,7 +289,8 @@ def test_export_downloads_a_file(browser, table_user):
     sign_in(pg, u)
     pg.goto(f"{BASE}/#/table/{t['id']}")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Export')")
+    pg.click(".settings-nav button:has-text('Import & export')")
+    pg.click(".modal button:has-text('Export…')")
     with pg.expect_download() as dl:
         pg.click(".modal-foot button:has-text('Export')")
     path = dl.value.path()
@@ -329,7 +332,8 @@ def test_combine_tables_from_the_menu(browser, table_user):
     sign_in(pg, u)
     pg.goto(f"{BASE}/#/table/{t['id']}")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Combine with other tables')")
+    pg.click(".settings-nav button:has-text('Import & export')")
+    pg.click(".modal button:has-text('Combine…')")
     modal = pg.locator(".modal")
     modal.locator("label, .combo-source, .menu-item").filter(has_text="Warehouse").locator("input[type=checkbox]").first.check()
     modal.locator(".modal-foot button.primary").click()
@@ -628,14 +632,16 @@ def test_hiding_a_table(browser, table_user):
     sign_in(pg, u)
     pg.goto(f"{BASE}/#/table/{t['id']}")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Hide from sidebar')")
+    pg.click(".modal .toggle-row:has-text('Show in the sidebar')")
+    pg.click(".modal-foot button:has-text('Done')")
     expect(pg.locator(".sidebar .side-item.is-hidden", has_text="Inventory")).to_be_visible()   # still listed while open
     pg.click(".sidebar .side-name:has-text('Visible table')")
     expect(pg.locator(".sidebar .side-name", has_text="Inventory")).to_have_count(0)
     pg.click(".sidebar .side-add:has-text('Show 1 hidden')")
     pg.click(".sidebar .side-name:has-text('Inventory')")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Show in sidebar')")
+    pg.click(".modal .toggle-row:has-text('Show in the sidebar')")
+    pg.click(".modal-foot button:has-text('Done')")
     pg.click(".sidebar .side-name:has-text('Visible table')")
     expect(pg.locator(".sidebar .side-item:not(.is-hidden)", has_text="Inventory")).to_be_visible()
     assert not pg.errors, pg.errors
@@ -710,7 +716,8 @@ def test_combine_with_a_table_from_a_link(browser, table_user):
     sign_in(pg, u)
     pg.goto(f"{BASE}/#/table/{t['id']}")
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Combine with other tables')")
+    pg.click(".settings-nav button:has-text('Import & export')")
+    pg.click(".modal button:has-text('Combine…')")
     pg.fill(".combo-link input.input", f"{BASE}/s/{s['token']}")
     pg.click(".combo-link button:has-text('Add')")
     expect(pg.locator(".source-row.active", has_text="Partner stock")).to_be_visible()
@@ -808,8 +815,9 @@ def test_undo_and_the_trash(browser, table_user):
     assert {r["data"][F["Name"]]: r["data"].get(F["Status"]) for r in u.records(t["id"])} == statuses
     # move the table to the trash, restore it from the Trash window
     pg.click(".page-head [aria-label=More]")
-    pg.click(".menu-item:has-text('Move to trash')")
-    pg.click(".menu-item:has-text('Click again to move to the trash')")
+    pg.click(".settings-nav button:has-text('Delete')")
+    pg.click(".modal button:has-text('Move to trash…')")
+    pg.click(".modal button.danger:has-text('Move to trash')")
     expect(pg.locator(".sidebar")).not_to_contain_text("Inventory")
     pg.click(".side-user [aria-label=Trash]")
     pg.locator(".trash-row").filter(has_text="Inventory").locator("button:has-text('Restore')").click()
@@ -955,6 +963,7 @@ def test_field_editor_rules_formats_and_options(browser):
 def test_view_names_footer_icon_and_calendar_link(browser, table_user):
     u, t, F = table_user
     num = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Qty", "type": "number"})
+    u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Due", "type": "date"})  # calendar links are for tables with dates
     for i, r in enumerate(u.records(t["id"])):
         u.j("PATCH", f"/records/{r['id']}", json={"data": {num["id"]: i + 1}})
     pg = new_page(browser)
@@ -977,7 +986,8 @@ def test_view_names_footer_icon_and_calendar_link(browser, table_user):
     expect(pg.locator(".title-row .emoji-icon")).to_have_count(1)
     # a calendar subscription link
     pg.click("button[aria-label='More']")
-    pg.click(".menu-item:has-text('Subscribe in a calendar app')")
+    pg.click(".settings-nav button:has-text('Calendar links')")
+    pg.click(".modal button:has-text('Calendar subscription links…')")
     pg.click(".modal button:has-text('Create link')")
     expect(pg.locator(".modal .feed-url")).to_contain_text("/ics/")
     assert not pg.errors, pg.errors
@@ -1111,4 +1121,105 @@ def test_upload_from_a_link_field(browser):
     eventually(lambda: u.record(t["id"], r["id"])["data"].get(link["id"]))
     FF = u.fields(files["id"])
     assert [x["data"][FF["name"]] for x in u.records(files["id"])] == ["quote.txt"]
+    assert not pg.errors, pg.errors
+
+
+def test_view_tabs_reorder_and_view_settings(browser, table_user):
+    u, t, F = table_user
+    for name, vtype in (("Board", "kanban"), ("Cards", "gallery")):
+        u.j("POST", f"/tables/{t['id']}/views", json={"name": name, "type": vtype})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    tabs = lambda: [x.strip() for x in pg.locator(".view-tab .view-tab-name").all_text_contents()]
+    assert tabs() == ["Table", "Board", "Cards"]
+    # drag a tab to reorder; the order is saved
+    pg.locator(".view-tab", has_text="Cards").drag_to(pg.locator(".view-tab", has_text="Table"))
+    eventually(lambda: [v["name"] for v in u.j("GET", f"/tables/{t['id']}")["views"]] == ["Cards", "Table", "Board"] or None)
+    pg.reload()
+    expect(pg.locator(".view-tab .view-tab-name").first).to_have_text("Cards")
+    # the open tab's ⋯: view settings
+    pg.click(".view-tab:has-text('Table')")
+    pg.click(".view-tab.active .view-tab-more")
+    modal = pg.locator(".modal")
+    expect(modal).to_contain_text("View settings")
+    modal.locator("label:has-text('Name') input").fill("All stock")
+    modal.locator("label:has-text('Name') input").press("Enter")
+    expect(pg.locator(".view-tab.active")).to_contain_text("All stock")
+    # fields: hide one for this view
+    modal.locator(".settings-nav button:has-text('Fields')").click()
+    modal.locator("input[aria-label='Show Notes']").uncheck()
+    expect(pg.locator("thead th .th-name").filter(has_text="Notes")).to_have_count(0)
+    # sort from the window
+    modal.locator(".settings-nav button:has-text('Sort')").click()
+    expect(modal.locator(".settings-pane")).to_be_visible()
+    # layout: rows per page; then switch the kind of view
+    modal.locator(".settings-nav button:has-text('Layout')").click()
+    modal.locator("label:has-text('Rows per page') select").select_option("10")
+    modal.locator(".settings-nav button:has-text('General')").click()
+    modal.locator(".type-tile:has-text('Board')").click()
+    expect(pg.locator(".kanban-col").first).to_be_visible()
+    v = next(x for x in u.j("GET", f"/tables/{t['id']}")["views"] if x["name"] == "All stock")
+    assert v["type"] == "kanban" and v["config"].get("groupBy") == F["Status"] and F["Notes"] in v["config"]["hidden"]
+    # duplicate, move, delete
+    modal.locator("button:has-text('Duplicate view')").click()
+    expect(pg.locator(".view-tab.active")).to_contain_text("All stock copy")
+    modal.locator("button:has-text('Delete view')").click()
+    modal.locator("button.danger:has-text('Delete view')").click()
+    expect(pg.locator(".view-tab", has_text="All stock copy")).to_have_count(0)
+    assert not pg.errors, pg.errors
+
+
+def test_table_settings_show_what_applies(browser, table_user):
+    u, t, F = table_user
+    files = u.table("files", "Docs", storage={"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket", "username": "testkey",
+                    "secret": "testsecret12345"}, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    pg = new_page(browser)
+    sign_in(pg, u)
+    # a plain table without dates: no sync, no calendar links; description and field order
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click(".page-head [aria-label=More]")
+    nav = pg.locator(".modal .settings-nav")
+    expect(nav).to_contain_text("Fields")
+    for absent in ("Sync", "Storage", "Calendar links"):
+        expect(nav.locator(f"button:has-text('{absent}')")).to_have_count(0)
+    pg.fill(".modal textarea", "Everything in the warehouse")
+    nav.locator("button:has-text('Fields')").click()
+    eventually(lambda: u.j("GET", f"/tables/{t['id']}")["table"]["description"] == "Everything in the warehouse" or None)
+    rows = pg.locator(".modal .settings-row")
+    rows.filter(has_text="Status").drag_to(rows.filter(has_text="Name"))
+    eventually(lambda: [f["name"] for f in u.j("GET", f"/tables/{t['id']}")["fields"]][:3] == ["Status", "Name", "Notes"] or None)
+    pg.click(".modal-foot button:has-text('Done')")
+    # a files table: its storage, no import and no calendar links
+    pg.goto(f"{BASE}/#/table/{files['id']}")
+    pg.click(".page-head [aria-label=More]")
+    expect(nav.locator("button:has-text('Storage')")).to_have_count(1)
+    expect(nav.locator("button:has-text('Calendar links')")).to_have_count(0)
+    nav.locator("button:has-text('Storage')").click()
+    expect(pg.locator(".modal .settings-facts")).to_contain_text("test-bucket/ui")
+    nav.locator("button:has-text('Import & export')").click()
+    expect(pg.locator(".modal button:has-text('Import…')")).to_have_count(0)
+    expect(pg.locator(".modal")).to_contain_text("Files are added with Upload")
+    pg.click(".modal-foot button:has-text('Done')")
+    # a synced calendar table: its sync and calendar links
+    cal = u.table("mixed", "Agenda")
+    pg.goto(f"{BASE}/#/table/{cal['id']}")
+    pg.click(".page-head [aria-label=More]")
+    expect(nav.locator("button:has-text('Sync')")).to_have_count(1)
+    expect(nav.locator("button:has-text('Calendar links')")).to_have_count(1)
+    nav.locator("button:has-text('Sync')").click()
+    expect(pg.locator(".modal button:has-text('Sync now')")).to_be_visible()
+    assert not pg.errors, pg.errors
+
+
+def test_files_table_header_on_a_phone(browser):
+    u = Client()
+    t = u.table("files", "Files", storage={"name": "eh-share", "kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket",
+                "username": "testkey", "secret": "testsecret12345"}, storage_prefix=f"ui{uuid.uuid4().hex[:6]}")
+    pg = new_page(browser, phone=True)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    expect(pg.locator(".page-head h1")).to_have_text("Files")
+    expect(pg.locator(".page-head .storage-badge")).to_be_hidden()          # it's in table settings instead
+    assert pg.evaluate("() => document.documentElement.scrollWidth <= innerWidth + 1")
     assert not pg.errors, pg.errors

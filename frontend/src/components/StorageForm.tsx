@@ -99,7 +99,7 @@ export function StoragesPanel() {
   );
 }
 
-function StorageEditor({ storage, onClose, onSaved }: { storage: Storage | null; onClose: () => void; onSaved: () => void }) {
+export function StorageEditor({ storage, onClose, onSaved }: { storage: Storage | null; onClose: () => void; onSaved: () => void }) {
   const [d, setD] = useState<StorageDraft>(storage ? draftOf(storage) : emptyStorage());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

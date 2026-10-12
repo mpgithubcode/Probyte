@@ -169,7 +169,27 @@ def update_table(table_id: str, body: TablePatch, user=User):
             conn.execute("UPDATE tables SET hidden = %s WHERE id = %s", (body.hidden, table_id))
         if body.icon is not None:
             conn.execute("UPDATE tables SET icon = %s WHERE id = %s", (body.icon.strip()[:16] or None, table_id))
+        if body.description is not None:
+            conn.execute("UPDATE tables SET description = %s WHERE id = %s", (body.description.strip()[:2000] or None, table_id))
         return _table_out(store.get_table(conn, table_id))
+
+
+class FieldOrder(BaseModel):
+    ids: list[str]
+
+
+@router.post("/api/tables/{table_id}/fields/order")
+def order_fields(table_id: str, body: FieldOrder, user=User):
+    """The table's own field order (views follow it unless they set their own); Record ID stays last."""
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"])
+        fields = store.get_fields(conn, table_id)
+        rank = {fid: n for n, fid in enumerate(body.ids)}
+        ordered = sorted((f for f in fields if f["type"] != "record_id"), key=lambda f: (rank.get(str(f["id"]), len(rank)), f["position"]))
+        ordered += [f for f in fields if f["type"] == "record_id"]
+        for n, f in enumerate(ordered):
+            conn.execute("UPDATE fields SET position = %s WHERE id = %s", (n, f["id"]))
+    return {"ok": True}
 
 
 def _dav_info(conn, t):

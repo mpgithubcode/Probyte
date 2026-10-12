@@ -10,6 +10,8 @@ import { Popover, usePopover } from "./Overlay";
 import { EmojiPicker } from "./EmojiPicker";
 import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
+import { TableSettings } from "./TableSettings";
+import { ViewSettings } from "./ViewSettings";
 import { VIEW_TYPES, ViewOptions, ViewTabs } from "./Toolbar";
 import { CAN_ALL, type Ops } from "./viewTypes";
 import { buttonAction } from "../buttonAction";
@@ -60,8 +62,8 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [transfer, setTransfer] = useState<"import" | "export" | null>(null);
   const [feedsOpen, setFeedsOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const more = usePopover();
+  const [settings, setSettings] = useState<string | null>(null);      // the table settings window (and its section)
+  const [viewSettings, setViewSettings] = useState<string | null>(null);  // the view settings window (a view id)
   const iconPop = usePopover();
   const setIcon = async (icon: string) => {
     iconPop.close();
@@ -360,6 +362,43 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     if (input) input.value = "";
   };
 
+  // ------------------------------------------------------------ view tabs and view settings
+  const reorderViews = (ids: string[]) => {
+    if (!ds) return;
+    setDs({ ...ds, views: ids.map((id) => ds.views.find((v) => v.id === id)!).filter(Boolean) });
+    api.post("/views/order", { ids }).catch((e) => { onError(e.message); reload(); });
+  };
+  const renameView = (v: View, name: string) => {
+    if (!ds) return;
+    setDs({ ...ds, views: ds.views.map((x) => (x.id === v.id ? { ...x, name } : x)) });
+    api.patch(`/views/${v.id}`, { name }).catch((e) => onError(e.message));
+  };
+  const deleteView = (v: View) => {
+    if (!ds) return;
+    setViewSettings(null);
+    setDs({ ...ds, views: ds.views.filter((x) => x.id !== v.id) });
+    api.del(`/views/${v.id}`).catch((e) => onError(e.message));
+    onNavigate(undefined);
+  };
+  const duplicateView = async (v: View) => {
+    if (!ds) return;
+    try {
+      const copy = await api.post<View>(`/views/${v.id}/duplicate`);
+      const i = ds.views.findIndex((x) => x.id === v.id);
+      setDs({ ...ds, views: [...ds.views.slice(0, i + 1), copy, ...ds.views.slice(i + 1)] });
+      setViewSettings(copy.id);
+      onNavigate(copy.id);
+    } catch (e) { onError((e as Error).message); }
+  };
+  const moveView = (v: View, dir: -1 | 1) => {
+    if (!ds) return;
+    const ids = ds.views.map((x) => x.id);
+    const i = ids.indexOf(v.id), j = i + dir;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    reorderViews(ids);
+  };
+
   const renameDataset = async (name: string) => {
     if (!ds || !name || name === ds.name) return;
     await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { name });
@@ -372,15 +411,14 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     if (!ds) return;
     try {
       await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { base_id: baseId });
-      more.close();
       onWorkspaceChanged();
       reload();
     } catch (e) { onError((e as Error).message); }
   };
 
-  const [deleteOnServer, setDeleteOnServer] = useState<boolean | null>(null);
-  const deleteDataset = async () => {
+  const deleteDataset = async (deleteOnServer: boolean | null = null) => {
     if (!ds) return;
+    setSettings(null);
     const onServer = deleteOnServer ?? !!ds.dav?.builtin;
     try {
       await api.del(ds.kind === "table" ? `/tables/${ds.id}${ds.dav ? `?delete_on_server=${onServer}` : ""}` : `/combos/${ds.id}`);
@@ -504,61 +542,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
           </>)}
           {ds.kind === "combo" && <button className="btn sm" title="Sources & mapping" onClick={() => setComboEdit(true)}><Icon name="settings" size={14} /> <span className="btn-label">Sources & mapping</span></button>}
           {ds.kind === "table" && !link && <button className="btn sm" title="Add field" onClick={() => setFieldEdit(null)}><Icon name="plus" size={14} /> <span className="btn-label">Field</span></button>}
-          <button className="icon-btn" onClick={more.open} aria-label="More"><Icon name="more" /></button>
-          {more.anchor && (
-            <Popover anchor={more.anchor} onClose={() => { more.close(); setConfirmDelete(false); }} align="right" width={240}>
-              <div className="menu-list">
-                <button className="menu-item" onClick={() => { setRenaming(true); more.close(); }}><Icon name="edit" size={14} /> Rename</button>
-                {ds.kind === "table" && can.add && (
-                  <button className="menu-item" onClick={() => { setTransfer("import"); more.close(); }}><Icon name="upload" size={14} /> Import from file…</button>
-                )}
-                <button className="menu-item" onClick={() => { setTransfer("export"); more.close(); }}><Icon name="download" size={14} /> Export…</button>
-                <button className="menu-item" onClick={() => { setFeedsOpen(true); more.close(); }}><Icon name="calendar" size={14} /> Subscribe in a calendar app…</button>
-                {ds.kind === "table" ? (
-                  <button className="menu-item" onClick={() => { setCombineNew(true); more.close(); }}><Icon name="layers" size={14} /> Combine with other tables…</button>
-                ) : (
-                  <button className="menu-item" onClick={() => { setComboEdit(true); more.close(); }}><Icon name="layers" size={14} /> Add tables…</button>
-                )}
-                <button className="menu-item" onClick={async () => {
-                  more.close();
-                  try {
-                    await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { hidden: !hiddenInSidebar });
-                    onWorkspaceChanged();
-                  } catch (e) { onError((e as Error).message); }
-                }}><Icon name="eye" size={14} /> {hiddenInSidebar ? "Show in sidebar" : "Hide from sidebar"}</button>
-                <button className="menu-item" title={ds.id} onClick={() => {
-                  navigator.clipboard?.writeText(ds.id).then(() => onError(`Copied ID ${ds.id}`), () => onError(ds.id));
-                  more.close();
-                }}><Icon name="copy" size={14} /> Copy {ds.kind === "combo" ? "combined database" : "table"} ID</button>
-                {link && <button className="menu-item" onClick={() => { setLinkEdit(true); more.close(); }}><Icon name="link" size={14} /> Link settings</button>}
-                {bases.length > 1 && <div className="menu-heading">Move to base</div>}
-                {bases.length > 1 && bases.map((b) => (
-                  <button key={b.id} className="menu-item" disabled={b.id === currentBase} onClick={() => moveTo(b.id)}>
-                    <span className="swatch" style={{ background: b.color }} /> {b.name} {b.id === currentBase && <span className="tick">✓</span>}
-                  </button>
-                ))}
-                {confirmDelete ? (
-                  <button className="menu-item danger" onClick={deleteDataset}>
-                    <Icon name="trash" size={14} /> {ds.kind === "combo" ? "Click again to delete" : "Click again to move to the trash"}
-                  </button>
-                ) : (
-                  <button className="menu-item danger" onClick={() => setConfirmDelete(true)}>
-                    <Icon name="trash" size={14} /> {ds.kind === "combo" ? "Delete combined database" : "Move to trash"}
-                  </button>
-                )}
-                {confirmDelete && isFiles && <div className="muted pad small">The files stay in {ds.storage?.location ?? "the storage"}; only the table is deleted.</div>}
-                {confirmDelete && ds.dav && (ds.dav.shared ? (
-                  <div className="muted pad small">The {ds.dav.collection} on the server is kept: another table uses it too.</div>
-                ) : (
-                  <label className="inline-check pad small">
-                    <input type="checkbox" checked={deleteOnServer ?? ds.dav.builtin} onChange={(e) => setDeleteOnServer(e.target.checked)} />
-                    <span>{ds.dav.builtin ? `When the trash is emptied (after 30 days), also delete the ${ds.dav.collection} on Probyte's server (phones lose it then)`
-                      : `When the trash is emptied (after 30 days), also delete its ${ds.dav.items} item${ds.dav.items === 1 ? "" : "s"} from ${ds.dav.account ?? "the account"}`}</span>
-                  </label>
-                ))}
-              </div>
-            </Popover>
-          )}
+          <button className="icon-btn" onClick={() => setSettings("general")} aria-label="More" title={`${ds.kind === "combo" ? "Combined database" : "Table"} settings`}><Icon name="more" /></button>
         </div>
         {link?.error && (
           <div className="remote-error">
@@ -567,15 +551,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
           </div>
         )}
         <ViewTabs views={ds.views} active={view} onSelect={(v) => onNavigate(v.id)} onCreate={createView}
-          onRename={(v, name) => {
-            setDs({ ...ds, views: ds.views.map((x) => (x.id === v.id ? { ...x, name } : x)) });
-            api.patch(`/views/${v.id}`, { name }).catch((e) => onError(e.message));
-          }}
-          onDelete={(v) => {
-            setDs({ ...ds, views: ds.views.filter((x) => x.id !== v.id) });
-            api.del(`/views/${v.id}`).catch((e) => onError(e.message));
-            onNavigate(undefined);
-          }} />
+          onReorder={reorderViews} onSettings={(v) => setViewSettings(v.id)} />
         <ViewOptions view={view} fields={vfields} config={view.config} setConfig={setConfig} search={search} setSearch={setSearch}
           onAdd={ops.can.add ? (isFiles ? uploadPop.open : () => ops.create({}, true)) : undefined} addLabel={ops.addLabel} />
       </header>
@@ -608,6 +584,53 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
           onSaved={(saved) => patchLocal(saved.id, (r) => ({ ...r, ...saved }))} location={ds.storage?.location} />
       )}
       {uploads.panel}
+      {settings && (
+        <TableSettings ds={ds} bases={bases} currentBase={currentBase} hiddenInSidebar={hiddenInSidebar} syncing={syncing}
+          canManage={ds.kind === "table" && !link && ops.can.manage} initial={settings as "general"} onClose={() => setSettings(null)}
+          actions={{
+            rename: renameDataset,
+            setIcon,
+            setDescription: async (description) => {
+              try { await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { description }); reload(); }
+              catch (e) { onError((e as Error).message); }
+            },
+            moveTo,
+            toggleHidden: async () => {
+              try { await api.patch(ds.kind === "table" ? `/tables/${ds.id}` : `/combos/${ds.id}`, { hidden: !hiddenInSidebar }); onWorkspaceChanged(); }
+              catch (e) { onError((e as Error).message); }
+            },
+            editField: (f) => setFieldEdit(f),
+            fieldsReordered: () => reload(),
+            syncNow: link ? refreshLink : syncNow,
+            // these open their own window instead
+            importFile: ds.kind === "table" && can.add && !isFiles && !link ? () => { setSettings(null); setTransfer("import"); } : undefined,
+            exportData: () => { setSettings(null); setTransfer("export"); },
+            combine: ds.kind === "table" ? () => { setSettings(null); setCombineNew(true); } : undefined,
+            sources: ds.kind === "combo" ? () => { setSettings(null); setComboEdit(true); } : undefined,
+            linkSettings: link ? () => { setSettings(null); setLinkEdit(true); } : undefined,
+            feeds: () => { setSettings(null); setFeedsOpen(true); },
+            remove: deleteDataset,
+          }} />
+      )}
+      {viewSettings && ds.views.some((v) => v.id === viewSettings) && (() => {
+        const v = ds.views.find((x) => x.id === viewSettings)!;
+        const setVConfig = (patch: Partial<ViewConfig>) => {
+          if (v.id === view.id) setConfig(patch);
+          else {
+            const config = { ...v.config, ...patch };
+            setDs({ ...ds, views: ds.views.map((x) => (x.id === v.id ? { ...x, config } : x)) });
+            api.patch(`/views/${v.id}`, { config }).catch((e) => onError(e.message));
+          }
+        };
+        return (
+          <ViewSettings view={v} views={ds.views} fields={withDisplayNames(ds.fields, v.config)} setConfig={setVConfig}
+            onClose={() => setViewSettings(null)} onRenamed={(name) => renameView(v, name)}
+            onTypeChanged={(nv) => setDs({ ...ds, views: ds.views.map((x) => (x.id === nv.id ? nv : x)) })}
+            onDuplicate={() => duplicateView(v)} onMove={(dir) => moveView(v, dir)}
+            onDelete={ds.views.length > 1 ? () => deleteView(v) : undefined}
+            onCalendarLink={!isFiles && ds.fields.some((f) => f.type === "date") ? () => { setViewSettings(null); setFeedsOpen(true); } : undefined} />
+        );
+      })()}
       {rec && (
         <RecordModal ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc}
           onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)}

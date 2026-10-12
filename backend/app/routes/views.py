@@ -1,6 +1,7 @@
 """Views and combined databases."""
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from .. import recordops, remote, store
 from ..compute import Engine
@@ -50,14 +51,49 @@ def create_combo_view(combo_id: str, body: ViewIn, user=User):
         return store.create_view(conn, combo_id=combo_id, name=body.name, type=body.type, config=config)
 
 
+def _view_fields(conn, v, user):
+    if v["table_id"]:
+        return store.get_fields(conn, v["table_id"])
+    return store.resolve_combo(conn, store.get_combo(conn, v["combo_id"], user["id"]))[1]
+
+
 @router.patch("/api/views/{view_id}")
 def update_view(view_id: str, body: ViewPatch, user=User):
     with connection() as conn:
         v = _own_view(conn, view_id, user)
-        return conn.execute(
-            "UPDATE views SET name = %s, config = %s WHERE id = %s RETURNING *",
-            (body.name or v["name"], Jsonb(v["config"] if body.config is None else normalize_config(v["type"], body.config)), view_id),
-        ).fetchone()
+        vtype = body.type or v["type"]
+        config = normalize_config(vtype, v["config"] if body.config is None else body.config)
+        if vtype != v["type"]:  # another kind of view: fill in what it needs (a board's column field, a calendar's dates…)
+            config = _with_defaults(vtype, config, _view_fields(conn, v, user))
+        return conn.execute("UPDATE views SET name = %s, type = %s, config = %s WHERE id = %s RETURNING *",
+                            ((body.name or v["name"]).strip()[:100], vtype, Jsonb(config), view_id)).fetchone()
+
+
+class ViewOrder(BaseModel):
+    ids: list[str]
+
+
+@router.post("/api/views/order")
+def order_views(body: ViewOrder, user=User):
+    """The order of a table's (or combined database's) view tabs."""
+    with connection() as conn:
+        views = [_own_view(conn, vid, user) for vid in body.ids]
+        if len({(str(v["table_id"]), str(v["combo_id"])) for v in views}) > 1:
+            raise HTTPException(400, "These views belong to different tables")
+        for n, v in enumerate(views):
+            conn.execute("UPDATE views SET position = %s WHERE id = %s", (n, v["id"]))
+    return {"ok": True}
+
+
+@router.post("/api/views/{view_id}/duplicate")
+def duplicate_view(view_id: str, user=User):
+    """A copy of the view (filters, sorts, layout), right after it."""
+    with connection() as conn:
+        v = _own_view(conn, view_id, user)
+        col, owner = ("table_id", v["table_id"]) if v["table_id"] else ("combo_id", v["combo_id"])
+        conn.execute(f"UPDATE views SET position = position + 1 WHERE {col} = %s AND position > %s", (owner, v["position"]))
+        return conn.execute(f"INSERT INTO views ({col}, name, type, config, position) VALUES (%s,%s,%s,%s,%s) RETURNING *",
+                            (owner, f"{v['name']} copy"[:100], v["type"], Jsonb(v["config"]), v["position"] + 1)).fetchone()
 
 
 @router.delete("/api/views/{view_id}")
@@ -145,6 +181,8 @@ def update_combo(combo_id: str, body: ComboPatch, user=User):
             conn.execute("UPDATE combos SET hidden = %s WHERE id = %s", (body.hidden, combo_id))
         if body.icon is not None:
             conn.execute("UPDATE combos SET icon = %s WHERE id = %s", (body.icon.strip()[:16] or None, combo_id))
+        if body.description is not None:
+            conn.execute("UPDATE combos SET description = %s WHERE id = %s", (body.description.strip()[:2000] or None, combo_id))
         name = body.name or c["name"]
         sources = _sources_json(conn, body.sources, user) if body.sources is not None else c["sources"]
         if body.remap:

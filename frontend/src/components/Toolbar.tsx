@@ -17,28 +17,41 @@ export const VIEW_TYPES: { type: ViewType; label: string; icon: string; desc: st
   { type: "chart", label: "Chart", icon: "chart", desc: "Bar, line or donut chart" },
 ];
 
-export function ViewTabs({ views, active, onSelect, onCreate, onRename, onDelete }: {
+/** The view tabs: click to switch, drag to reorder, ⋯ (or double-click) on the open one for its settings. */
+export function ViewTabs({ views, active, onSelect, onCreate, onReorder, onSettings }: {
   views: View[]; active?: View; onSelect: (v: View) => void; onCreate: (t: ViewType) => void;
-  onRename: (v: View, name: string) => void; onDelete: (v: View) => void;
+  onReorder: (ids: string[]) => void; onSettings: (v: View) => void;
 }) {
   const add = usePopover();
-  const [menu, setMenu] = useState<{ view: View; anchor: HTMLElement } | null>(null);
-  const [renaming, setRenaming] = useState<string | null>(null);
+  const [drag, setDrag] = useState<string | null>(null);
+  const [order, setOrder] = useState<string[] | null>(null);  // while dragging
+  const shown = order ? order.map((id) => views.find((v) => v.id === id)!).filter(Boolean) : views;
+
+  const over = (id: string) => {
+    if (!drag || drag === id) return;
+    const ids = (order ?? views.map((v) => v.id)).filter((x) => x !== drag);
+    ids.splice(ids.indexOf(id) + (shown.findIndex((v) => v.id === drag) < shown.findIndex((v) => v.id === id) ? 1 : 0), 0, drag);
+    setOrder(ids);
+  };
+  const drop = () => {
+    if (order && order.join() !== views.map((v) => v.id).join()) onReorder(order);
+    setDrag(null); setOrder(null);
+  };
 
   return (
     <div className="view-tabs">
-      {views.map((v) => {
+      {shown.map((v) => {
         const icon = VIEW_TYPES.find((t) => t.type === v.type)?.icon ?? "grid";
-        return renaming === v.id ? (
-          <input key={v.id} className="input tab-rename" autoFocus defaultValue={v.name}
-            onBlur={(e) => { if (e.target.value.trim()) onRename(v, e.target.value.trim()); setRenaming(null); }}
-            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setRenaming(null); }} />
-        ) : (
-          <button key={v.id} className={`view-tab ${active?.id === v.id ? "active" : ""}`}
-            onClick={(e) => active?.id === v.id ? setMenu({ view: v, anchor: e.currentTarget }) : onSelect(v)}
-            onDoubleClick={() => setRenaming(v.id)}>
-            <Icon name={icon} size={14} /> {v.name}
-          </button>
+        const on = active?.id === v.id;
+        return (
+          <div key={v.id} className={`view-tab ${on ? "active" : ""} ${drag === v.id ? "dragging" : ""}`} role="tab" aria-selected={on}
+            draggable onDragStart={(e) => { setDrag(v.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", v.id); }}
+            onDragOver={(e) => { if (drag) { e.preventDefault(); over(v.id); } }} onDrop={(e) => { e.preventDefault(); drop(); }} onDragEnd={drop}
+            onClick={() => !on && onSelect(v)} onDoubleClick={() => onSettings(v)} title={on ? "Double-click or ⋯ for view settings; drag to reorder" : "Drag to reorder"}>
+            <Icon name={icon} size={14} /> <span className="view-tab-name">{v.name}</span>
+            {on && <button className="view-tab-more" aria-label="View settings" title="View settings"
+              onClick={(e) => { e.stopPropagation(); onSettings(v); }}><Icon name="more" size={14} /></button>}
+          </div>
         );
       })}
       <button className="view-tab add" onClick={add.open} title="Add view"><Icon name="plus" size={14} /></button>
@@ -55,21 +68,11 @@ export function ViewTabs({ views, active, onSelect, onCreate, onRename, onDelete
           </div>
         </Popover>
       )}
-      {menu && (
-        <Popover anchor={menu.anchor} onClose={() => setMenu(null)} width={180}>
-          <div className="menu-list">
-            <button className="menu-item" onClick={() => { setRenaming(menu.view.id); setMenu(null); }}><Icon name="edit" size={14} /> Rename</button>
-            {views.length > 1 && (
-              <button className="menu-item danger" onClick={() => { onDelete(menu.view); setMenu(null); }}><Icon name="trash" size={14} /> Delete view</button>
-            )}
-          </div>
-        </Popover>
-      )}
     </div>
   );
 }
 
-function FieldSelect({ fields, value, onChange, placeholder, allowNone }: {
+export function FieldSelect({ fields, value, onChange, placeholder, allowNone }: {
   fields: Field[]; value?: string | null; onChange: (id: string | null) => void; placeholder: string; allowNone?: boolean;
 }) {
   return (

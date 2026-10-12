@@ -168,6 +168,9 @@ export interface TableInfo {
   last_synced_at: string | null;
   last_sync_error: string | null;
   remote?: RemoteInfo | null;
+  description?: string | null;
+  storage_id?: string | null;     // files tables
+  storage_prefix?: string | null;
 }
 
 export interface Account {
@@ -235,4 +238,5 @@ export interface Dataset {
   loadedAt?: number;      // when it was last loaded in full
   pending?: string[];     // combined databases: linked-table sources still loading
   icon?: string | null;   // combined databases: an emoji (tables have it in `table`)
+  description?: string | null;  // combined databases (tables have it in `table`)
 }

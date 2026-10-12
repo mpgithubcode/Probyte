@@ -101,6 +101,7 @@ class TablePatch(BaseModel):
     base_id: str | None = None
     hidden: bool | None = None  # left out of the sidebar
     icon: str | None = None     # an emoji; "" = the default icon
+    description: str | None = None  # what the table is for; "" removes it
 
 
 class FieldIn(BaseModel):
@@ -148,6 +149,7 @@ class ViewIn(BaseModel):
 class ViewPatch(BaseModel):
     name: str | None = None
     config: dict[str, Any] | None = None
+    type: Literal["grid", "kanban", "timeline", "calendar", "list", "gallery", "chart"] | None = None  # show it another way
 
 
 class ComboSource(BaseModel):
@@ -174,6 +176,7 @@ class ComboPatch(BaseModel):
     fields: list[ComboField] | None = None
     hidden: bool | None = None
     icon: str | None = None
+    description: str | None = None
     remap: bool = False  # rebuild the field mapping automatically from the sources
 
 
