@@ -38,9 +38,14 @@ One `docker compose up`, plain PostgreSQL, live updates in every open window, an
 
 ### Up and running
 
+Ready-made images are on Docker Hub ([probyte](https://hub.docker.com/r/mpgithubcode/probyte), [probyte-radicale](https://hub.docker.com/r/mpgithubcode/probyte-radicale), [probyte-office](https://hub.docker.com/r/mpgithubcode/probyte-office)), so all you need is Docker:
+
 ```bash
-cp .env.example .env    # set a database password
-docker compose up -d --build
+mkdir probyte && cd probyte
+curl -fsSLO https://raw.githubusercontent.com/mpgithubcode/Probyte/main/deploy/docker-compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/mpgithubcode/Probyte/main/.env.example
+nano .env               # set a database password
+docker compose up -d
 ```
 
 Open http://localhost:8080 and create an account: the first one is the admin. [Full setup ↓](#quick-start)
@@ -274,6 +279,16 @@ Completed At syncs with the standard iCalendar `COMPLETED` property, so phones s
 
 ## Quick start
 
+**From Docker Hub** (no source code needed): download [`deploy/docker-compose.yml`](deploy/docker-compose.yml) and [`.env.example`](.env.example) (as `.env`) into an empty folder, set `POSTGRES_PASSWORD` in `.env`, and start it:
+
+```bash
+docker compose up -d
+```
+
+Upgrade with `docker compose pull && docker compose up -d` (database changes are applied on start; make a backup first). The images are tagged `latest` and by version (`0.1.0`, `0.1`); set `PROBYTE_VERSION=0.1.0` in `.env` to stay on one.
+
+**From source** (to change the code): clone the repository, then
+
 ```bash
 cp .env.example .env    # then edit it
 docker compose up -d --build
@@ -497,6 +512,8 @@ backend/app/
   ratelimit.py slowing down password guessing
   audit.py     record history (who changed what)
   admin.py     command line: reset-password, create-user, backup, backups, restore
+deploy/        docker-compose.yml that runs the published Docker Hub images (no source needed)
+.github/workflows/docker.yml   builds and pushes the images to Docker Hub when a release is tagged
 radicale/      bundled Radicale image: htpasswd auth, owner-only rights
 office/        document converter for file previews (LibreOffice without a GUI behind a tiny HTTP service; internal only)
 frontend/src/

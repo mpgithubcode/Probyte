@@ -1,0 +1,111 @@
+# Probyte from Docker Hub: no source code needed.
+#
+#   mkdir probyte && cd probyte
+#   curl -fsSLO https://raw.githubusercontent.com/mpgithubcode/Probyte/main/deploy/docker-compose.yml
+#   curl -fsSL -o .env https://raw.githubusercontent.com/mpgithubcode/Probyte/main/.env.example
+#   nano .env                # set POSTGRES_PASSWORD (and your time zone, public address…)
+#   docker compose up -d     # then open http://localhost:8080
+#
+# Upgrade: docker compose pull && docker compose up -d   (database changes are applied on start)
+# Pin a version with PROBYTE_VERSION=0.1.0 in .env (default: latest).
+# To build from source instead, use the docker-compose.yml at the top of the repository.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: probyte
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-probyte}
+      POSTGRES_DB: probyte
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U probyte -d probyte"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    image: ${PROBYTE_IMAGE:-mpgithubcode/probyte}:${PROBYTE_VERSION:-latest}
+    restart: unless-stopped
+    environment: &probyte-env
+      DATABASE_URL: postgresql://probyte:${POSTGRES_PASSWORD:-probyte}@db:5432/probyte
+      DEFAULT_TZ: ${DEFAULT_TZ:-UTC}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-300}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      # Bundled CalDAV server: Probyte creates a login on it for every user.
+      RADICALE_URL: http://radicale:5232/
+      RADICALE_HTPASSWD: /radicale-users/users
+      # The address users enter on their phones (your reverse-proxied Radicale URL).
+      RADICALE_PUBLIC_URL: ${RADICALE_PUBLIC_URL:-}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      # Linked tables: allow links to Probyte servers on private/LAN addresses (off = safer on open sign-up servers)
+      REMOTE_ALLOW_PRIVATE: ${REMOTE_ALLOW_PRIVATE:-false}
+      # Webhooks: allow deliveries to private/LAN addresses (e.g. n8n or Home Assistant on your network)
+      WEBHOOK_ALLOW_PRIVATE: ${WEBHOOK_ALLOW_PRIVATE:-false}
+      # Public address of Probyte (e.g. https://probyte.example.com), used in OAuth/MCP discovery. Default: from the request.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      # Optional fixed bearer token for MCP clients (16+ characters), acting as MCP_BEARER_USER (default: first admin)
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:-}
+      MCP_BEARER_USER: ${MCP_BEARER_USER:-}
+      MCP_BEARER_SCOPE: ${MCP_BEARER_SCOPE:-write}
+      # Backups (database, calendars, files) by the worker: hours between them (0 = off) and how many to keep
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-24}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      # Key that encrypts stored account passwords; empty = a key file created on the "keys" volume
+      PROBYTE_SECRET_KEY: ${PROBYTE_SECRET_KEY:-}
+      # Document converter for previews of Word / PowerPoint / OpenDocument files in files tables (empty = off)
+      OFFICE_CONVERTER_URL: ${OFFICE_CONVERTER_URL-http://office:3000}
+    volumes:
+      - radicale-users:/radicale-users
+      - attachments:/data/attachments
+      - backups:/backups:ro                 # listed and downloadable in Settings → Backups
+      - keys:/keys                          # the key that encrypts stored passwords (not in backups: keep a copy)
+    ports:
+      - "${PROBYTE_PORT:-8080}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Background jobs: calendar/contacts sync, webhook deliveries (with retries), cleanup. Same image as app.
+  worker:
+    image: ${PROBYTE_IMAGE:-mpgithubcode/probyte}:${PROBYTE_VERSION:-latest}
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *probyte-env
+    volumes:
+      - radicale-users:/radicale-users
+      - attachments:/data/attachments
+      - radicale-data:/radicale-data        # backed up (and put back by a restore)
+      - backups:/backups                    # one folder per backup; use a bind mount to keep them on another disk
+      - keys:/keys
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Converts Word, PowerPoint and OpenDocument files to PDF for previews in files tables (LibreOffice, no GUI).
+  # Internal only. Not needed without files tables: remove it and set OFFICE_CONVERTER_URL= to turn previews of those off.
+  office:
+    image: mpgithubcode/probyte-office:${PROBYTE_VERSION:-latest}
+    restart: unless-stopped
+    mem_limit: 1g
+
+  # CalDAV server for phones/desktop clients. Point your reverse proxy at port 5232
+  # (preferably on its own subdomain, e.g. https://dav.example.com).
+  radicale:
+    image: mpgithubcode/probyte-radicale:${PROBYTE_VERSION:-latest}
+    restart: unless-stopped
+    volumes:
+      - radicale-data:/data
+      - radicale-users:/radicale-users:ro
+    ports:
+      - "${RADICALE_PORT:-5232}:5232"
+
+volumes:
+  attachments:
+  backups:
+  keys:
+  pgdata:
+  radicale-data:
+  radicale-users:

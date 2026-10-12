@@ -6,6 +6,13 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="Probyte" \
+      org.opencontainers.image.description="Probyte: self-hosted database app (web app, API, MCP server and worker)" \
+      org.opencontainers.image.source="https://github.com/mpgithubcode/Probyte" \
+      org.opencontainers.image.url="https://github.com/mpgithubcode/Probyte" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.version="${VERSION}"
 WORKDIR /app
 # pg_dump / pg_restore for backups (a newer client works with the Postgres 16 server); pdftoppm and fonts for file previews
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client poppler-utils fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
