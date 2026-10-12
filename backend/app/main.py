@@ -63,7 +63,7 @@ class CompressAPI:
 
     def __init__(self, app):
         self.app = app
-        self.gzip = GZipMiddleware(app, minimum_size=2048, compresslevel=5)
+        self.gzip = GZipMiddleware(app, minimum_size=2048, compresslevel=3)  # 3: as quick as 1, nearly as small as 6
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "") if scope["type"] == "http" else ""

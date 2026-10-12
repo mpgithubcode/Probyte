@@ -25,7 +25,7 @@ from app.dav.items import Mapper, build_body, item_name, parse_item
 
 log = logging.getLogger("probyte.sync")
 
-SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "300"))      # seconds between background syncs; 0 disables
+SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "120"))      # seconds between background syncs; 0 disables
 AUTO_PUSH_DELAY = float(os.environ.get("AUTO_PUSH_DELAY", "2"))  # seconds after an edit before it is pushed; <0 disables
 STALE_AFTER = float(os.environ.get("SYNC_ON_OPEN_AFTER", "20"))  # opening a table syncs it when its last sync is older
 
@@ -126,7 +126,13 @@ def _sync(table_id: str, full: bool) -> dict:
     if not full and state and state == sync_state.get("state"):
         stats["skipped"] = True
     else:
-        etags = coll.etags()
+        # what changed: since the last sync-token when the server keeps them (only the changes come back), otherwise
+        # every item's ETag
+        delta = coll.changes_since(sync_state["token"]) if not full and sync_state.get("token") and coll.token else None
+        if delta:
+            _, etags, removed = delta
+        else:
+            etags, removed = coll.etags(), None
         with connection() as conn:
             rows = conn.execute("SELECT * FROM records WHERE table_id = %s AND caldav_uid IS NOT NULL", (table_id,)).fetchall()
             by_uid = {r["caldav_uid"]: r for r in rows}
@@ -170,16 +176,20 @@ def _sync(table_id: str, full: bool) -> dict:
                 else:
                     conn.execute("UPDATE records SET caldav_href = %s, caldav_etag = %s WHERE id = %s", (item_url, etag, rec["id"]))
             # Removed on the server since our last sync (and not edited locally).
-            present = {path_of(u) for u in etags}
+            gone = ({path_of(u) for u in removed} if removed is not None
+                    else {path_of(r["caldav_href"]) for r in rows if r["caldav_href"]} - {path_of(u) for u in etags})
             for rec in rows:
-                if rec["caldav_href"] and path_of(rec["caldav_href"]) not in present and rec["sync_status"] == "synced" and not rec["deleted"]:
+                if rec["caldav_href"] and path_of(rec["caldav_href"]) in gone and rec["sync_status"] == "synced" and not rec["deleted"]:
                     cur = conn.execute("DELETE FROM records WHERE id = %s AND updated_at = %s AND sync_status = 'synced'",
                                        (rec["id"], rec["updated_at"]))  # edited here meanwhile: keep it (it's pushed again)
                     if cur.rowcount:
                         audit.note(conn, table_id, rec["id"], "deleted")
                         events.record_changed(conn, table, "record.deleted", rec["id"], source="sync")
                         stats["removed"] += 1
-            sync_state["ignored"] = {p: e for p, e in ignored.items() if p in present}
+            sync_state["ignored"] = ({p: e for p, e in ignored.items() if p not in gone} if removed is not None
+                                     else {p: e for p, e in ignored.items() if p in {path_of(u) for u in etags}})
+        # the token from before our own pushes: they come back next time, and are skipped (their ETags are known)
+        sync_state["token"] = coll.token
 
     # ---- push
     if has_local or not stats["skipped"]:
@@ -205,8 +215,11 @@ def _sync(table_id: str, full: bool) -> dict:
             except Exception as e:
                 log.warning("push of record %s failed: %s", rec["id"], e)
                 stats["errors"].append(f"push {rec['id']}: {e}")
-        if stats["pushed"] or stats["deleted"]:
-            state = coll.state()  # our own writes changed the tag; remember it so the next sync can skip
+        if (stats["pushed"] or stats["deleted"]) and not coll.token:
+            # our own writes changed the tag; remember it so the next sync can skip (with a sync-token the next sync
+            # asks for the changes since before them instead: ours come back with known ETags, and nothing made
+            # on another device meanwhile is missed)
+            state = coll.state()
 
     sync_state["state"] = state
     with connection() as conn:

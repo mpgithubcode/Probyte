@@ -20,7 +20,7 @@ services:
     environment: &probyte-env
       DATABASE_URL: postgresql://probyte:${POSTGRES_PASSWORD:-probyte}@db:5432/probyte
       DEFAULT_TZ: ${DEFAULT_TZ:-UTC}
-      SYNC_INTERVAL: ${SYNC_INTERVAL:-300}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-120}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       # Linked tables: allow links to Probyte servers on private/LAN addresses (off = safer on open sign-up servers)

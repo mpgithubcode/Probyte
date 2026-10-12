@@ -131,6 +131,14 @@ def test_external_account_sync(user):
     user.put_item(href, body.replace("SUMMARY:Remote meeting", "SUMMARY:Moved meeting"))
     user.sync(t["id"])
     assert [r["data"][F["summary"]] for r in user.records(t["id"])] == ["Moved meeting"]
+    # only what changed comes back (sync-collection): an item added there, and one deleted there
+    put(user, t, str(uuid.uuid4()), "BEGIN:VEVENT\r\nUID:UID_HERE\r\nDTSTAMP:20261001T000000Z\r\nSUMMARY:Added there\r\n"
+                                    "DTSTART:20261013T090000Z\r\nDTEND:20261013T100000Z\r\nEND:VEVENT")
+    assert requests.delete(BASE + href, auth=user.dav_auth()).status_code == 204
+    stats = user.sync(t["id"])
+    assert stats["fetched"] == 1 and stats["removed"] == 1, stats
+    assert [r["data"][F["summary"]] for r in user.records(t["id"])] == ["Added there"]
+    assert user.sync(t["id"])["skipped"]                                             # nothing new: one request
     assert user.delete(API + f"/accounts/{acct['id']}").status_code in (200, 400)   # in use: refused, or tables keep working
 
 

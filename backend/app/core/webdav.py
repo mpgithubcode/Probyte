@@ -108,6 +108,7 @@ class Collection(DavClient):
     def __init__(self, url, username, password, kind: str):
         super().__init__(url, username, password)
         self.kind = kind  # "calendar" | "addressbook"
+        self.token: str | None = None  # the RFC 6578 sync-token, when the server has one (read by state())
 
     def state(self) -> str | None:
         try:
@@ -115,10 +116,42 @@ class Collection(DavClient):
         except DavError:
             return None
         for _, props in resps:
+            tok = props.get(q(D, "sync-token"))
+            self.token = (tok.text or "").strip() or None if tok is not None else None
             vals = [(props[t].text or "").strip() for t in (q(CS, "getctag"), q(D, "sync-token")) if t in props]
             if any(vals):
                 return "|".join(vals)
         return None
+
+    def changes_since(self, token: str) -> tuple[str, dict[str, str], set[str]] | None:
+        """RFC 6578 sync-collection: (the new token, {item URL: ETag} added or changed, {item URLs} removed) since
+        `token`. None when the server doesn't do it or no longer knows the token: then list everything."""
+        body = (f'<?xml version="1.0"?><d:sync-collection {NS}><d:sync-token>{xml_text(token)}</d:sync-token>'
+                '<d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>')
+        try:
+            r = self.req("REPORT", self.url, body, "1", ok=(207,))
+            root = ET.fromstring(r.content)
+        except (DavError, ET.ParseError):
+            return None
+        new = (root.findtext(q(D, "sync-token")) or "").strip()
+        if not new:
+            return None
+        own = path_of(self.url)
+        changed, removed = {}, set()
+        for resp in root.findall(q(D, "response")):
+            href = (resp.findtext(q(D, "href")) or "").strip()
+            if not href:
+                continue
+            url = urljoin(r.url, href)
+            if path_of(url) == own:
+                continue
+            status = resp.findtext(q(D, "status")) or ""
+            if " 404" in status:
+                removed.add(url)
+                continue
+            et = resp.find(f".//{q(D, 'getetag')}")
+            changed[url] = (et.text or "").strip() if et is not None else ""
+        return new, changed, removed
 
     def etags(self) -> dict[str, str]:
         """{absolute item URL: ETag} for every item in the collection."""
