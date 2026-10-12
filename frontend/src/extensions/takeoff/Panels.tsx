@@ -103,6 +103,24 @@ export function ItemsPanel({ project, page, marks, item, onItem, onChanged, onEr
 }) {
   const [busy, setBusy] = useState(false);
   const sum = useMemo(() => new Map(project.summary.map((s) => [s.item_id, s])), [project.summary]);
+  const [progress, setProgress] = useState("");
+  const [report, setReport] = useState<{ id: string; name: string; found: number; error?: string }[] | null>(null);
+  const findable = project.items.filter((i) => i.status === "confirmed" && i.kind === "count" && (i.tag || i.symbol));
+  const findAll = async () => {
+    const sheets = project.pages.filter((s) => s.included);
+    if (!sheets.length) { onError(new Error("Include sheets in the takeoff first (Sheets tab)")); return; }
+    const out: { id: string; name: string; found: number; error?: string }[] = [];
+    for (const [k, it] of findable.entries()) {
+      const row: { id: string; name: string; found: number; error?: string } = { id: it.id, name: it.name, found: 0 };
+      for (const s of sheets) {
+        setProgress(`${it.name} on ${sheetName(s)} (item ${k + 1} of ${findable.length})…`);
+        try { row.found += (await tk.find(it.id, { method: it.tag ? "tag" : "symbol", pages: [s.page_no] })).found; }
+        catch (e) { row.error = (e as Error).message; break; }
+      }
+      out.push(row);
+    }
+    setProgress(""); setReport(out); onChanged();
+  };
   const findLegends = async () => {
     setBusy(true);
     try {
@@ -137,6 +155,20 @@ export function ItemsPanel({ project, page, marks, item, onItem, onChanged, onEr
         <button className="btn sm" onClick={() => addItem("length")}><Icon name="polyline" size={13} /> Run</button>
         <button className="btn sm" onClick={() => addItem("area")}><Icon name="area" size={13} /> Area</button>
       </div>
+      {findable.length > 0 && (
+        <div className="tk-findall">
+          <button className="btn sm" disabled={!!progress} onClick={findAll} title="Each item by its label, or its symbol when it has no label, on every sheet in the takeoff">
+            <Icon name="search" size={13} /> {progress || `Find all ${findable.length} items on the takeoff's sheets`}</button>
+          {report && (
+            <div className="tk-report">
+              {report.map((r) => (
+                <div key={r.id} className={r.error ? "err" : ""}><b>{r.name}</b>: {r.error ?? `${r.found} found`}</div>
+              ))}
+              <button className="link-btn small" onClick={() => setReport(null)}>Close</button>
+            </div>
+          )}
+        </div>
+      )}
       {!cats.length && <p className="muted tk-empty-note">No items yet.</p>}
       {cats.map(([cat, list]) => (
         <div key={cat} className="tk-cat">
@@ -193,7 +225,7 @@ function ItemDetail({ project, page, marks, item, summary, onBack, onChanged, on
       setResult(total ? `Found ${total}: ${found.join(", ")}. Review them on the sheets.`
         : `Nothing found${method === "symbol" ? ": try a lower likeness, or box the symbol again tightly" : ""}.`);
       onChanged();
-    } catch (e) { onError(e); setResult(""); }
+    } catch (e) { setResult((e as Error).message); }
     setBusy(false);
   };
   const review = (status: "confirmed" | "rejected", body: { page_no?: number; min_score?: number }) =>

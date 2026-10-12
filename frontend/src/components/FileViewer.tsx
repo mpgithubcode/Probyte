@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { FILE_ACTIONS, useExtensions } from "../extensions";
 import { OfficeEditor, convertsTo, officeMode, saveOffice, startOffice, useOfficeStatus, type OfficeSession } from "./OfficeEditor";
 import { Popover, usePopover } from "./Overlay";
 import { createPortal } from "react-dom";
@@ -64,6 +65,7 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
   const dirty = editing && draft !== original;
   // ONLYOFFICE: the open editor, whether it has changes not yet in the storage, and the "save or discard?" question
   const officeStatus = useOfficeStatus();
+  const extensions = useExtensions();
   const [office, setOffice] = useState<OfficeSession | null>(null);
   const [officeDirty, setOfficeDirty] = useState(false);
   const [officeNote, setOfficeNote] = useState("");
@@ -214,6 +216,13 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
             {(kind === "pdf" || kind === "image" || kind === "video" || kind === "audio") && (item.file || item.url) && (
               <a className="viewer-btn" href={attachmentUrl(item)} target="_blank" rel="noreferrer" title="Open in a new tab"><Icon name="external" size={17} /></a>
             )}
+            {!item.url && item.file && extensions.filter((x) => x.enabled).flatMap((x) => FILE_ACTIONS.filter((a) => a.ext === x.id && a.accepts(item))).map((a) => (
+              <button key={a.ext} className="viewer-btn text" disabled={busy} title={a.label} onClick={async () => {
+                setBusy(true); setErr("");
+                try { const to = await a.run(item.id, item.name); window.location.hash = to; onClose(); } catch (e) { setErr((e as Error).message); }
+                setBusy(false);
+              }}><Icon name={a.icon} size={16} /> <span>{a.label.replace(/^Open in /, "")}</span></button>
+            ))}
             <a className="viewer-btn text" href={attachmentUrl(item, true)} title="Download"><Icon name="download" size={17} /> <span>Download</span></a>
             {onReplace && canChangeFile && entry.rec && (<>
               <input ref={replaceRef} type="file" hidden onChange={(e) => replace(e.target.files)} />

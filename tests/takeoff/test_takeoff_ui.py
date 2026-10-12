@@ -40,6 +40,8 @@ def test_takeoff_in_the_browser(admin, tmp_path):
     os.makedirs(SHOTS, exist_ok=True)
     pdf = make(str(tmp_path / "Lighting set.pdf"))
     u = Client()
+    drive = u.table("files", "Drawings", storage={"kind": "s3", "endpoint": "http://s3:9000", "bucket": "test-bucket", "username": "testkey",
+                                                  "secret": "testsecret12345"}, storage_prefix=f"tk{os.getpid()}{id(u) % 9999}")
     with sync_playwright() as p:
         b = p.chromium.launch()
         # the admin switches it on
@@ -62,15 +64,24 @@ def test_takeoff_in_the_browser(admin, tmp_path):
         pg.click(".side-extensions .side-item:has-text('Blueprint takeoff')")
         expect(pg.locator(".tk-empty")).to_contain_text("Start a takeoff")
         pg.set_input_files(".tk-projects input[type=file]", pdf)
+        dialog = pg.locator(".modal", has_text="New takeoff")
+        expect(dialog.locator("input").first).to_have_value("Lighting set")
+        # kept in a files table, in a folder
+        dialog.locator("select[aria-label='Keep the PDF in']").select_option(label="Drawings (files table)")
+        dialog.locator("label:has-text('Folder') input").fill("Jobs/Assembly Row")
+        dialog.locator("button:has-text('Start')").click()
         expect(pg.locator(".tk-name")).to_have_value("Lighting set", timeout=30000)
+        F = u.fields(drive["id"])
+        kept = u.records(drive["id"])
+        assert [(r["data"][F["name"]], r["data"][F["folder"]]) for r in kept] == [("Lighting set.pdf", "Jobs/Assembly Row")]
         # sheets: read from the title blocks; include the electrical ones
         rows = pg.locator(".tk-sheet-row")
-        expect(rows).to_have_count(4)
+        expect(rows).to_have_count(5)
         expect(rows.nth(1).locator(".tk-sheet-no")).to_have_value("E1.0")
         expect(rows.nth(1).locator("input[aria-label='Sheet title']")).to_have_value("ELECTRICAL LIGHTING PLAN")
         pg.click(".tk-chips .chip:has-text('Electrical')")
         pg.click(".tk-bulk button:has-text('Include electrical')")
-        expect(pg.locator(".tk-tab.active")).to_contain_text("Sheets · 2/4")
+        expect(pg.locator(".tk-tab.active")).to_contain_text("Sheets · 3/5")
         rows = pg.locator(".tk-sheet-row")
         rows.first.click()                                        # E1.0
         expect(pg.locator(".tk-scale")).to_contain_text("1/4\" = 1'-0\"")
@@ -82,9 +93,10 @@ def test_takeoff_in_the_browser(admin, tmp_path):
         pg.click(".tk-tab:has-text('Items')")
         pg.click("button:has-text('Read legends on this sheet')")
         modal = pg.locator(".modal", has_text="Legend entries on E1.0")
-        expect(modal.locator("tbody tr")).to_have_count(2)
-        expect(modal.locator(".tk-crop")).to_have_count(2)
+        expect(modal.locator("tbody tr")).to_have_count(3)
+        expect(modal.locator(".tk-crop")).to_have_count(3)
         pg.screenshot(path=f"{SHOTS}/takeoff-legend.png")
+        modal.locator("tbody tr").nth(2).locator("input[type=checkbox]").uncheck()   # the linear luminaire: not this time
         modal.locator("button:has-text('Add 2 items')").click()
         expect(pg.locator(".tk-detail")).to_be_visible()          # the first one opens
         expect(pg.locator(".tk-detail input[aria-label=Name]")).to_have_value("2X4 LED TROFFER")
@@ -141,5 +153,19 @@ def test_takeoff_in_the_browser(admin, tmp_path):
         pg.click("button:has-text('To a Probyte table')")
         expect(pg.locator(".page-head h1, .title-row h1")).to_contain_text("Takeoff – Lighting set", timeout=15000)
         expect(pg.locator(".grid tbody")).to_contain_text("2X4 LED TROFFER")
+        # from the file viewer: the same PDF opens its takeoff (no second one is made)
+        pg.goto(f"{BASE}/#/table/{drive['id']}?record={kept[0]['id']}")
+        pg.click(".viewer-bar button:has-text('Blueprint takeoff')")
+        expect(pg.locator(".tk-name")).to_have_value("Lighting set", timeout=30000)
+        assert len(u.j("GET", "/x/takeoff/projects")) == 1
+        # the picker searches every files table
+        pg.click("button[title='All takeoffs']")
+        pg.click("button:has-text('From a files table')")
+        picker = pg.locator(".modal", has_text="Drawings from your files tables")
+        expect(picker.locator(".tk-pick-row")).to_have_count(1)
+        picker.locator("input[aria-label='Search PDFs']").fill("assembly lighting")
+        expect(picker.locator(".tk-pick-row")).to_contain_text("Jobs/Assembly Row/Lighting set.pdf")
+        picker.locator("input[aria-label='Search PDFs']").fill("nothing like it")
+        expect(picker.locator(".tk-pick-row")).to_have_count(0)
         assert not errors, errors
         b.close()

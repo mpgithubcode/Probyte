@@ -45,9 +45,54 @@ def _open(pid):
     return fitz.open(p)
 
 
+def upright(path: Path) -> bool:
+    """Pages stored turned (CAD sets often are: /Rotate 90 or 270) are straightened, keeping how they look, so that
+    text, lines and pictures all use the coordinates the sheet is seen in. True when the file changed."""
+    doc = fitz.open(path)
+    if not any(p.rotation for p in doc):
+        doc.close()
+        return False
+    for p in doc:
+        if p.rotation:
+            p.remove_rotation()
+    tmp = path.with_suffix(".upright.pdf")
+    doc.save(tmp, garbage=1, deflate=True)
+    doc.close()
+    tmp.replace(path)
+    return True
+
+
+def _ensure_upright(conn, p) -> None:
+    """Projects made before pages were straightened: straighten now, read the sheets again (the ones nobody checked
+    yet) and drop suggestions placed in the old coordinates."""
+    if (p["settings"] or {}).get("upright"):
+        return
+    if upright(_pdf(p["id"])):
+        doc = _open(p["id"])
+        fresh = {x["page_no"]: x for x in _index(p["id"], doc)}
+        for pg in conn.execute("SELECT * FROM tk_pages WHERE project_id = %s", (p["id"],)).fetchall():
+            f = fresh.get(pg["page_no"])
+            if not f:
+                continue
+            conn.execute("UPDATE tk_pages SET width = %s, height = %s, scales = %s, has_text = %s WHERE project_id = %s AND page_no = %s",
+                         (f["width"], f["height"], Jsonb(f["scales"]), f["has_text"], p["id"], pg["page_no"]))
+            if not pg["confirmed"]:
+                conn.execute("UPDATE tk_pages SET sheet_no = %s, title = %s, discipline = %s, scale = COALESCE(scale, %s) "
+                             "WHERE project_id = %s AND page_no = %s",
+                             (f["sheet_no"], f["title"], f["discipline"], Jsonb(f["scale"]) if f["scale"] else None, p["id"], pg["page_no"]))
+        conn.execute("DELETE FROM tk_marks WHERE project_id = %s AND status = 'suggested'", (p["id"],))
+        # symbols read from legends were placed in the old coordinates (ones boxed by hand were placed as seen: they stay)
+        conn.execute("UPDATE tk_items SET symbol = NULL WHERE project_id = %s AND symbol ? 'legend'", (p["id"],))
+        shutil.rmtree(DIR / "cache" / str(p["id"]), ignore_errors=True)
+    conn.execute("UPDATE tk_projects SET settings = settings || '{\"upright\": true}' WHERE id = %s", (p["id"],))
+
+
 def _project(conn, pid, user):
     p = conn.execute("SELECT * FROM tk_projects WHERE id = %s AND user_id = %s", (pid, user["id"])).fetchone()
-    return p or store.not_found("Project not found")
+    if not p:
+        store.not_found("Project not found")
+    _ensure_upright(conn, p)
+    return p
 
 
 def _item(conn, iid, user):
@@ -112,10 +157,13 @@ def _mark_out(m) -> dict:
 
 def _index(pid, doc) -> list[dict]:
     """Every page: which sheet it is (title block, drawing index), its scales, whether it has text."""
-    index = drawings.sheet_index(doc)
+    first = [drawings.read_sheet(page, {}) for page in doc]
+    index = drawings.sheet_index(doc, {f["sheet_no"] for f in first if f["sheet_no"]})
     out = []
     for page in doc:
-        info = drawings.read_sheet(page, index)
+        info = dict(first[page.number])
+        if index.get(info["sheet_no"]):
+            info["title"] = index[info["sheet_no"]]
         scales = drawings.scales_on(page)
         out.append({"page_no": page.number, **info, "width": page.rect.width, "height": page.rect.height,
                     "scales": [{"label": s["label"], "ft_per_pt": s["ft_per_pt"], "rect": s["rect"]} for s in scales[:6]],
@@ -134,14 +182,17 @@ def _create(user, name: str, data_path: Path, file_name: str, source: dict) -> d
         raise HTTPException(400, "The PDF is password protected")
     if doc.page_count > MAX_PAGES:
         raise HTTPException(400, f"That's more than {MAX_PAGES} pages")
+    doc.close()
+    upright(data_path)
+    doc = fitz.open(data_path)
     pid = uuid.uuid4()
     pages = _index(pid, doc)
     doc.close()
     DIR.mkdir(parents=True, exist_ok=True)
     shutil.move(str(data_path), _pdf(pid))
     with connection() as conn:
-        conn.execute("INSERT INTO tk_projects (id, user_id, name, file_name, source, page_count) VALUES (%s,%s,%s,%s,%s,%s)",
-                     (pid, user["id"], name.strip() or file_name, file_name, Jsonb(source), len(pages)))
+        conn.execute("INSERT INTO tk_projects (id, user_id, name, file_name, source, page_count, settings) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                     (pid, user["id"], name.strip() or file_name, file_name, Jsonb(source), len(pages), Jsonb({"upright": True})))
         for p in pages:
             conn.execute("INSERT INTO tk_pages (project_id, page_no, sheet_no, title, discipline, width, height, scale, scales, has_text) "
                          "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -151,13 +202,15 @@ def _create(user, name: str, data_path: Path, file_name: str, source: dict) -> d
 
 
 @router.get("/projects")
-def list_projects(user=User):
+def list_projects(record_id: str | None = None, user=User):
+    """Your takeoffs (record_id: the ones made from that file of a files table)."""
     with connection() as conn:
         rows = conn.execute("SELECT p.*, (SELECT count(*) FROM tk_items i WHERE i.project_id = p.id AND i.status = 'confirmed') AS items, "
                             "(SELECT count(*) FROM tk_pages g WHERE g.project_id = p.id AND g.included) AS included "
-                            "FROM tk_projects p WHERE user_id = %s ORDER BY updated_at DESC", (user["id"],)).fetchall()
+                            "FROM tk_projects p WHERE user_id = %s" + (" AND source->>'record_id' = %s" if record_id else "")
+                            + " ORDER BY updated_at DESC", (user["id"], record_id) if record_id else (user["id"],)).fetchall()
     return [{"id": str(r["id"]), "name": r["name"], "file_name": r["file_name"], "page_count": r["page_count"], "items": r["items"],
-             "included": r["included"], "updated_at": r["updated_at"]} for r in rows]
+             "included": r["included"], "updated_at": r["updated_at"], "source": r["source"]} for r in rows]
 
 
 @router.post("/projects")
@@ -516,6 +569,27 @@ def delete_item(iid: str, user=User):
     return {"ok": True}
 
 
+class SymbolBox(BaseModel):
+    page: int
+    rect: list[float]
+
+
+@router.post("/items/{iid}/symbol")
+def set_symbol(iid: str, body: SymbolBox, user=User):
+    """The item's symbol, boxed on a sheet: the box is tightened to what's drawn in it."""
+    with connection() as conn:
+        it = _item(conn, iid, user)
+    doc = _open(it["project_id"])
+    if not 0 <= body.page < doc.page_count or len(body.rect) != 4:
+        raise HTTPException(400, "A symbol is a page and a rectangle")
+    page = doc[body.page]
+    words = [w for w in drawings.flat_words(page) if drawings.touches(w[:4], body.rect)]
+    tight = drawings._picture([d for d in page.get_drawings() if drawings.touches(d["rect"], body.rect)], words, body.rect, words)
+    rect = tight or body.rect
+    return update_item(iid, ItemIn(symbol={"page": body.page, "rect": rect, **({"legend": it["symbol"]["legend"]}
+                                                                                 if it["symbol"] and it["symbol"].get("legend") else {})}), user)
+
+
 @router.get("/items/{iid}/symbol.png")
 def symbol_png(iid: str, user=User):
     with connection() as conn:
@@ -525,6 +599,36 @@ def symbol_png(iid: str, user=User):
     doc = _open(it["project_id"])
     pix = drawings.render(doc[it["symbol"]["page"]], 200, clip=it["symbol"]["rect"])
     return Response(pix.tobytes("png"), media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+
+
+def _letters(doc, symbol) -> list[str]:
+    """The letters written inside a symbol's picture (S for a switch, SD for a smoke detector), normalised."""
+    return [drawings.norm_tag(w[4]) for w in drawings.flat_words(doc[symbol["page"]])
+            if drawings._inside(((w[0] + w[2]) / 2, (w[1] + w[3]) / 2), [symbol["rect"]]) and drawings.norm_tag(w[4])]
+
+
+def _text_fits(words_at, box, letters) -> bool:
+    """Is a place's text right for a symbol? With letters: they're written there as a word of their own (not inside
+    STRUCTURE). Without: the place isn't mostly text (a note, a dimension)."""
+    if letters:
+        return any(drawings.norm_tag(w[4]).startswith(letters[0]) and len(drawings.norm_tag(w[4])) <= len(letters[0]) + 2
+                   for w in words_at)
+    area = max((box[2] - box[0]) * (box[3] - box[1]), 1)
+    covered = sum(max(0, min(w[2], box[2]) - max(w[0], box[0])) * max(0, min(w[3], box[3]) - max(w[1], box[1])) for w in words_at)
+    return covered < area * 0.35
+
+
+_legend_cache: dict = {}
+
+
+def _legend_areas(pid, page) -> list:
+    """The legends and schedules of a sheet: left out of finds on it (their pictures and labels aren't on the plan)."""
+    key = (str(pid), page.number, _pdf(pid).stat().st_mtime)
+    if key not in _legend_cache:
+        if len(_legend_cache) > 500:
+            _legend_cache.clear()
+        _legend_cache[key] = [r["rect"] for r in drawings.legend_regions(page)]
+    return _legend_cache[key]
 
 
 class FindIn(BaseModel):
@@ -558,19 +662,43 @@ def find_item(iid: str, body: FindIn, user=User):
         tpl = symbols.symbol_picture(doc[it["symbol"]["page"]], it["symbol"]["rect"])
         if tpl is None:
             raise HTTPException(400, "Nothing is drawn in the symbol's box: box it again")
+        why = symbols.plainness(tpl)
+        if why:
+            raise HTTPException(400, f"This symbol can't be told apart from the drawing's other lines ({why}): "
+                                     + ("find it by its label instead" if it["tag"] else "give it its label (the text next to it on the plans) and find it by that, or count it by clicking"))
+        # similar symbols of the other items (receptacle types…): a place goes to whichever fits it best
+        with connection() as conn:
+            sibs = conn.execute("SELECT id, symbol FROM tk_items WHERE project_id = %s AND id <> %s AND kind = 'count' AND status = 'confirmed' "
+                                "AND symbol IS NOT NULL", (pid, iid)).fetchall()
+        letters = _letters(doc, it["symbol"])
+        rivals = []
+        for sb in sibs:
+            t2 = symbols.symbol_picture(doc[sb["symbol"]["page"]], sb["symbol"]["rect"])
+            if t2 is not None and not symbols.plainness(t2) and 0.5 < (t2.size / tpl.size) < 2:
+                rivals.append((t2, _letters(doc, sb["symbol"])))
     threshold = min(max(body.threshold, 0.4), 0.99)
     results = []
     for pg in pages:
         page = doc[pg["page_no"]]
         # left out: the sheet's left-out areas, and the legend pictures themselves
-        excluded = list(pg["excluded"] or [])
+        excluded = list(pg["excluded"] or []) + _legend_areas(pid, page)
         excluded += [o["symbol"].get("legend") or o["symbol"]["rect"] for o in others
                      if o["symbol"] and o["symbol"]["page"] == pg["page_no"]]
         if method == "tag":
             finds = drawings.find_tags(page, it["tag"], excluded)
         else:
-            finds = [f for f in symbols.find(symbols.sheet_picture(page), tpl, threshold, body.rotate)
-                     if not drawings._inside(f["point"], excluded)]
+            sheet = symbols.sheet_picture(page)
+            try:
+                finds = [f for f in symbols.find(sheet, tpl, threshold, body.rotate) if not drawings._inside(f["point"], excluded)]
+            except symbols.TooMany:
+                raise HTTPException(400, f"This symbol looks like too much of {pg['sheet_no'] or 'the sheet'} (hundreds of places): "
+                                         "raise the likeness, box the symbol more tightly, or find it by its label")
+            sheet_words = drawings.flat_words(page)
+            at = lambda f: [w for w in sheet_words if drawings.touches(w[:4], f["box"], 1)]
+            # letters: a symbol with letters in it (S, SD, J) is only where they're written; one without, not on text
+            finds = [f for f in finds if _text_fits(at(f), f["box"], letters)]
+            finds = [f for f in finds if not any(symbols.score_at(sheet, t2, f["box"], body.rotate) > f["score"] + 0.02
+                                                 and _text_fits(at(f), f["box"], l2) for t2, l2 in rivals)]
         # not where something is already accepted or rejected
         taken = [m["geom"]["points"][0] for m in kept if m["page_no"] == pg["page_no"] and m["geom"]["type"] == "point"]
         finds = [f for f in finds if not any(math.dist(f["point"], t) < 6 for t in taken)]

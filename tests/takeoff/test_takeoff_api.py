@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from conftest import API, Client
-from drawing_set import A_SPOTS, B_SPOTS, REC_SPOTS, make
+from drawing_set import A_SPOTS, B_SPOTS, QUAD_SPOTS, REC_SPOTS, make
 
 X = API + "/x/takeoff"
 
@@ -48,7 +48,9 @@ def test_switched_on_by_the_admin_only(admin, setup):
 def test_sheets_are_read(setup):
     u, p = setup
     pages = {g["sheet_no"]: g for g in p["pages"]}
-    assert list(pages) == ["T1.0", "E1.0", "E2.0", "A1.0"]
+    assert list(pages) == ["T1.0", "E1.0", "E2.0", "A1.0", "E3.0"]
+    # a sheet stored turned (/Rotate 270) is straightened: read like the others, same size as seen
+    assert pages["E3.0"]["discipline"] == "Electrical" and pages["E3.0"]["width"] > pages["E3.0"]["height"]
     assert pages["E1.0"]["title"] == "ELECTRICAL LIGHTING PLAN" and pages["E1.0"]["discipline"] == "Electrical"
     assert pages["A1.0"]["discipline"] == "Architectural" and pages["T1.0"]["discipline"] == "Title / general"
     # scales: the plan's (next to "LIGHTING PLAN"), the detail's as another choice
@@ -69,9 +71,11 @@ def legend_items(u, p):
     leg = u.j("GET", f"/x/takeoff/projects/{p['id']}/pages/1/legends")
     sched = next(t for t in leg if "FIXTURE SCHEDULE" in (t["heading"] or ""))
     rows = {r["tag"]: r for r in sched["rows"]}
-    assert set(rows) == {"A", "B"}
+    assert set(rows) == {"A", "B", "L"}                                # (the sideways note beside it isn't an entry)
     assert rows["A"]["name"] == "2X4 LED TROFFER" and rows["A"]["details"] == {"MANUFACTURER": "LITHONIA"}
     assert rows["A"]["symbol"] and rows["B"]["symbol"]
+    sa = rows["A"]["symbol"]                                            # the picture, without its cell or its label
+    assert sa[2] - sa[0] < 30 and sa[3] - sa[1] < 30
     items = u.j("POST", f"/x/takeoff/projects/{p['id']}/items", json={"items": [
         {"name": r["name"], "tag": r["tag"], "category": sched["heading"], "details": r["details"],
          "symbol": {"page": 1, "rect": r["symbol"], "legend": sched["rect"]}} for r in sched["rows"]]})
@@ -96,6 +100,9 @@ def test_legend_find_review_and_takeoff(setup):
     bm = u.j("GET", f"/x/takeoff/projects/{pid}/marks?item={items['B']['id']}")
     for x, y in B_SPOTS:
         assert any(abs(m["geom"]["points"][0][0] - x) < 4 and abs(m["geom"]["points"][0][1] - y) < 4 for m in bm), (x, y)
+    # a symbol that's just a line can't be found by its picture: the message says so
+    r = u.post(X + f"/items/{items['L']['id']}/find", json={"method": "symbol", "pages": [1]})
+    assert r.status_code == 400 and "just a line" in r.json()["detail"] and "label" in r.json()["detail"]
     # nothing confirmed yet: nothing in the takeoff, 7 to review
     s = {x["tag"]: x for x in u.j("GET", f"/x/takeoff/projects/{pid}/summary")}
     assert s["A"]["qty"] == 0 and s["A"]["pending"] == 7
@@ -112,16 +119,23 @@ def test_legend_find_review_and_takeoff(setup):
     assert s["A"]["pages"] == [{"page_no": 1, "sheet_no": "E1.0", "qty": 7, "marks": 7}]
 
 
-def test_legend_boxed_by_hand_and_receptacles(setup):
+def test_legend_boxed_by_hand_similar_symbols_and_a_turned_sheet(setup):
     u, p = setup
     pid = p["id"]
-    rows = u.j("POST", f"/x/takeoff/projects/{pid}/pages/2/legend-in", json={"rect": [1690, 170, 2040, 270]})
-    rec = next(r for r in rows if r["name"] == "DUPLEX RECEPTACLE")
-    assert rec["symbol"] and rec["category"] == "ELECTRICAL LEGEND"
-    it = u.j("POST", f"/x/takeoff/projects/{pid}/items", json={"items": [{"name": rec["name"], "symbol": {"page": 2, "rect": rec["symbol"]}}]})[0]
-    u.j("PATCH", f"/x/takeoff/projects/{pid}/pages/2", json={"excluded": [[1690, 170, 2040, 270]]})
-    r = u.j("POST", f"/x/takeoff/items/{it['id']}/find", json={"pages": [2]})
-    assert r["method"] == "symbol" and r["found"] == len(REC_SPOTS), r
+    rows = u.j("POST", f"/x/takeoff/projects/{pid}/pages/2/legend-in", json={"rect": [1690, 170, 2040, 300]})
+    assert [r["name"] for r in rows] == ["DUPLEX RECEPTACLE", "QUADRUPLEX RECEPTACLE"]
+    assert all(r["symbol"] and r["category"] == "ELECTRICAL LEGEND" for r in rows)
+    duplex, quad = u.j("POST", f"/x/takeoff/projects/{pid}/items", json={"items": [
+        {"name": r["name"], "symbol": {"page": 2, "rect": r["symbol"], "legend": [1690, 170, 2040, 300]}} for r in rows]})
+    # the two look alike (a quadruplex is a duplex, crossed): each place goes to the one that fits it best
+    assert u.j("POST", f"/x/takeoff/items/{duplex['id']}/find", json={"pages": [2]})["found"] == len(REC_SPOTS)
+    assert u.j("POST", f"/x/takeoff/items/{quad['id']}/find", json={"pages": [2]})["found"] == len(QUAD_SPOTS)
+    # the same plan on a sheet stored turned
+    assert u.j("POST", f"/x/takeoff/items/{duplex['id']}/find", json={"pages": [4]})["found"] == len(REC_SPOTS)
+    # boxing a symbol roughly: the box is tightened to what's drawn in it
+    it = u.j("POST", f"/x/takeoff/items/{quad['id']}/symbol", json={"page": 2, "rect": [1050, 1050, 1150, 1150]})
+    r = it["symbol"]["rect"]
+    assert 1080 < r[0] < 1092 and 1108 < r[2] < 1120 and it["symbol"]["legend"] == [1690, 170, 2040, 300]
 
 
 def test_measuring_with_the_scale(setup):
@@ -172,7 +186,7 @@ def test_search_and_exports(setup):
     sched = next(t for t in tables if t["heading"] and "SCHEDULE" in t["heading"])
     r = u.j("POST", f"/x/takeoff/projects/{pid}/export/schedule", json={"base_id": u.base_id, "cells": sched["cells"], "name": "Fixtures"})
     F = u.fields(r["table_id"])
-    assert r["rows"] == 2 and sorted(x["data"][F["DESCRIPTION"]] for x in u.records(r["table_id"])) == ["2X4 LED TROFFER", "LED DOWNLIGHT"]
+    assert r["rows"] == 3 and sorted(x["data"][F["DESCRIPTION"]] for x in u.records(r["table_id"])) == ["2X4 LED TROFFER", "8' LINEAR LUMINAIRE", "LED DOWNLIGHT"]
     # deleting the project
     u.j("DELETE", f"/x/takeoff/projects/{pid}")
     assert u.get(X + f"/projects/{pid}").status_code == 404

@@ -6,7 +6,9 @@ import fitz
 W, H = 36 * 72, 24 * 72
 A_SPOTS = [(400, 400), (600, 400), (800, 400), (400, 650), (600, 650), (800, 650), (1000, 900)]   # 7 type A fixtures
 B_SPOTS = [(450, 1100), (650, 1100), (850, 1100), (1050, 1100)]                                     # 4 type B (one turned)
-REC_SPOTS = [(500, 500), (700, 500), (900, 500), (1100, 500), (1300, 800)]                         # 5 receptacles
+REC_SPOTS = [(500, 500), (700, 500), (900, 500), (1100, 500), (1300, 800)]                         # 5 duplex receptacles
+TURN = -90
+QUAD_SPOTS = [(500, 900), (800, 900), (1100, 1100)]                                                  # 3 quadruplex (look alike)
 
 
 def title_block(page, sheet, title):
@@ -36,6 +38,15 @@ def receptacle(page, x, y):  # a circle with two short lines through it
     page.draw_line((x + 3, y - 12), (x + 3, y + 12), color=(0, 0, 0), width=1)
 
 
+def quad(page, x, y):  # the same, crossed: a quadruplex receptacle
+    receptacle(page, x, y)
+    page.draw_line((x - 12, y), (x + 12, y), color=(0, 0, 0), width=1)
+
+
+def line_symbol(page, x, y):  # a linear luminaire: just a line
+    page.draw_line((x - 25, y), (x + 25, y), color=(0, 0, 0), width=1)
+
+
 def table(page, x, y, heading, header, rows, draw):
     """A ruled schedule: heading above, a header row, then rows (a picture in the first column)."""
     widths = [70, 260, 140][: len(header)]
@@ -53,6 +64,20 @@ def table(page, x, y, heading, header, rows, draw):
             draw(r - 1, x + 22, y + r * rh + rh / 2)
 
 
+def power_plan(doc, sheet):
+    p = doc.new_page(width=W, height=H)
+    title_block(p, sheet, "POWER PLAN")
+    table(p, 1700, 200, "ELECTRICAL LEGEND", ["SYMBOL", "DESCRIPTION"], [["", "DUPLEX RECEPTACLE"], ["", "QUADRUPLEX RECEPTACLE"]],
+          lambda i, x, y: receptacle(p, x, y) if i == 0 else quad(p, x, y))
+    for x, y in REC_SPOTS:
+        receptacle(p, x, y)
+    for x, y in QUAD_SPOTS:
+        quad(p, x, y)
+    p.insert_text((300, 1600), "A POWER PLAN", fontsize=14)
+    p.insert_text((300, 1620), "SCALE: 1/4\" = 1'-0\"", fontsize=9)
+    return p
+
+
 def make(path):
     doc = fitz.open()
     # cover: the drawing index
@@ -67,8 +92,10 @@ def make(path):
     p = doc.new_page(width=W, height=H)
     title_block(p, "E1.0", "LIGHTING PLAN")
     table(p, 1700, 200, "LIGHT FIXTURE SCHEDULE", ["SYMBOL", "DESCRIPTION", "MANUFACTURER"],
-          [["A", "2X4 LED TROFFER", "LITHONIA"], ["B", "LED DOWNLIGHT", "JUNO"]],
-          lambda i, x, y: fixture_a(p, x, y) if i == 0 else fixture_b(p, x, y))
+          [["A", "2X4 LED TROFFER", "LITHONIA"], ["B", "LED DOWNLIGHT", "JUNO"], ["L", "8' LINEAR LUMINAIRE", "CORONET"]],
+          lambda i, x, y: fixture_a(p, x, y) if i == 0 else fixture_b(p, x, y) if i == 1 else line_symbol(p, x + 10, y))
+    # a note written sideways beside the schedule (as on real sheets): not part of any entry
+    p.insert_text((1690, 330), "SEE SHEET A1.1 FOR MOUNTING", fontsize=7, rotate=90)
     for x, y in A_SPOTS:
         fixture_a(p, x, y)
         p.insert_text((x + 14, y - 10), "A", fontsize=8)
@@ -81,19 +108,19 @@ def make(path):
     p.insert_text((300, 1600), "A LIGHTING PLAN", fontsize=14)
     p.insert_text((300, 1620), "SCALE: 1/4\" = 1'-0\"", fontsize=9)
     p.insert_text((1700, 1600), "1 DETAIL  SCALE: 1 1/2\" = 1'-0\"", fontsize=9)
-    # E2.0: power
-    p = doc.new_page(width=W, height=H)
-    title_block(p, "E2.0", "POWER PLAN")
-    table(p, 1700, 200, "ELECTRICAL LEGEND", ["SYMBOL", "DESCRIPTION"], [["", "DUPLEX RECEPTACLE"]], lambda i, x, y: receptacle(p, x, y))
-    for x, y in REC_SPOTS:
-        receptacle(p, x, y)
-    p.insert_text((300, 1600), "A POWER PLAN", fontsize=14)
-    p.insert_text((300, 1620), "SCALE: 1/4\" = 1'-0\"", fontsize=9)
+    power_plan(doc, "E2.0")
     # A1.0: architectural, another scale
     p = doc.new_page(width=W, height=H)
     title_block(p, "A1.0", "FLOOR PLAN")
     p.insert_text((300, 1600), "A FLOOR PLAN", fontsize=14)
     p.insert_text((300, 1620), "SCALE: 1/8\" = 1'-0\"", fontsize=9)
+    # E3.0: the power plan of another floor, stored turned as CAD sets often are: the page is portrait with the
+    # drawing on its side, and /Rotate 270 shows it upright
+    tmp = fitz.open()
+    power_plan(tmp, "E3.0")
+    q = doc.new_page(width=H, height=W)
+    q.show_pdf_page(q.rect, tmp, 0, rotate=TURN)
+    q.set_rotation(270)
     doc.save(path)
     return path
 

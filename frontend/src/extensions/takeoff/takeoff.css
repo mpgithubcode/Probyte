@@ -137,3 +137,8 @@
 }
 .tk-pane p { margin: 0; }
 .tk-pane > .link-btn { align-self: flex-start; }
+.tk-pick-row { display: flex; gap: 8px; align-items: center; }
+.tk-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.tk-findall { display: flex; flex-direction: column; gap: 6px; }
+.tk-report { font-size: 12px; background: var(--bg-soft); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow: auto; }
+.tk-report .err { color: #b45309; }

@@ -82,7 +82,7 @@ export default function Project({ id, go, onMenu, onError, onWorkspaceChanged }:
   const onRect = async (t: Tool, r: Rect) => {
     try {
       if (t === "symbol" && item) {
-        await tk.item(item.id, { symbol: { page, rect: r } });
+        await tk.boxSymbol(item.id, page, r);
         setTool("pan"); reload(); setNote(`Symbol of ${item.name} set: now Find it on the sheets`);
       } else if (t === "legend") {
         const rows = await tk.legendIn(id, page, r);

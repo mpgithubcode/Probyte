@@ -13,6 +13,26 @@ export const SCREENS: Record<string, LazyExoticComponent<ComponentType<Extension
   takeoff: lazy(() => import("./takeoff/Takeoff")),
 };
 
+/** Things an extension can do with a file of a files table (shown in the file viewer when the extension is on). */
+export interface FileAction {
+  ext: string; label: string; icon: string;
+  accepts: (file: { name: string; mime?: string | null }) => boolean;
+  run: (recordId: string, name: string) => Promise<string>;   // the address (#…) to go to
+}
+
+export const FILE_ACTIONS: FileAction[] = [
+  {
+    ext: "takeoff", label: "Open in Blueprint takeoff", icon: "ruler",
+    accepts: (f) => /\.pdf$/i.test(f.name) || f.mime === "application/pdf",
+    run: async (recordId, name) => {
+      const { tk } = await import("./takeoff/tk");
+      const existing = await tk.projects(recordId);
+      const id = existing[0]?.id ?? (await tk.fromFile(recordId, name.replace(/\.pdf$/i, ""))).id;
+      return `/x/takeoff/${id}`;
+    },
+  },
+];
+
 let cached: Promise<ExtensionInfo[]> | null = null;
 const listeners = new Set<(x: ExtensionInfo[]) => void>();
 

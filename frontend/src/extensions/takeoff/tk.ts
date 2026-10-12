@@ -31,14 +31,17 @@ export interface Project {
   id: string; name: string; file_name: string; page_count: number; settings: Record<string, unknown>;
   source: Record<string, string>; pages: Sheet[]; items: Item[]; summary: SummaryRow[];
 }
-export interface ProjectSummary { id: string; name: string; file_name: string; page_count: number; items: number; included: number; updated_at: string }
+export interface ProjectSummary {
+  id: string; name: string; file_name: string; page_count: number; items: number; included: number; updated_at: string;
+  source?: { kind: string; record_id?: string; table_id?: string };
+}
 export interface LegendEntry { name: string; tag: string | null; symbol: Rect | null; details: Record<string, string>; category: string | null; rect: Rect }
 export interface Legend { heading: string | null; rect: Rect; columns: string[]; rows: LegendEntry[]; cells: string[][] }
 export interface SheetTable { rect: Rect; heading: string | null; cells: string[][] }
 
 const X = "/x/takeoff";
 export const tk = {
-  projects: () => api.get<ProjectSummary[]>(`${X}/projects`),
+  projects: (recordId?: string) => api.get<ProjectSummary[]>(`${X}/projects${recordId ? `?record_id=${recordId}` : ""}`),
   upload: (file: File, name: string) => { const b = new FormData(); b.append("file", file); b.append("name", name); return api.upload<Project>(`${X}/projects`, b); },
   fromFile: (record_id: string, name: string) => api.post<Project>(`${X}/projects/from-file`, { record_id, name }),
   project: (id: string) => api.get<Project>(`${X}/projects/${id}`),
@@ -57,6 +60,7 @@ export const tk = {
   search: (id: string, q: string, all: boolean) => api.get<{ page_no: number; rects: Rect[] }[]>(`${X}/projects/${id}/search?q=${encodeURIComponent(q)}&pages=${all ? "all" : "included"}`),
   addItems: (id: string, items: Partial<Item>[]) => api.post<Item[]>(`${X}/projects/${id}/items`, { items }),
   item: (iid: string, patch: Partial<Item>) => api.patch<Item>(`${X}/items/${iid}`, patch),
+  boxSymbol: (iid: string, page: number, rect: Rect) => api.post<Item>(`${X}/items/${iid}/symbol`, { page, rect }),
   removeItem: (iid: string) => api.del(`${X}/items/${iid}`),
   symbolUrl: (iid: string, v = 0) => `/api${X}/items/${iid}/symbol.png?v=${v}`,
   find: (iid: string, body: { pages?: number[]; method?: string; threshold?: number; rotate?: boolean }) =>
