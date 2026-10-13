@@ -7,6 +7,7 @@ import { Icon, tableIcon } from "./Icon";
 import { nativeKind } from "../util";
 import { Popover } from "./Overlay";
 import { BaseSharing } from "./BaseSharing";
+import { Automations } from "./Automations";
 
 const COLLAPSED_KEY = "probyte.collapsedBases";
 
@@ -37,6 +38,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [sharing, setSharing] = useState<Base | null>(null);
+  const [automating, setAutomating] = useState<Base | null>(null);
   const rankOf = (b: Base) => ({ viewer: 1, editor: 2, admin: 3, owner: 4 }[b.role ?? "owner"]);
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());  // bases whose hidden tables are shown
   const is = (kind: string, id: string) => active?.kind === kind && active.id === id;
@@ -197,6 +199,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
               <button className="menu-item" onClick={() => { onNewCombo(menu.base.id); setMenu(null); }}><Icon name="layers" size={14} /> New combined database</button>
               <button className="menu-item" onClick={() => { setRenaming(menu.base.id); setMenu(null); }}><Icon name="edit" size={14} /> Rename</button>
             </>}
+            <button className="menu-item" onClick={() => { setAutomating(menu.base); setMenu(null); }}><Icon name="bolt" size={14} /> Automations…</button>
             <button className="menu-item" onClick={() => { setSharing(menu.base); setMenu(null); }}><Icon name="share" size={14} />
               {menu.base.owner ? " Sharing and your views…" : " Share with people…"}</button>
             {bases.length > 1 && (() => {
@@ -227,6 +230,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
         </Popover>
       )}
       {sharing && <BaseSharing base={sharing} me={user.username} onClose={() => setSharing(null)} onChanged={onChanged} />}
+      {automating && <Automations base={automating} tables={ws.tables} onClose={() => setAutomating(null)} />}
     </>
   );
 }

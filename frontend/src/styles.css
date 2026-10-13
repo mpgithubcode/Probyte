@@ -1398,3 +1398,23 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .members-table td:last-child { width: 32px; text-align: right; }
 .share-mine { margin-top: 14px; display: grid; gap: 8px; }
 .share-mine h4 { margin: 0; font-size: 13px; }
+
+/* automations */
+.automations { display: grid; grid-template-columns: 230px 1fr; gap: 16px; min-height: 420px; }
+.auto-list { display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--border); padding-right: 12px; }
+.auto-item { display: grid; grid-template-columns: 10px 1fr; column-gap: 8px; align-items: center; text-align: left; padding: 6px 8px;
+  border-radius: 6px; background: none; border: 0; cursor: pointer; color: inherit; }
+.auto-item .muted { grid-column: 2; }
+.auto-item.on, .auto-item:hover { background: var(--hover, rgba(0,0,0,.05)); }
+.auto-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.auto-dot.ok { background: #22c55e; } .auto-dot.err { background: #ef4444; } .auto-dot.off { background: transparent; border: 1px solid var(--muted); }
+.auto-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-form { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; min-width: 0; }
+.auto-form h4 { margin: 6px 0 0; font-size: 13px; }
+.auto-form .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.auto-fields { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.auto-action { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: grid; gap: 6px; }
+.auto-values { display: grid; gap: 6px; }
+.auto-field-name { min-width: 120px; font-size: 13px; }
+.auto-values .input { flex: 1; }
+@media (max-width: 700px) { .automations { grid-template-columns: 1fr; } .auto-list { border-right: 0; padding-right: 0; } }
