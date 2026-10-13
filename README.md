@@ -250,11 +250,42 @@ Any Probyte public link, whether it's from this server or another Probyte server
 - In a **combined database**, a linked table's fields line up with your own tables' by their role in the source (a linked calendar's Start, End, Status with your calendar's), as your own tables' do.
 - The data is **live**. It's fetched through the link (cached for a few seconds), so you always see the owner's current records, including their formula and lookup results.
 - **The link owner's settings apply.** You see only the fields and records the link shares. You can add, edit or delete only what the owner allowed, and edits go straight into the owner's table. If the owner switches the link off, deletes it or changes its password, the linked table empties and shows why. **⋯ → Link settings** lets you re-enter a password or paste a new link.
+- **Its view stays updated with the source's view**: its sort, grouping, hidden fields and layout follow the view the owner shared (the owner's filters always apply, at the source). Turn **Stay updated with the source's view** off in the table's settings (Link) to arrange that view your own way and keep it that way.
 - You can make **your own views** of a linked table (Table, Board, Calendar, Chart…). Its fields come from the source, so you can't add fields to it.
 - **Merge** linked tables with your own tables in a **combined database**. For example, show a supplier's shared stock table next to your own orders, or a colleague's calendar next to yours. Each table's title column lines up automatically.
 - **Link to them.** A *Link to record* field in your own table can point at a linked table's records, so you can pick them, and look up or roll up their values. The link is one-way, since the linked table's fields belong to its owner. If the owner deletes or stops sharing a record, it disappears from your links.
 - **Linked combined databases:** if the link shares a combined database with several tables, **New record** asks which of the owner's tables the record goes into. The same choice appears, as "Name › Table", when that linked table is part of one of your own combined databases.
 - Links to this same server are read directly. Links to other servers are fetched by this server, which doesn't follow redirects and **refuses private/internal network addresses**. If your Probyte servers talk to each other over a LAN or VPN, set `REMOTE_ALLOW_PRIVATE=true`.
+
+## Sharing a base with other users
+
+A base can be shared with other people who have an account on the same Probyte server: base menu → **Share with people…**, their username, and a role:
+
+| Role | Can |
+|------|-----|
+| **Viewer** | see everything in the base |
+| **Editor** | also add, change and delete records, and change views |
+| **Admin** | also change fields and tables, add and remove people, and manage automations |
+| Owner | everything, and delete the base |
+
+The base shows up in their sidebar looking just as it does for you: the same tables, views and combined databases. It also reaches their phone (its calendars and contacts appear on their Probyte account, read-only for viewers), the REST API and MCP, and live updates. Tables made in a shared base belong to its owner.
+
+Each person chooses how they see the views (base menu → **Sharing and your views…**):
+
+- **Stay updated** (the default): the views are the base's. An editor's change to a view is everyone's. A viewer can still filter and sort for themselves, and those settings stay until someone changes that view for everyone.
+- **Keep my own copies**: the views, as they are at that moment, become theirs to change. Later changes to the base's views don't touch them.
+
+Either way, anyone can add views of their own, which only they see, and hide tables from their own sidebar.
+
+## Automations
+
+Base menu → **Automations…** (owners and admins). An automation watches one table:
+
+- **When:** a record is created; a record is changed (optionally only when certain fields change); a record *starts* matching the conditions; a record is deleted; or on a schedule (every hour, day, week or month, at a set time, either for each matching record or once).
+- **Only if:** conditions written like a view's filter.
+- **Then:** change the record; create a record in a table; send the record to a webhook (n8n, Zapier, Home Assistant…); send an email (needs `SMTP_URL` and `SMTP_FROM`); move the record to the trash. Values are typed as you'd type them and can use the record's fields: `Invoice for {Client}`, `{today}`, `{now}`.
+
+Automations run in the worker, with the rights of whoever saved them. Changes an automation makes don't set off other automations, so they can't loop. **Try it now** runs one straight away, and the editor shows the last runs, with what each did or why it failed (kept for 30 days).
 
 ## API, MCP and webhooks
 
@@ -380,7 +411,7 @@ A phone sends its changes at once. It checks for changes made in Probyte on its 
 - **Turn off single sign-on for `/.well-known/` and `/dav/`** (Pangolin "Platform SSO", Authelia, Authentik, Cloudflare Access…), and for the root paths if devices set up before 0.9 use them. Phones can only send a username and password, so an SSO login wall blocks them before they reach Probyte. Probyte does its own login there.
 - The proxy must pass `X-Forwarded-Proto`. Probyte then marks its session cookie `Secure` on HTTPS.
 - **AI assistants and automation tools** also need to reach `/mcp`, `/oauth/…`, `/.well-known/oauth-…` and `/api/v1/…` without an SSO wall (they bring their own API key or OAuth token). Don't buffer `/mcp/sse` if you use the older SSE transport. Set `PUBLIC_URL` if the address Probyte sees isn't the public one.
-- **Settings → Sync with your phone → Test connection** checks the public address the same way a phone does, and explains what's wrong if it fails.
+- **Settings → Sync with your phone → Test connection** checks the public address the same way a phone does, and explains what's wrong if it fails. **Connected devices** on the same screen lists each phone or app that uses the login, with when it last synced and when it last sent a change.
 
 ### Configuration (env vars / `.env`)
 
@@ -397,7 +428,9 @@ A phone sends its changes at once. It checks for changes made in Probyte on its 
 | `WORKER_THREADS`    | `4`     | Jobs the worker runs at once |
 | `RUN_WORKER`        | –       | `embedded` runs the worker inside the web app (single-container setups without the `worker` service) |
 | `FILES_MAX_UPLOAD_MB` | `2048` | Largest file that can be uploaded to a files table (S3 / WebDAV) |
-| `OFFICE_CONVERTER_URL` | `http://office:3000` | The document converter (the `office` service) for previews of Word / PowerPoint / OpenDocument files; empty = off (remove the service too) |
+| `OFFICE_CONVERTER_URL` | `http://office:3000` | The document converter (the `office` service) for previews of Word / PowerPoint / OpenDocument files; empty = off (remove the service too). Use the service's name on the Compose network (`office`), not its container name |
+| `SMTP_URL` | – | Mail server for automations' **Send an email** action: `smtp://user:password@host:587` (STARTTLS) or `smtps://…:465` |
+| `SMTP_FROM` | – | The sender address of those emails |
 | `ATTACHMENT_GC_INTERVAL` | `3600` | Seconds between cleanups of uploaded files no record uses any more |
 | `COMPUTE_CACHE_ROWS` | `300000` | Records kept computed in memory between requests (`0` = off) |
 | `SESSION_DAYS`      | `30`    | How long a login lasts |
@@ -608,7 +641,7 @@ Records are stored as JSONB keyed by field id. A combined database stores only i
 
 ## Notes and limitations
 
-- Signed-in users can't share bases with each other yet; use public links to let others in. There is no admin user-management screen; set `ALLOW_SIGNUP=false` once everyone has signed up.
+- Bases are shared with people who have an account on the same server (see Sharing a base); for anyone else, use public links. There is no admin user-management screen; set `ALLOW_SIGNUP=false` once everyone has signed up.
 - Dragging calendar items is a mouse/trackpad feature. On phones, tap a day to list its items, and open a record to change its date. Board cards have a **Move to** button on touch screens.
 - Password guessing is slowed down: after 5 wrong passwords an account (or a password-protected public link) is locked for 15 minutes, and one address gets 20 tries in that time, across sign-in, phones' device logins, the AI-assistant consent page and password changes.
 - Probyte login passwords are hashed; passwords it must reuse are encrypted (see Backups for the key).
