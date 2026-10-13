@@ -35,3 +35,18 @@ def dav_reset(request: Request, user=User):
     with connection() as conn:
         devices.provision(conn, user["id"])
         return devices.info(conn, user["id"], _own_address(request))
+
+
+@router.get("/api/dav/devices")
+def list_devices(user=User):
+    """Phones and apps that used the device login: what they are, when they last synced and last sent a change."""
+    with connection() as conn:
+        return devices.list_devices(conn, user["id"])
+
+
+@router.delete("/api/dav/devices/{device_id}")
+def forget_device(device_id: str, user=User):
+    """Take a device off the list (it's back if it connects again; a new device password stops it)."""
+    with connection() as conn:
+        devices.forget(conn, user["id"], device_id)
+    return {"ok": True}

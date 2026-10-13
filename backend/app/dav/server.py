@@ -48,6 +48,7 @@ SYNC_PREFIX = "https://probyte.app/ns/sync/"
 MAX_ITEM = 10 * 1024 * 1024
 METHODS = ["OPTIONS", "GET", "HEAD", "PUT", "DELETE", "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "MKCALENDAR", "MOVE"]
 DAV_HEADER = "1, 3, calendar-access, addressbook, extended-mkcol"
+WRITES = {"PUT", "DELETE", "MOVE", "MKCOL", "MKCALENDAR", "PROPPATCH"}
 COMPONENTS = {"tasks": ["VTODO"], "events": ["VEVENT"], "mixed": ["VEVENT", "VTODO"]}
 DEFAULT_COLORS = {"tasks": "#22c55e", "events": "#3b82f6", "mixed": "#a855f7", "contacts": "#64748b"}
 
@@ -80,7 +81,9 @@ def handle(method: str, prefix: str, path: str, headers: dict, body: bytes, clie
     user = _login(headers, client)
     if isinstance(user, Response):
         return user
-    audit.set_actor(_client_name(headers.get("user-agent", "")), user["id"])
+    agent = headers.get("user-agent", "")
+    audit.set_actor(f"{devices.label(agent)} (calendar sync)", user["id"])
+    devices.seen(user["id"], agent, client, wrote=method in WRITES)
     parts = [unquote(p) for p in path.split("/") if p]
     if parts and parts[0].lower() != user["username"]:
         return Response(404 if len(parts) > 1 else 403, {})
@@ -119,17 +122,6 @@ def _login(headers: dict, client: str):
         ratelimit.failed(account, client)
         return Response(401, challenge)
     return user
-
-
-def _client_name(ua: str) -> str:
-    """A label for record history, from the app's User-Agent."""
-    u = ua.lower()
-    for needle, label in (("iphone", "iPhone"), ("ipad", "iPad"), ("ios", "iPhone"), ("dataaccessd", "iPhone"),
-                          ("mac os", "Mac"), ("macos", "Mac"), ("davx5", "Android (DAVx⁵)"), ("davdroid", "Android (DAVx⁵)"),
-                          ("thunderbird", "Thunderbird"), ("evolution", "Evolution"), ("tasks.org", "Tasks.org")):
-        if needle in u:
-            return f"{label} (calendar sync)"
-    return "Phone / calendar sync"
 
 
 def _xml(el) -> bytes:

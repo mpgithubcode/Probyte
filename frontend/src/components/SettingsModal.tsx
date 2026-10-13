@@ -11,6 +11,7 @@ import { SharesPanel } from "./SharesPanel";
 import { BackupsPanel } from "./BackupsPanel";
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
+import { timeAgo } from "../util";
 
 function CopyField({ label, value, secret }: { label: string; value: string; secret?: boolean }) {
   const [shown, setShown] = useState(!secret);
@@ -156,6 +157,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
                   </ol>
                   <p className="hint">Create the table with New table → Contacts on the “Probyte” account. Android: DAVx⁵ syncs contacts with the same login.</p>
                 </details>
+                <ConnectedDevices />
                 {confirmReset ? (
                   <div className="row">
                     <span className="muted small">Devices using the old password will stop syncing.</span>
@@ -197,5 +199,39 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
         </div>
       </div>
     </Modal>
+  );
+}
+
+
+interface Device { id: string; label: string; agent: string; first_seen: string; last_seen: string; last_change: string | null; last_address: string | null; requests: number }
+
+/** Phones and apps using the device login, with when they last synced (asked for changes) and last sent one. */
+function ConnectedDevices() {
+  const [list, setList] = useState<Device[] | null>(null);
+  const load = () => api.get<Device[]>("/dav/devices").then(setList).catch(() => setList([]));
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, []);
+  if (!list) return null;
+  return (
+    <div className="devices">
+      <h4>Connected devices</h4>
+      {!list.length ? <p className="muted small">No phone or app has connected with this login yet.</p> : (
+        <table className="devices-table">
+          <thead><tr><th>Device</th><th>Last synced</th><th>Last change sent</th><th /></tr></thead>
+          <tbody>
+            {list.map((d) => (
+              <tr key={d.id} title={`${d.agent}${d.last_address ? ` · from ${d.last_address}` : ""} · ${d.requests} requests since ${new Date(d.first_seen).toLocaleDateString()}`}>
+                <td>{d.label}</td>
+                <td>{timeAgo(d.last_seen)}</td>
+                <td>{d.last_change ? timeAgo(d.last_change) : "—"}</td>
+                <td><button className="icon-btn" title="Remove from the list (it comes back if it connects again; a new device password stops it)"
+                  onClick={() => api.del(`/dav/devices/${d.id}`).then(load)}><Icon name="x" size={13} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="hint">A phone that doesn't show a change made here: check its “Last synced”. If that's long ago, the phone isn't asking
+        (its fetch setting, or it can't reach this address); if it's recent, the change reached it.</p>
+    </div>
   );
 }

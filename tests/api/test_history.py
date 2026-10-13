@@ -38,4 +38,4 @@ def test_history_of_phone_edits(user):
     user.put_item(href, body.replace("SUMMARY:Call bank", "SUMMARY:Call the bank"))
     user.sync(t["id"])
     last = user.j("GET", f"/records/{r['id']}/history")["entries"][0]
-    assert last["actor"] == "Phone / calendar sync" and {c["field"] for c in last["changes"]} == {"Title"}
+    assert last["actor"].endswith("(calendar sync)") and {c["field"] for c in last["changes"]} == {"Title"}

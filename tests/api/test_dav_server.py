@@ -198,3 +198,18 @@ def test_calendar_query_answers_for_the_time_range_asked(user):
     r = dav(user, "REPORT", t["calendar_url"], q, Depth="1")
     got = set(re.findall(r"SUMMARY:([^\r\n<]+)", r.text))
     assert got == {"Inside", "Halloween", "Weekly"}, got
+
+
+def test_connected_devices_are_listed_with_their_last_sync_and_change(user):
+    t = user.table("tasks", "Devices")
+    iphone = {"User-Agent": "iOS/18.0 (22A3354) dataaccessd/1.0"}
+    assert dav(user, "PROPFIND", t["calendar_url"], None, Depth="1", **iphone).status_code == 207
+    dev = next(d for d in user.j("GET", "/dav/devices") if "dataaccessd" in d["agent"])
+    assert dev["label"] == "iPhone / iPad · Calendar (iOS 18.0)" and dev["last_seen"] and not dev["last_change"]
+    assert dav(user, "PUT", t["calendar_url"] + "d1.ics", todo("d1", "From the phone"), **iphone).status_code == 201
+    dev = next(d for d in user.j("GET", "/dav/devices") if d["id"] == dev["id"])
+    assert dev["last_change"]
+    hist = user.j("GET", f"/records/{user.records(t['id'])[0]['id']}/history")["entries"]
+    assert hist[0]["actor"].startswith("iPhone / iPad")
+    user.j("DELETE", f"/dav/devices/{dev['id']}")
+    assert all(d["id"] != dev["id"] for d in user.j("GET", "/dav/devices"))

@@ -1379,3 +1379,11 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .side-extensions { margin-top: 8px; }
 .ext-card .list-card-head { align-items: flex-start; }
 .ext-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; }
+
+/* Settings → Phone sync: connected devices */
+.devices { margin: 14px 0; }
+.devices h4 { margin: 0 0 6px; font-size: 13px; }
+.devices-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.devices-table th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.devices-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); }
+.devices-table td:last-child { width: 28px; text-align: right; }

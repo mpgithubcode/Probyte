@@ -8,6 +8,7 @@ minutes (keyed by a hash of the password and the stored hash: a new device passw
 """
 import base64
 import hashlib
+import re
 import secrets
 import string
 import threading
@@ -154,3 +155,67 @@ def check_public(username: str, password: str, public: str) -> dict:
                           "/.well-known/ and /dav/ (Probyte does its own login there)."}
     return {"ok": False, "problem": "unexpected",
             "detail": f"{url} answered HTTP {status}. Make sure the address reaches Probyte."}
+
+
+# ---------------------------------------------------------------- connected devices
+
+SEEN_EVERY = 30  # seconds: how often a device's "last synced" is written while it keeps talking (a sync is dozens of requests)
+_seen: dict[tuple, list] = {}  # (user id, agent) -> [last written (monotonic), requests not yet counted]
+
+
+def label(agent: str) -> str:
+    """What a device is, from its app's User-Agent: "iPhone / iPad · Calendar (iOS 18.0)", "Mac · Contacts"…"""
+    a = agent or ""
+    low = a.lower()
+    app = ("Reminders" if "remind" in low else "Contacts" if ("addressbook" in low or "contacts" in low or "accountsd" in low)
+           else "Calendar" if ("dataaccessd" in low or "calendar" in low or "ical" in low) else None)
+    m = re.search(r"\b(iOS|iPadOS|macOS|Mac OS X)/([\d.]+)", a)
+    if m:
+        device = "Mac" if m.group(1) in ("macOS", "Mac OS X") else "iPhone / iPad"
+        os_name = "macOS" if device == "Mac" else m.group(1)
+        return f"{device}{' · ' + app if app else ''} ({os_name} {m.group(2)})"
+    if "davx5" in low or "davdroid" in low:
+        av = re.search(r"Android/([\d.]+)", a)
+        return "Android · DAVx⁵" + (f" (Android {av.group(1)})" if av else "")
+    for needle, name in (("thunderbird", "Thunderbird"), ("evolution", "Evolution"), ("tasks.org", "Tasks.org"),
+                         ("jtx", "jtx Board"), ("caldav", "CalDAV app"), ("probyte", "Probyte")):
+        if needle in low:
+            return name
+    return (a.split("/")[0].split(" ")[0] or "Unknown app")[:60]
+
+
+def seen(user_id, agent: str, address: str, wrote: bool) -> None:
+    """A device made a request: noted (at most every SEEN_EVERY seconds, at once when it changed something)."""
+    agent = (agent or "unknown")[:400]
+    key = (str(user_id), agent)
+    now = time.monotonic()
+    with _lock:
+        entry = _seen.setdefault(key, [0.0, 0])
+        entry[1] += 1
+        if not wrote and now - entry[0] < SEEN_EVERY:
+            return
+        count, entry[0], entry[1] = entry[1], now, 0
+        if len(_seen) > 10000:
+            _seen.clear()
+    try:
+        with connection() as conn:
+            conn.execute(
+                "INSERT INTO dav_devices (user_id, agent, label, last_address, requests, last_change) VALUES (%s,%s,%s,%s,%s,"
+                "CASE WHEN %s THEN now() END) ON CONFLICT (user_id, agent) DO UPDATE SET last_seen = now(), "
+                "last_address = EXCLUDED.last_address, requests = dav_devices.requests + EXCLUDED.requests, "
+                "last_change = COALESCE(EXCLUDED.last_change, dav_devices.last_change)",
+                (user_id, agent, label(agent), address or None, count, wrote))
+    except Exception:  # noting a device never breaks its request
+        pass
+
+
+def list_devices(conn, user_id) -> list[dict]:
+    return conn.execute("SELECT id, label, agent, first_seen, last_seen, last_change, last_address, requests FROM dav_devices "
+                        "WHERE user_id = %s ORDER BY last_seen DESC", (user_id,)).fetchall()
+
+
+def forget(conn, user_id, device_id) -> None:
+    conn.execute("DELETE FROM dav_devices WHERE id = %s AND user_id = %s", (device_id, user_id))
+    with _lock:
+        for k in [k for k in _seen if k[0] == str(user_id)]:
+            _seen.pop(k, None)
