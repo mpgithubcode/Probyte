@@ -140,8 +140,16 @@ def test_relay_and_direct_mode(admin, doc):
     sw = requests.get(relay + "/document_editor_service_worker.js")
     assert sw.headers["content-type"].startswith("application/javascript") and "unregister" in sw.text
     # what browsers never need isn't relayed
-    for path in ("/coauthoring/CommandService.ashx", "/ConvertService.ashx", "/command", "/info/info.json", "/../api/office/status"):
+    for path in ("/coauthoring/CommandService.ashx", "/ConvertService.ashx", "/command", "/info/info.json"):
         assert requests.post(relay + path, json={"c": "version"}).status_code == 404, path
+    # nor a way out of /office-ds (sent as written: HTTP clients would tidy the ".." away first)
+    import http.client
+    from urllib.parse import urlparse
+    host = urlparse(BASE)
+    c = http.client.HTTPConnection(host.hostname, host.port or 80, timeout=10)
+    c.request("POST", "/office-ds/../api/office/status", body=b"{}", headers={"Content-Type": "application/json"})
+    assert c.getresponse().status == 404
+    c.close()
     # directly: browsers load it from its own address, and the relay is off
     try:
         admin.j("PUT", "/office/settings", json={"url": FAKE, "secret": None, "probyte_url": BASE, "via_probyte": False})
