@@ -26,6 +26,9 @@ PREVIEW_DIR = ATTACH_DIR / "previews"      # Word / PowerPoint / OpenDocument fi
 CONVERTER = os.environ.get("OFFICE_CONVERTER_URL", "").strip().rstrip("/")
 CONVERT_MAX = 100 * 1024 * 1024
 THUMB_PX = 480
+# files tried by an earlier version of this (or before the converter was set up) and left without a cover are tried
+# again once: 2 = a converter that couldn't be reached no longer counts as tried
+PREVIEW_VERSION = 2
 TEXT_CHARS = 20_000           # how much of a text file goes into the Text field (for search)
 
 
@@ -204,6 +207,7 @@ def _job_preview(payload):
     item = (rec["data"].get(keys["file"]) or [{}])[0]
     mime, path, size = item.get("mime") or "", rec["caldav_href"], item.get("size") or 0
     thumb, text = False, None
+    temporary = None   # the converter or the storage couldn't be reached: not tried yet (the job, and later syncs, try again)
     try:
         if _heic(mime, path):
             with Image.open(heic_jpeg(drv, rec, item)) as img:
@@ -242,8 +246,17 @@ def _job_preview(payload):
                 thumb = _text_thumb(text, rid, path)
     except FileNotFoundError:
         return
+    except StorageError as e:
+        temporary = e
+    except HTTPException as e:
+        if e.status_code >= 500:
+            temporary = e
+        log.info("no preview for %s: %s", path, e.detail)
     except Exception as e:
         log.info("no preview for %s: %s", path, e)
+    if temporary is not None:
+        log.warning("no preview for %s yet (tried again later): %s", path, getattr(temporary, "detail", temporary))
+        raise RuntimeError(f"preview of {path} not made yet")
     with connection() as conn:
         cur = conn.execute("SELECT data, caldav_etag FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
         if not cur:
@@ -251,7 +264,8 @@ def _job_preview(payload):
         patch = {}
         items = cur["data"].get(keys["file"]) or []
         if items:  # tried for this version (so the next sync doesn't try again), and whether there's a cover now
-            patch[keys["file"]] = [{**items[0], "previewed": cur["caldav_etag"], **({"thumb": True} if thumb else {})}]
+            patch[keys["file"]] = [{**items[0], "previewed": cur["caldav_etag"], **({"thumb": True} if thumb else {}),
+                                    **({"pv": PREVIEW_VERSION} if CONVERTER else {})}]
         if text is not None:
             patch[keys["text"]] = text.replace("\x00", "")
         conn.execute("UPDATE records SET data = data || %s, updated_at = now() WHERE id = %s", (Jsonb(patch), rid))

@@ -3,6 +3,7 @@ import base64
 import time
 import uuid
 
+import pytest
 import requests
 
 from conftest import API, BASE, S3_URL, WEBDAV_URL
@@ -226,6 +227,32 @@ def test_covers_for_text_and_files_added_before(user):
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     doc = upload(user, t, ("old.docx", open(os.path.join(here, "fixtures", "report.docx"), "rb").read(), "application/octet-stream"))[0]
     wait(lambda: user.get(API + f"/files/{doc['id']}/thumb").status_code == 200, timeout=60)
+
+
+
+def test_covers_the_converter_couldnt_make_are_made_later(user):
+    """A Word file whose cover failed while the converter couldn't be reached (an old version marked it tried, without
+    a cover) gets one at the next sync, once the converter works."""
+    import os
+    import psycopg
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    t = user.table("files", "Stuck", storage=S3, storage_prefix=f"p{uuid.uuid4().hex[:8]}")
+    F = user.fields(t["id"])
+    doc = upload(user, t, ("stuck.docx", open(os.path.join(here, "fixtures", "report.docx"), "rb").read(),
+                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))[0]
+    wait(lambda: user.get(API + f"/files/{doc['id']}/thumb").status_code == 200, timeout=60)
+    try:
+        conn = psycopg.connect(os.environ.get("BENCH_DB", "postgresql://probyte:probyte-test@db:5432/probyte"))
+    except Exception:
+        pytest.skip("no database access")
+    with conn:   # as the old version left it: tried for this version, no cover, no marker of a working converter
+        conn.execute("UPDATE records SET data = jsonb_set(data, ARRAY[%s], jsonb_build_array((data->%s->0) - 'thumb' - 'pv')) "
+                     "WHERE id = %s", (F["file"], F["file"], doc["id"]))
+    item = user.record(t["id"], doc["id"])["data"][F["file"]][0]
+    assert item["previewed"] and not item.get("thumb")
+    user.j("POST", f"/tables/{t['id']}/sync")
+    wait(lambda: user.record(t["id"], doc["id"])["data"][F["file"]][0].get("thumb"), timeout=60)
+    assert user.record(t["id"], doc["id"])["data"][F["file"]][0]["pv"] == 2
 
 
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="18" fill="#3b82f6"/>' \

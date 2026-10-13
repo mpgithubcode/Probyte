@@ -36,8 +36,8 @@ from app.calc.compute import FILE_READONLY as READONLY_KEYS
 from app.core import events
 from app.core.db import connection, Jsonb
 from app.data import audit, store
-from app.files.kinds import _ext, _keys, _heic, is_svg, is_text, kind_of, previewable, SVG_CSP, view_of
-from app.files.previews import _drop_cache, _queue_preview, heic_jpeg, preview_pdf, THUMB_DIR
+from app.files.kinds import _ext, _keys, _heic, convertible, is_svg, is_text, kind_of, previewable, SVG_CSP, view_of
+from app.files.previews import _drop_cache, _queue_preview, CONVERTER, heic_jpeg, preview_pdf, PREVIEW_VERSION, THUMB_DIR
 from app.files.storages import _storage, own_storage, save_storage, StorageIn, test_storage
 
 log = logging.getLogger("probyte.files")
@@ -229,11 +229,13 @@ def sync(table, stats: dict, full: bool = False) -> dict:
             elif not rec["deleted"] and rec["caldav_etag"] != meta["etag"]:
                 _refresh(conn, rec, keys, meta)
                 stats["updated"] += 1
-        # files without a cover that could have one (e.g. added before the document converter was set up): try once per version
+        # files without a cover that could have one: try once per version (and once more after the converter was set up
+        # or couldn't be reached)
         for path, rec in by_path.items():
             if path in objects and not rec["deleted"]:
                 it = (rec["data"].get(keys["file"]) or [{}])[0]
-                if it and not it.get("thumb") and it.get("previewed") != rec["caldav_etag"] and previewable(it.get("mime") or "", path):
+                if it and not it.get("thumb") and previewable(it.get("mime") or "", path) and (
+                        it.get("previewed") != rec["caldav_etag"] or (CONVERTER and convertible(path) and it.get("pv") != PREVIEW_VERSION)):
                     _queue_preview(conn, rec["id"], it.get("mime") or "", path)
         for path, rec in by_path.items():
             if path not in objects and not rec["deleted"]:
