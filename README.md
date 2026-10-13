@@ -315,6 +315,12 @@ A stable API for scripts and automation tools (n8n, Make, Zapier, Home Assistant
 - Values written as **plain text**: `"2026-10-12"` / `"2026-10-12T15:30:00Z"` for dates, option names for selects, lists or `"a, b"` for multiple selects, record **titles** or ids for links, usernames for user fields. Unknown fields and unreadable values give a clear `400`.
 - `GET …/records` supports `filter` (`{"Status": "Done"}` or `[{"field": "Due", "op": "lt", "value": "2026-11-01"}]`; ops `is, is_not, contains, not_contains, gt, gte, lt, lte, empty, not_empty`), `search`, `sort=-Due,Name`, `view`, `fields`, `limit` (≤ 1000) / `offset` with `next_offset`, and `cell_format=text` for values as shown in the app.
 - Batch create / update / delete (up to 1000, all-or-nothing) and **upsert** (`match_on: ["Email"]`).
+- **Files straight into a field**: `POST /api/v1/tables/{table}/records/{id}/fields/{field}/files`, with the files as `multipart/form-data` (each a form field named `files`). What happens depends on the field:
+  - A **link to a files table** (S3 / WebDAV): the files are uploaded into that table, into `folder` if you give one, and the new files are linked from the record.
+  - An **attachment** field: the files are attached.
+  - A files table's own **File** field: the upload is that file's new contents.
+
+  Files are added to what's there unless you send `replace=true`. A link limited to one record takes one file.
 - Schema: list bases, describe a table, create tables and fields; trigger a CalDAV / files sync; search all tables.
 - **JSON Schema** of any table or combined database: `GET /api/v1/tables/{table}/schema` returns a draft 2020-12 JSON Schema of a record's `fields` (each field's JSON type and format, select options as `enum` when only listed options are allowed, `required`, `readOnly`, `default`, descriptions), keyed by name or, with `fieldKeyType=id`, by field id. The MCP tool `get_json_schema` returns the same.
 
@@ -323,6 +329,9 @@ curl -G -H "Authorization: Bearer $KEY" https://your-probyte/api/v1/tables/Tasks
      --data-urlencode 'filter={"Status": "To Do"}' -d sort=-Due
 curl -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
      -d '{"fields": {"Title": "Call the plumber", "Due": "2026-10-20"}}' https://your-probyte/api/v1/tables/Tasks/records
+# two drawings into a job's "Drawings" link (a files table on S3), in the folder Jobs/Mill St
+curl -H "Authorization: Bearer $KEY" -F files=@plan.pdf -F files=@electrical.pdf -F "folder=Jobs/Mill St" \
+     "https://your-probyte/api/v1/tables/Jobs/records/$RECORD_ID/fields/Drawings/files"
 ```
 
 The older `/api/...` endpoints the web app uses keep working with keys too.

@@ -5,7 +5,7 @@ OpenAPI: /api/v1/openapi.json · interactive docs: /api/v1/docs
 import json
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Security, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPBearer
@@ -227,6 +227,23 @@ def update_record(table: str, record_id: str, body: FieldsIn, cell_format: Liter
 def upsert_records(table: str, body: UpsertIn, base: str | None = None, cell_format: Literal["json", "text"] = Fmt,
                    field_key: str = Key, user=User):
     return _run(apiv1.upsert_records, user, table, [r.model_dump() for r in body.records], body.match_on, base, cell_format, field_key)
+
+
+@v1.post("/tables/{table}/records/{record_id}/fields/{field}/files", tags=["Records"], summary="Upload files into a field",
+         description="Send the files as `multipart/form-data`, each as a form field named `files`. The field (name or id) decides "
+                     "what happens: a **link to a files table** (S3 / WebDAV) uploads them into that table (into `folder`, if "
+                     "given) and links the new files from the record; an **attachment** field attaches them; a files "
+                     "table's own **File** field replaces the file's contents (one file). They're added to what's already "
+                     "there unless `replace` is true.\n\n"
+                     "`curl -H 'Authorization: Bearer pbk_…' -F files=@plan.pdf -F folder=Jobs/7 "
+                     "https://probyte.example.com/api/v1/tables/Jobs/records/<id>/fields/Drawings/files`")
+def upload_to_field(table: str, record_id: str, field: str, files: list[UploadFile] = File(...),
+                    folder: str = Form("", description="Files tables: the folder the files go into"),
+                    replace: bool = Form(False, description="Replace the field's files / links instead of adding to them"),
+                    base: str | None = None, cell_format: Literal["json", "text"] = Fmt, field_key: str = Key, user=User):
+    _write_scope(user)
+    return _run(apiv1.upload_to_field, user, table, record_id, field, files, folder=folder, replace=replace, base=base,
+                cell_format=cell_format, field_key=field_key)
 
 
 @v1.delete("/tables/{table}/records/{record_id}", tags=["Records"], summary="Delete a record")

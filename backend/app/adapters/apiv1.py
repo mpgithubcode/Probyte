@@ -639,3 +639,52 @@ def sync_table(user, ref, base=None) -> dict:
     if t["kind"] not in store.DAV_KINDS and t["kind"] != "files":
         bad(f"{t['name']} isn't synced with a calendar, address book or file storage")
     return sync.sync_table(t["id"])
+
+
+def upload_to_field(conn, user, ref, record_id: str, field_ref: str, uploads: list, *, folder: str = "", replace: bool = False,
+                    base=None, cell_format="json", field_key="name") -> tuple[dict, dict]:
+    """Files sent straight into a record's field:
+    - a link to a files table (S3 / WebDAV): uploaded into that table (in `folder`) and linked;
+    - an attachment field: attached;
+    - a files table's own File field: the file's new contents (one file).
+    Added to what's there, unless `replace`."""
+    from app.blobs import attachments
+    from app.files import catalog as files
+    t = _writable_table(conn, user, ref, base)
+    if not UUID_RE.match(str(record_id)):
+        bad("Give the record's id")
+    rec = conn.execute("SELECT * FROM records WHERE id = %s AND table_id = %s AND NOT deleted", (record_id, t["id"])).fetchone()
+    if not rec:
+        bad("Record not found", 404)
+    fields = Engine(conn).describe(t["id"])
+    f = find_field(fields, field_ref)
+    if not uploads:
+        bad("Send at least one file (multipart form field `files`)")
+    fid = str(f["id"])
+    if t["kind"] == "files" and f.get("system_key") == "file":
+        if len(uploads) > 1:
+            bad("A file has one set of contents: send one file")
+        files._check_size(uploads[0])
+        table, frec, keys = files._own_record(conn, record_id, user["id"])
+        files.replace_contents(table, frec, keys, uploads[0].file, files.upload_mime(uploads[0]))
+    elif t["kind"] == "files" and f.get("system_key"):
+        bad(f"'{f['name']}' is filled from the file itself")
+    elif f["type"] == "link":
+        ftid = (f.get("options") or {}).get("foreignTableId")
+        target = store.get_table(conn, ftid, user["id"])   # (adding to it needs the right to edit there too)
+        if target["kind"] != "files":
+            bad(f"'{f['name']}' links to a table that isn't a files table: link existing records with their ids instead")
+        single = (f.get("options") or {}).get("relationship") == "one"
+        if single and len(uploads) > 1:
+            bad(f"'{f['name']}' links to one record only: send one file")
+        made = files.upload_files(str(target["id"]), uploads, folder, user["id"])
+        new_ids = [str(m["id"]) for m in made]
+        have = [] if replace or single else [str(x) for x in (rec["data"].get(fid) or [])]
+        recordops.update(conn, t["id"], record_id, {fid: have + [i for i in new_ids if i not in have]}, user["id"])
+    elif f["type"] == "attachment":
+        items = [attachments.save_file(conn, user["id"], u) for u in uploads]
+        have = [] if replace else list(rec["data"].get(fid) or [])
+        recordops.update(conn, t["id"], record_id, {fid: have + items}, user["id"])
+    else:
+        bad(f"'{f['name']}' doesn't hold files: upload into an attachment field, or a link to a files table")
+    return _records_by_id(conn, t["id"], [record_id], cell_format, field_key)[0], t

@@ -43,6 +43,27 @@ async def save_upload(conn, user_id, file: UploadFile) -> dict:
     return {"id": str(aid), "name": name, "mime": mime, "size": size}
 
 
+def save_file(conn, user_id, file: UploadFile) -> dict:
+    """save_upload for code that isn't async (the REST API's uploads into a field)."""
+    ATTACH_DIR.mkdir(parents=True, exist_ok=True)
+    aid = uuid.uuid4()
+    name = _clean_name(file.filename)
+    mime = (file.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream").split(";")[0].strip().lower()
+    path, size = ATTACH_DIR / str(aid), 0
+    try:
+        with path.open("wb") as out:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise HTTPException(413, f"{name} is larger than {MAX_BYTES // (1024 * 1024)} MB")
+                out.write(chunk)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    conn.execute("INSERT INTO attachments (id, user_id, name, mime, size) VALUES (%s,%s,%s,%s,%s)", (aid, user_id, name, mime, size))
+    return {"id": str(aid), "name": name, "mime": mime, "size": size}
+
+
 def serve(conn, user_id, attachment_id, download: bool):
     """An uploaded file, for whoever uploaded it or can see a record it's in (a base shared with them, too)."""
     a = conn.execute(
