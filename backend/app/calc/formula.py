@@ -7,6 +7,7 @@
 Expressions are stored with {field_id} references (so renaming a field never breaks a formula)
 and shown to the user with {Field name}; see rewrite_refs().
 """
+import calendar
 import math
 import re
 import urllib.parse
@@ -829,3 +830,57 @@ def rollup_type(func: str, inner_type: str) -> str:
     if func in ("max", "min") and inner_type == "date":
         return "date"
     return t
+
+
+def date_range(value, today: date | None = None, week_start: int = 1) -> tuple[str, str] | None:
+    """The days a date filter's value stands for, worked out now: "2026-10-12", "2026-10-01..2026-10-31", today /
+    tomorrow / yesterday (also "today()"), current / last / next week, month or year, "3 days ago", "3 days from now"
+    ("in 3 days"), weeks and months too, "past 7 days", "next 30 days", "today() - 7". (first day, last day) as
+    YYYY-MM-DD, or None. week_start: 0 = Sunday, 1 = Monday. Keep in step with dateRange() in frontend/src/util.ts."""
+    v = re.sub(r"\s+", " ", str(value or "").strip().lower().replace("()", ""))
+    if not v:
+        return None
+    t = today or local(datetime.now(timezone.utc)).date()
+
+    def plus(n: int, unit: str = "day") -> date:
+        if unit.startswith("week"):
+            return t + timedelta(days=7 * n)
+        if unit.startswith("month"):
+            y, m = divmod(t.month - 1 + n, 12)
+            y, m = t.year + y, m + 1
+            return date(y, m, min(t.day, calendar.monthrange(y, m)[1]))   # (Jan 31 + 1 month: Feb 28)
+        return t + timedelta(days=n)
+
+    def one(d: date):
+        return d.isoformat(), d.isoformat()
+    if m := re.fullmatch(r"(\d{4}-\d{2}-\d{2})", v):
+        return m[1], m[1]
+    if m := re.fullmatch(r"(\d{4}-\d{2}-\d{2})\s*(?:\.\.|to)\s*(\d{4}-\d{2}-\d{2})", v):
+        return (m[1], m[2]) if m[1] <= m[2] else (m[2], m[1])
+    if v in ("today", "now"):
+        return one(t)
+    if v == "tomorrow":
+        return one(plus(1))
+    if v == "yesterday":
+        return one(plus(-1))
+    if m := re.fullmatch(r"(current|this|last|previous|next) (week|month|year)", v):
+        shift = 1 if m[1] == "next" else -1 if m[1] in ("last", "previous") else 0
+        if m[2] == "week":
+            start = t - timedelta(days=(t.isoweekday() % 7 - week_start) % 7) + timedelta(days=7 * shift)
+            return start.isoformat(), (start + timedelta(days=6)).isoformat()
+        if m[2] == "month":
+            y, mo = divmod(t.month - 1 + shift, 12)
+            y, mo = t.year + y, mo + 1
+            return date(y, mo, 1).isoformat(), date(y, mo, calendar.monthrange(y, mo)[1]).isoformat()
+        return f"{t.year + shift}-01-01", f"{t.year + shift}-12-31"
+    if m := re.fullmatch(r"(\d+) (day|week|month)s? ago", v):
+        return one(plus(-int(m[1]), m[2]))
+    if m := re.fullmatch(r"in (\d+) (day|week|month)s?|(\d+) (day|week|month)s? from now", v):
+        return one(plus(int(m[1] or m[3]), m[2] or m[4]))
+    if m := re.fullmatch(r"(?:past|last) (\d+) (day|week|month)s?", v):
+        return plus(-int(m[1]), m[2]).isoformat(), t.isoformat()
+    if m := re.fullmatch(r"next (\d+) (day|week|month)s?", v):
+        return t.isoformat(), plus(int(m[1]), m[2]).isoformat()
+    if m := re.fullmatch(r"today ?([+-]) ?(\d+)", v):
+        return one(plus(int(m[2]) * (-1 if m[1] == "-" else 1)))
+    return None

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.calc.compute import Engine
 from app.core.db import connection, Jsonb
 from app.core.secretbox import unseal
-from app.data import access, store, values
+from app.data import access, stamps, store, values
 from app.data.schema import BUILTIN_FIELDS
 from app.dav import sync
 from app.sharing import linked as remote
@@ -498,6 +498,8 @@ def create_field(table_id: str, body: FieldIn, user=User):
         conn.execute("UPDATE fields SET description = %s, required = %s, unique_values = %s, default_value = %s WHERE id = %s",
                      ((body.description or "").strip()[:1000] or None, rules["required"], rules["unique_values"],
                       Jsonb(rules["default_value"]) if rules["default_value"] is not None else None, f["id"]))
+        if f["type"] == "date":
+            stamps.backfill(conn, table_id, f)   # a Started / Completed date: records it already applies to
         return _describe_field(conn, f["id"], table_id)
 
 
@@ -550,6 +552,9 @@ def update_field(field_id: str, body: FieldPatch, user=User):
             "UPDATE fields SET description = %s, required = %s, unique_values = %s, default_value = %s WHERE id = %s RETURNING *",
             (desc, rules["required"], rules["unique_values"],
              Jsonb(rules["default_value"]) if rules["default_value"] is not None else None, field_id)).fetchone()
+        if updated["type"] == "date" and (updated["options"].get("stampWhen"), updated["options"].get("stampClear")) != \
+                ((f["options"] or {}).get("stampWhen"), (f["options"] or {}).get("stampClear")):
+            stamps.backfill(conn, f["table_id"], updated)
         return _describe_field(conn, updated["id"], f["table_id"])
 
 

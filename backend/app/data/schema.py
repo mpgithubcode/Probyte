@@ -375,6 +375,9 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
         bad("The primary field can't be that type")
     if table["kind"] == "remote":
         bad("A linked table's fields come from its source link")
+    if ftype != "date" or not (o.get("stampWhen") or "").strip():
+        for k in ("stampWhen", "stampClear", "stampKind"):
+            o.pop(k, None)
     if ftype == "recurrence":
         # ordinary tables: the checkbox that completes it (False: none) and the dates it moves on to the next date
         mine = {str(f["id"]): f for f in get_fields(conn, tid)}
@@ -429,6 +432,11 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
         o["limit"] = int(o["limit"]) if o.get("limit") not in (None, "", 0) else None
         if ftype == "conditional_rollup" and o.get("func") not in F.ROLLUPS:
             bad("Choose a rollup function")
+    elif ftype == "date" and (o.get("stampWhen") or "").strip():
+        # a date that fills itself in when its formula is true (Started date, Completed date…)
+        o["stampWhen"] = compile_formula(conn, tid, o["stampWhen"].strip(), field["id"] if field else None)
+        o["stampClear"] = bool(o.get("stampClear"))
+        o["stampKind"] = o.get("stampKind") if o.get("stampKind") in ("started", "completed") else None
     elif ftype == "formula":
         expr = (o.get("expression") or "").strip()
         o = {"expression": compile_formula(conn, tid, expr, field["id"] if field else None),

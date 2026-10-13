@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../api";
 import type { Choice, Field, FieldOptions, FieldType, FilterCond, TableInfo } from "../types";
-import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable, BUILTIN_KEYS } from "../util";
+import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable, BUILTIN_KEYS, valueType } from "../util";
 import { FormulaEditor } from "./FormulaEditor";
+import { DateValue } from "./ViewControls";
 import { FieldIcon, Icon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
 
@@ -35,13 +36,22 @@ function Select({ value, onChange, children, placeholder }: {
   );
 }
 
-function TypePicker({ value, onChange, disabled }: { value: FieldType; onChange: (t: FieldType) => void; disabled?: boolean }) {
+const STAMPS = [
+  { kind: "started" as const, label: "Started date", desc: "Fills itself in when work starts (a formula you choose)" },
+  { kind: "completed" as const, label: "Completed date", desc: "Fills itself in when it's done, and clears if undone" },
+];
+
+function TypePicker({ value, onChange, disabled, stamp, onStamp }: {
+  value: FieldType; onChange: (t: FieldType) => void; disabled?: boolean;
+  stamp?: "started" | "completed" | null; onStamp?: (k: "started" | "completed") => void;
+}) {
   const pop = usePopover();
   const cur = FIELD_TYPES.find((t) => t.type === value)!;
+  const curLabel = value === "date" && stamp ? STAMPS.find((x) => x.kind === stamp)!.label : cur.label;
   return (
     <>
       <button type="button" className="input type-button" disabled={disabled} onClick={pop.open}>
-        <FieldIcon type={value} /> {cur.label} <span className="spacer" /> ▾
+        <FieldIcon type={value} /> {curLabel} <span className="spacer" /> ▾
       </button>
       {pop.anchor && (
         <Popover anchor={pop.anchor} onClose={pop.close} width={420} className="type-popover">
@@ -50,13 +60,25 @@ function TypePicker({ value, onChange, disabled }: { value: FieldType; onChange:
               <div className="menu-heading">{g} fields</div>
               <div className="type-grid">
                 {FIELD_TYPES.filter((t) => t.group === g).map((t) => (
-                  <button key={t.type} className={`menu-item type-item ${t.type === value ? "active" : ""}`}
+                  <button key={t.type} className={`menu-item type-item ${t.type === value && !(t.type === "date" && stamp) ? "active" : ""}`}
                     onClick={() => { onChange(t.type); pop.close(); }} title={t.desc}>
                     <FieldIcon type={t.type} />
                     <span><b>{t.label}</b><span className="muted small">{t.desc}</span></span>
                   </button>
                 ))}
               </div>
+              {g === "Advanced" && onStamp && (<>
+                <div className="menu-heading">Automatic dates</div>
+                <div className="type-grid">
+                  {STAMPS.map((x) => (
+                    <button key={x.kind} className={`menu-item type-item ${value === "date" && stamp === x.kind ? "active" : ""}`}
+                      onClick={() => { onStamp(x.kind); pop.close(); }} title={x.desc}>
+                      <FieldIcon type="date" />
+                      <span><b>{x.label}</b><span className="muted small">{x.desc}</span></span>
+                    </button>
+                  ))}
+                </div>
+              </>)}
             </div>
           ))}
         </Popover>
@@ -230,6 +252,7 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
     ...(field?.options ?? {}),
     ...(field?.options.choices ? { choices: field.options.choices.map((c) => ({ ...c, from: c.name })) } : {}),
     ...(field?.type === "formula" ? { expression: field.options.displayExpression ?? field.options.expression ?? "" } : {}),
+    ...(field?.type === "date" && field.options.stampWhen ? { stampWhen: field.options.displayStampWhen ?? field.options.stampWhen } : {}),
   }));
   const [description, setDescription] = useState(field?.description ?? "");
   const [showDesc, setShowDesc] = useState(!!field?.description);
@@ -258,6 +281,25 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
     : COMPUTED_TYPES.has(field!.type) ? "The current calculated values will be kept as regular values you can edit."
     : null;
 
+  // Started / Completed date: a date that fills itself in; its formula guessed from the table (a status, a checkbox)
+  const pickStamp = (kind: "started" | "completed") => {
+    pickType("date");
+    const label = kind === "started" ? "Started date" : "Completed date";
+    if (!name.trim() || FIELD_TYPES.some((x) => x.label === name) || name === "Started date" || name === "Completed date") setName(label);
+    const status = fields.find((f) => f.type === "single_select" && /status|stage|state/i.test(f.name)) ?? fields.find((f) => f.type === "single_select");
+    const choice = (re: RegExp) => status?.options.choices?.find((c) => re.test(c.name))?.name;
+    const box = fields.find((f) => f.type === "checkbox" && /done|complete|finished/i.test(f.name)) ?? fields.find((f) => f.type === "checkbox");
+    const q = (v: string) => `"${v.replace(/"/g, '\\"')}"`;
+    let when = "";
+    if (kind === "started") {
+      const c = choice(/progress|doing|started|active|working/i);
+      when = status && c ? `{${status.name}} = ${q(c)}` : box ? `{${box.name}}` : "";
+    } else {
+      const c = choice(/done|complete|finished|closed/i);
+      when = box ? `{${box.name}}` : status && c ? `{${status.name}} = ${q(c)}` : "";
+    }
+    set({ stampKind: kind, stampWhen: when, stampClear: kind === "completed", includeTime: true });
+  };
   const pickType = (t: FieldType) => {
     setType(t);
     setError("");
@@ -272,7 +314,7 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
     if (type === "date" && typeof dv === "string" && dv !== "today" && dv !== "now" && !/^\d{4}-\d{2}-\d{2}/.test(dv)) return setError("Pick the default date");
     const options: FieldOptions = { ...o };
     let def = dv;
-    delete options._inner; delete options._error; delete options._filesTable; delete options.displayExpression; delete options.resultType;
+    delete options._inner; delete options._error; delete options._filesTable; delete options.displayExpression; delete options.resultType; delete options.displayStampWhen;
     if (type === "single_select" || type === "multi_select") {
       const kept = (o.choices ?? []).filter((c) => c.name.trim());
       // renamed options: records holding the old name get the new one
@@ -355,7 +397,8 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
       </div>
       <fieldset className="form plain-fieldset field-editor" disabled={system}>
         <label className="stack">Type
-          <TypePicker value={type} onChange={pickType} disabled={system} />
+          <TypePicker value={type} onChange={(t) => { pickType(t); if (t === "date") set({ stampWhen: null, stampKind: null, stampClear: false }); }}
+            disabled={system} stamp={o.stampKind} onStamp={pickStamp} />
           <span className="hint">{FIELD_TYPES.find((t) => t.type === type)?.desc}</span>
         </label>
         {conversionNote && <div className="notice">{conversionNote}</div>}
@@ -393,6 +436,20 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
             <Toggle checked={o.separators !== false} onChange={(v) => set({ separators: v ? undefined : false })} label="Thousands separators" />
             <span className="hint">Example: {formatNumber(o.numberFormat === "percent" ? 0.4567 : 12345.678, o)}</span>
           </Section>
+        )}
+        {type === "date" && (o.stampKind || o.stampWhen != null) && (
+          <Section title="Fills itself in">
+            <span className="hint">The date (and time) is filled in when this formula becomes true, for example
+              <code>{"{Status} = \"Doing\""}</code>, <code>{"{Done}"}</code> or <code>{"AND({Done}, {Approved})"}</code>. It's checked whenever the record changes.</span>
+            <FormulaEditor tableId={tableId} fieldId={field?.id} fields={fields} value={o.stampWhen ?? ""} onChange={(v) => set({ stampWhen: v })} />
+            <Toggle checked={!!o.stampClear} onChange={(v) => set({ stampClear: v })} label="Clear it when the formula is no longer true" />
+            <span className="hint">{o.stampClear ? "Undoing it (unticking, moving back) empties the date; doing it again fills in the new time."
+              : "Once filled in, the date stays, even if the formula stops being true (a start date stays when the work moves on to Done)."}
+              {" "}Records the formula is already true for get the time they were last changed.</span>
+          </Section>
+        )}
+        {type === "date" && !o.stampKind && o.stampWhen == null && !system && (
+          <button className="btn sm ghost" type="button" onClick={() => set({ stampWhen: "" })}>Fill it in automatically…</button>
         )}
         {type === "date" && (
           <Section title="Formatting">
@@ -541,7 +598,9 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
                           ? <select className="input sm" value={c.valueField} onChange={(e) => setFilter(i, { valueField: e.target.value })}>
                               {fields.filter((f) => f.id !== field?.id && f.type !== "button").map(fieldOpt)}
                             </select>
-                          : <input className="input sm" value={String(c.value ?? "")} placeholder="Value" onChange={(e) => setFilter(i, { value: e.target.value })} />)}
+                          : valueType(foreignFields.find((x) => x.id === c.field)) === "date"
+                            ? <DateValue value={String(c.value ?? "")} onChange={(v) => setFilter(i, { value: v })} />
+                            : <input className="input sm" value={String(c.value ?? "")} placeholder="Value" onChange={(e) => setFilter(i, { value: e.target.value })} />)}
                         <button className="icon-btn" onClick={() => set({ filters: filters.filter((_, j) => j !== i) })}><Icon name="x" size={14} /></button>
                       </div>
                     );

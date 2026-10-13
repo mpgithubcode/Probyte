@@ -1531,3 +1531,7 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .invite-row.off { opacity: 0.55; }
 .invite-url { font-size: 12px; background: var(--bg-soft); padding: 2px 6px; border-radius: 4px; }
 .layout-summary { font-weight: 500; }
+
+/* date filters: a period, a number of days, a date or a range */
+.date-filter { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.date-filter-n { width: 70px; }

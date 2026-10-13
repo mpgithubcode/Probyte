@@ -3,7 +3,7 @@ its history entry and its change-feed event."""
 from app.calc.compute import COMPUTED_TYPES, Engine
 from app.core import events
 from app.core.db import Jsonb
-from app.data import audit
+from app.data import audit, stamps
 from app.data.behaviors import _is_task, advance_recurring, advance_repeating_record, apply_done, apply_event_defaults, apply_task_auto, sync_done
 from app.data.rules import apply_defaults, check_rules
 from app.data.schema import bad, DAV_KINDS, ensure_choices, get_fields, get_table, is_remote_table, is_served, not_found, SELECT_TYPES
@@ -157,6 +157,7 @@ def create_record(conn, table_id, data: dict, user_id=None, *, table=None, field
     else:
         r = insert_record(conn, table_id, data, user_id=user_id)
     _sync_links(conn, fields, r["id"], table_id, {}, data)
+    stamps.apply(conn, table_id, r["id"], fields)   # Started date, Completed date…
     audit.note(conn, table_id, r["id"], "created")
     _changed(conn, table, "record.created", r["id"], source)
     return r, table
@@ -189,6 +190,7 @@ def update_record(conn, record_id, patch: dict, user_id=None, source="app"):
         (Jsonb(data), status, user_id, record_id),
     ).fetchone()
     _sync_links(conn, fields, record_id, r["table_id"], old, patch)
+    data.update(stamps.apply(conn, r["table_id"], record_id, fields))   # Started date, Completed date…
     audit.note(conn, r["table_id"], record_id, "updated", old, data, fields)
     if history is not None:
         # A repeating task moved on to its next date; keep the finished occurrence as a completed task.

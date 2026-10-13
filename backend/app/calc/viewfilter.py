@@ -58,20 +58,22 @@ def _matches(eng, f, v, flt) -> bool:
         return val in text
     if op == "not_contains":
         return val not in text
-    if op in ("is", "is_not") and eng.value_type(f) == "date" and re.match(r"^\d{4}-\d{2}-\d{2}$", val) and not _empty(v):
+    if eng.value_type(f) == "date" and op in ("is", "is_not", "gt", "gte", "lt", "lte") and (rng := F.date_range(raw)):
+        # by day, against a day or a period (exact, or worked out now: today, current week, 3 days ago…)
         try:
-            hit = F.local(F.parse_dt(v)).date().isoformat() == val  # same day
+            day = F.local(F.parse_dt(v)).date().isoformat() if not _empty(v) else None
         except F.FormulaError:
-            hit = False
-        return hit if op == "is" else not hit
+            day = None
+        if day is None:
+            return op == "is_not"
+        a, b = rng
+        return {"is": a <= day <= b, "is_not": day < a or day > b, "gt": day > b, "gte": day >= a, "lt": day < a, "lte": day <= b}[op]
     if op in ("gt", "gte", "lt", "lte"):
         if _empty(v):
             return False
         try:
             if eng.value_type(f) == "date":
                 x, y = F.parse_dt(v), F.parse_dt(str(flt.get("value") or ""))
-                if len(str(flt.get("value") or "").strip()) == 10:  # compare whole days against a date
-                    x, y = F.local(x).date(), F.local(y).date()
             else:
                 x, y = F.to_num(v), F.to_num(flt.get("value"))
         except F.FormulaError:

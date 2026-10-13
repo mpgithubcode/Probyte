@@ -1,4 +1,4 @@
-import type { Field, FieldOptions, FieldType, TableInfo, TableKind, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig, SharePerms, LinkPerms } from "./types";
+import type { Field, FieldOptions, FieldType, TableInfo, TableKind, Filter, FilterGroup, Rec, Refs, SortSpec, ValueType, ViewConfig, SharePerms, LinkPerms, DateGrouping } from "./types";
 
 export const PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#ec4899", "#64748b", "#84cc16", "#f97316"];
 
@@ -227,16 +227,57 @@ export function displayText(field: Field, v: unknown, refs?: Refs): string {
 
 const isEmpty = (v: unknown) => v === null || v === undefined || v === "" || v === false || (Array.isArray(v) && v.length === 0);
 
+/** The days a date filter's value stands for, worked out now: "2026-10-12", "2026-10-01..2026-10-31", today / tomorrow /
+ * yesterday (also "today()"), current / last / next week, month or year, "3 days ago", "3 days from now" ("in 3 days"),
+ * weeks and months too, "past 7 days", "next 30 days", "today() - 7". [first day, last day] as day keys, or null.
+ * Keep in step with date_range() in backend/app/calc/viewfilter.py. */
+export function dateRange(value: unknown, today = new Date(), weekStart = weekStartsOn()): [string, string] | null {
+  const v = String(value ?? "").trim().toLowerCase().replace(/\(\)/g, "").replace(/\s+/g, " ");
+  if (!v) return null;
+  const day = (d: Date) => keyOf(d);
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const [y, mo, d] = [t.getFullYear(), t.getMonth(), t.getDate()];
+  const plus = (n: number, unit = "day") => {
+    if (unit.startsWith("week")) return new Date(y, mo, d + 7 * n);
+    if (unit.startsWith("month")) return new Date(y, mo + n, Math.min(d, new Date(y, mo + n + 1, 0).getDate()));  // (Jan 31 + 1 month: Feb 28)
+    return new Date(y, mo, d + n);
+  };
+  let m: RegExpMatchArray | null;
+  if ((m = v.match(/^(\d{4}-\d{2}-\d{2})$/))) return [m[1], m[1]];
+  if ((m = v.match(/^(\d{4}-\d{2}-\d{2})\s*(?:\.\.|to)\s*(\d{4}-\d{2}-\d{2})$/))) return m[1] <= m[2] ? [m[1], m[2]] : [m[2], m[1]];
+  if (v === "today" || v === "now") return [day(t), day(t)];
+  if (v === "tomorrow") return [day(plus(1)), day(plus(1))];
+  if (v === "yesterday") return [day(plus(-1)), day(plus(-1))];
+  if ((m = v.match(/^(current|this|last|previous|next) (week|month|year)$/))) {
+    const shift = m[1] === "next" ? 1 : m[1] === "last" || m[1] === "previous" ? -1 : 0;
+    if (m[2] === "week") {
+      const start = new Date(t.getFullYear(), t.getMonth(), t.getDate() - ((t.getDay() - weekStart + 7) % 7) + 7 * shift);
+      return [day(start), day(new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6))];
+    }
+    if (m[2] === "month") return [day(new Date(t.getFullYear(), t.getMonth() + shift, 1)), day(new Date(t.getFullYear(), t.getMonth() + shift + 1, 0))];
+    return [`${t.getFullYear() + shift}-01-01`, `${t.getFullYear() + shift}-12-31`];
+  }
+  if ((m = v.match(/^(\d+) (day|week|month)s? ago$/))) { const d = plus(-Number(m[1]), m[2]); return [day(d), day(d)]; }
+  if ((m = v.match(/^(?:in (\d+) (day|week|month)s?|(\d+) (day|week|month)s? from now)$/))) {
+    const d = plus(Number(m[1] ?? m[3]), m[2] ?? m[4]); return [day(d), day(d)];
+  }
+  if ((m = v.match(/^(?:past|last) (\d+) (day|week|month)s?$/))) return [day(plus(-Number(m[1]), m[2])), day(t)];
+  if ((m = v.match(/^next (\d+) (day|week|month)s?$/))) return [day(t), day(plus(Number(m[1]), m[2]))];
+  if ((m = v.match(/^today ?([+-]) ?(\d+)$/))) { const d = plus((m[1] === "-" ? -1 : 1) * Number(m[2])); return [day(d), day(d)]; }
+  return null;
+}
+
 function matches(field: Field, v: unknown, f: Filter, refs?: Refs): boolean {
   const text = displayText(field, v, refs).toLowerCase();
   const val = String(f.value ?? "").toLowerCase();
   const vt = valueType(field);
-  // dates compare by day against "YYYY-MM-DD"; numbers numerically
-  if (vt === "date" && /^\d{4}-\d{2}-\d{2}$/.test(val) && ["is", "is_not", "gt", "gte", "lt", "lte"].includes(f.op)) {
+  // dates compare by day against a day or a period (exact, or worked out now: today, current week, 3 days ago…)
+  const range = vt === "date" && ["is", "is_not", "gt", "gte", "lt", "lte"].includes(f.op) ? dateRange(val) : null;
+  if (range) {
     const day = dayKey(v);
     if (!day) return f.op === "is_not";
-    const c = day < val ? -1 : day > val ? 1 : 0;
-    return { is: c === 0, is_not: c !== 0, gt: c > 0, gte: c >= 0, lt: c < 0, lte: c <= 0 }[f.op as "is"]!;
+    const [a, b] = range;
+    return { is: day >= a && day <= b, is_not: day < a || day > b, gt: day > b, gte: day >= a, lt: day < a, lte: day <= b }[f.op as "is"]!;
   }
   switch (f.op) {
     case "empty": return isEmpty(v);
@@ -367,7 +408,26 @@ export const canGroupBy = (f: Field) => !["attachment", "button", "long_text", "
 export interface Group { key: string; label: string; color?: string; empty: boolean; records: Rec[] }
 
 /** Records split by a field's value, in a sensible order (choice order, dates and numbers ascending, empty last). */
-export function groupRecords(records: Rec[], field: Field, refs?: Refs): Group[] {
+// relative-to-today date groups, in order (key: label)
+const RELATIVE: [string, string][] = [["0", "Earlier"], ["1", "Yesterday"], ["2", "Today"], ["3", "Tomorrow"], ["4", "Later this week"],
+  ["5", "Next week"], ["6", "Later"]];
+
+/** A day's group when dates are grouped by week, month, year or relative to today: [key (sorts in order), label]. */
+function dateGroup(day: string, by: DateGrouping): [string, string] {
+  const d = parseKey(day);
+  if (by === "year") return [day.slice(0, 4), day.slice(0, 4)];
+  if (by === "month") return [day.slice(0, 7), d.toLocaleDateString(undefined, { month: "long", year: "numeric" })];
+  if (by === "week") {
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() - weekStartsOn() + 7) % 7));
+    return [keyOf(start), `Week of ${formatDate(keyOf(start), false)}`];
+  }
+  const [y0] = dateRange("yesterday")!, [t0] = dateRange("today")!, [m0] = dateRange("tomorrow")!;
+  const [, weekEnd] = dateRange("current week")!, [, nextEnd] = dateRange("next week")!;
+  const i = day < y0 ? 0 : day === y0 ? 1 : day === t0 ? 2 : day === m0 ? 3 : day <= weekEnd ? 4 : day <= nextEnd ? 5 : 6;
+  return RELATIVE[i];
+}
+
+export function groupRecords(records: Rec[], field: Field, refs?: Refs, dateBy?: DateGrouping): Group[] {
   const groups = new Map<string, Group>();
   const sortKey = new Map<string, string | number>();
   const vt = valueType(field);
@@ -381,6 +441,7 @@ export function groupRecords(records: Rec[], field: Field, refs?: Refs): Group[]
       key = v ? "true" : "false"; label = v ? "Checked" : "Unchecked"; sk = v ? 0 : 1;
     } else if (vt === "date") {
       key = dayKey(v) ?? String(v); label = formatDate(key, false); sk = key;
+      if (dateBy && dateBy !== "day" && dayKey(v)) { [key, label] = dateGroup(key, dateBy); sk = key; }
     } else if (vt === "number" && typeof v === "number") {
       key = String(v); label = displayText(field, v, refs); sk = v;
     } else {
@@ -414,7 +475,7 @@ export function buildGroups(records: Rec[], specs: SortSpec[], fields: Field[], 
   const spec = specs[depth];
   const field = spec && fields.find((f) => f.id === spec.field);
   if (!field) return [];
-  let groups = groupRecords(records, field, refs);
+  let groups = groupRecords(records, field, refs, spec.dateBy);
   if (spec.dir === "desc") groups = [...groups.filter((g) => !g.empty).reverse(), ...groups.filter((g) => g.empty)];
   return groups.map((g) => {
     const path = `${parent}/${g.key}`;

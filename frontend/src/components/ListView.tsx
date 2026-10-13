@@ -46,7 +46,7 @@ const ZONES: ListAlign[] = ["start", "left", "center", "right"];
 export function ListView({ ds, fields, visible, records, view, ops }: ViewProps) {
   const { refs } = useContext(RefsContext);
   const specs = viewGroups(view.config);
-  const specKey = specs.map((g) => `${g.field}:${g.dir}:${g.hideTitle ? 1 : 0}${g.noArrow ? 1 : 0}`).join(",");
+  const specKey = specs.map((g) => `${g.field}:${g.dir}:${g.hideTitle ? 1 : 0}${g.noArrow ? 1 : 0}${g.dateBy ?? ""}`).join(",");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // rows sit indented under their group headers (depth = how many headers are above them)
   const rows = useMemo<({ g: GroupNode } | { r: Rec; depth: number })[]>(() => {

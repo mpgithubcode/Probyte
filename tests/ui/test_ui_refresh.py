@@ -182,3 +182,62 @@ def test_a_repeating_task_in_the_list_and_its_next_dates(browser):
     assert [d[F["due"]] for d in done] == ["2026-10-27"]
     assert "EXDATE:2026-10-27" in u.record(t["id"], r["id"])["data"][F["rrule"]]
     assert not pg.errors, pg.errors
+
+
+def test_date_filters_groups_and_automatic_dates(browser):
+    """A date filter with Teable's choices (today, days ago, a range…), grouping dates relative to today, and a
+    Completed date added from the field types."""
+    from datetime import date, timedelta
+    u = Client()
+    t = u.table(name="Visits")
+    F = u.fields(t["id"])
+    due = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Due", "type": "date"})
+    done = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Done", "type": "checkbox"})
+    today = date.today()
+    for name, days in (("Old", -20), ("Now", 0), ("Soon", 1), ("Far", 60)):
+        u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: name, due["id"]: (today + timedelta(days=days)).isoformat()}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    expect(rows(pg)).to_have_count(4)
+    pg.click(".tool-btn:has-text('Filter')")
+    pg.click(".popover button:has-text('Add condition')")
+    pop = pg.locator(".popover").last
+    pop.locator("select").nth(0).select_option(label="Due")
+    pop.locator(".date-filter select").select_option("today")
+    expect(rows(pg)).to_have_count(1)
+    expect(rows(pg).first).to_contain_text("Now")
+    pop.locator(".date-filter select").select_option("days ago")
+    pop.locator(".date-filter input[aria-label='Days']").fill("20")
+    expect(rows(pg)).to_have_count(1)
+    expect(rows(pg).first).to_contain_text("Old")
+    pop.locator(".date-filter select").select_option("custom range")
+    pop.locator(".date-filter input[aria-label='From']").fill(today.isoformat())
+    pop.locator(".date-filter input[aria-label='To']").fill((today + timedelta(days=1)).isoformat())
+    expect(rows(pg)).to_have_count(2)
+    pg.keyboard.press("Escape")
+    # grouped by Due, relative to today
+    view = u.j("GET", f"/tables/{t['id']}")["views"][0]
+    pg.wait_for_timeout(800)
+    u.j("PATCH", f"/views/{view['id']}", json={"config": {"groups": [{"field": due["id"], "dir": "asc", "dateBy": "relative"}]}})
+    pg.reload()
+    heads = pg.locator(".grid .group-row")
+    expect(heads).to_have_count(4)
+    expect(heads.nth(0)).to_contain_text("Earlier")
+    expect(heads.nth(1)).to_contain_text("Today")
+    expect(heads.nth(2)).to_contain_text("Tomorrow")
+    expect(heads.nth(3)).to_contain_text("Later")
+    # a Completed date, from the field types: its formula guessed from the Done checkbox
+    pg.click(".page-head button[title='Add field']")
+    pg.click(".modal .type-button")
+    pg.click(".popover .type-item:has-text('Completed date')")
+    modal = pg.locator(".modal")
+    expect(modal.locator(".type-button")).to_contain_text("Completed date")
+    expect(modal.locator("textarea").first).to_have_value("{Done}")
+    modal.locator("button:has-text('Save'), button:has-text('Create')").last.click()
+    expect(pg.locator(".modal")).to_have_count(0)
+    fid = next(f["id"] for f in u.j("GET", f"/tables/{t['id']}")["fields"] if f["name"] == "Completed date")
+    rec = next(r for r in u.records(t["id"]) if r["data"][F["Name"]] == "Now")
+    u.j("PATCH", f"/records/{rec['id']}", json={"data": {done["id"]: True}})
+    assert u.record(t["id"], rec["id"])["data"][fid]
+    assert not pg.errors, pg.errors

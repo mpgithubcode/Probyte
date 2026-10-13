@@ -108,6 +108,19 @@ Every database and combined database can have any number of Notion-style views, 
 
 **Filters, sorts and groups (like Teable).** **Filter** builds conditions joined by *and* / *or*, with nested **condition groups** (e.g. *Type is Event* **or** (*Status is In Progress* **and** *Type is Task*)); numbers and dates have greater/less than, before/after. A condition without a value is ignored until you fill it in. **Sort** takes several levels ("by Type, then by Title Z → A"). In Table, List and Gallery views, **Group** nests up to three levels (e.g. Type → Status); groups follow the field's option order (dates and numbers ascending, empty last), collapse with a click, and a group's **+** adds a record with that group's values. The same filters and sorts apply on public links and in the API's `view=`.
 
+**Dates in filters and groups.** A date condition takes a period worked out each time the view is shown, as in Teable:
+- **today**, **tomorrow** or **yesterday**;
+- **current / last / next week**, **current / last / next month**, or **current year**;
+- **days ago** or **days from now**, with a number;
+- an **exact date**, or a **custom range**.
+
+"is" means within that period, "is before" means before it starts, and "is after" means after it ends. Typed values work too, in the API, automations and conditional lookups: `today()`, `this week`, `past 7 days`, `next 30 days`, `3 weeks ago`, `in 2 months`, `today() - 7` or `2026-10-01..2026-10-31`. A group on a date field can group **by day**, **week**, **month**, **year**, or **relative to today**: Earlier, Yesterday, Today, Tomorrow, Later this week, Next week, Later.
+
+**Started date and Completed date.** Two automatic date fields in the field types (**Automatic dates**). Each fills itself in with the current date and time when a formula you set becomes true. The formula is guessed from the table, for example `{Status} = "Doing"` for Started date and `{Done}` for Completed date, and can be any formula, such as `AND({Done}, {Approved})`.
+- A Completed date clears itself when it's undone; a Started date stays once set. Either one can be set to work the other way.
+- When you add one, records its formula is already true for get the time they were last changed.
+- Any date field can do the same: **Fill it in automatically…** in its settings. These are ordinary dates otherwise, so filters, sorting, calendars and formulas use them.
+
 **Group headers.** Each group level has two switches in **Group**: **Title** (show that level's header row, e.g. "Event" / "Task", or let its records simply follow each other) and **Collapse arrow** (whether the header can fold its group away).
 
 **Names per view.** **Fields** in the toolbar shows or hides each field and can give it a different name in that view only (e.g. "Remarks" for *Notes* in one view); the field itself, the API and formulas keep its real name.

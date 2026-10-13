@@ -50,8 +50,48 @@ function ValueInput({ field, value, onChange }: { field?: Field; value?: string;
       </select>
     );
   }
-  if (vt === "date") return <input className="input sm" type="date" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />;
+  if (vt === "date") return <DateValue value={value ?? ""} onChange={onChange} />;
   return <input className="input sm" type={vt === "number" ? "number" : "text"} value={value ?? ""} placeholder="Value" onChange={(e) => onChange(e.target.value)} />;
+}
+
+// a date filter's value: a period worked out when the view is shown (as in Teable), a number of days, a date or a range
+const DATE_MODES = ["today", "tomorrow", "yesterday", "current week", "last week", "next week", "current month", "last month", "next month",
+  "current year", "days ago", "days from now", "exact date", "custom range"] as const;
+type DateMode = typeof DATE_MODES[number];
+
+function dateMode(v: string): { mode: DateMode; n?: string; a?: string; b?: string } {
+  const s = v.trim().toLowerCase().replace(/\(\)/g, "");
+  let m: RegExpMatchArray | null;
+  if ((DATE_MODES as readonly string[]).includes(s)) return { mode: s as DateMode };
+  if (s === "this week" || s === "this month" || s === "this year") return { mode: s.replace("this", "current") as DateMode };
+  if ((m = s.match(/^(\d+) days? ago$/))) return { mode: "days ago", n: m[1] };
+  if ((m = s.match(/^(?:(\d+) days? from now|in (\d+) days?)$/))) return { mode: "days from now", n: m[1] ?? m[2] };
+  if ((m = s.match(/^(\d{4}-\d{2}-\d{2})\s*(?:\.\.|to)\s*(\d{4}-\d{2}-\d{2})$/))) return { mode: "custom range", a: m[1], b: m[2] };
+  return { mode: "exact date", a: /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "" };
+}
+
+export function DateValue({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const cur = value ? dateMode(value) : { mode: "exact date" as DateMode, a: "" };
+  const today = new Date().toISOString().slice(0, 10);
+  const pick = (mode: DateMode) => onChange(mode === "days ago" ? "1 days ago" : mode === "days from now" ? "1 days from now"
+    : mode === "exact date" ? today : mode === "custom range" ? `${today}..${today}` : mode);
+  return (
+    <span className="date-filter">
+      <select className="input sm" value={cur.mode} onChange={(e) => pick(e.target.value as DateMode)} aria-label="Date">
+        {DATE_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+      {(cur.mode === "days ago" || cur.mode === "days from now") && (
+        <input className="input sm date-filter-n" type="number" min={0} value={cur.n ?? "1"} aria-label="Days"
+          onChange={(e) => onChange(`${Math.max(0, Number(e.target.value) || 0)} days ${cur.mode === "days ago" ? "ago" : "from now"}`)} />
+      )}
+      {cur.mode === "exact date" && <input className="input sm" type="date" value={cur.a ?? ""} onChange={(e) => onChange(e.target.value)} aria-label="Date" />}
+      {cur.mode === "custom range" && (<>
+        <input className="input sm" type="date" value={cur.a ?? ""} aria-label="From" onChange={(e) => onChange(`${e.target.value}..${cur.b ?? e.target.value}`)} />
+        <span className="muted">to</span>
+        <input className="input sm" type="date" value={cur.b ?? ""} aria-label="To" onChange={(e) => onChange(`${cur.a ?? e.target.value}..${e.target.value}`)} />
+      </>)}
+    </span>
+  );
 }
 
 function GroupEditor({ group, fields, depth, onChange, onRemove }: {
@@ -143,6 +183,12 @@ function SpecList({ fields, specs, onChange, max, addLabel, empty, ascLabel = "A
             <button className="icon-btn" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}><Icon name="up" size={13} /></button>
             <button className="icon-btn" aria-label="Remove" onClick={() => onChange(specs.filter((_, j) => j !== i))}><Icon name="x" size={14} /></button>
           </span>
+          {groupToggles && valueType(fields.find((f) => f.id === s.field)) === "date" && (
+            <select className="input sm" value={s.dateBy ?? "day"} aria-label="Group dates by" onChange={(e) => set(i, { dateBy: e.target.value === "day" ? undefined : e.target.value as SortSpec["dateBy"] })}>
+              <option value="day">by day</option><option value="week">by week</option><option value="month">by month</option>
+              <option value="year">by year</option><option value="relative">relative to today</option>
+            </select>
+          )}
           {groupToggles && (
             <span className="spec-toggles">
               <label className="chip-check" title="Show this level's header row (e.g. “Event”, “Task”)">

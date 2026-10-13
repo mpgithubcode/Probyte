@@ -52,6 +52,10 @@ export interface FieldOptions {
   relationship?: "one" | "many";
   displayFieldId?: string | null;  // link: the field of the linked records shown in the cell (none: their title)
   displayFiles?: boolean;          // link / lookup: files shown as preview thumbnails (default) or by name
+  stampWhen?: string | null;      // Date: fill in the date when this formula is true (Started date, Completed date…)
+  stampClear?: boolean;           // …and clear it when the formula is no longer true
+  stampKind?: "started" | "completed" | null;
+  displayStampWhen?: string;
   doneField?: string | false | null;   // Repeat (ordinary tables): the checkbox that completes it (false: none; unset: the only one)
   dateFields?: string[] | null;        // Repeat: the dates that move to the next date (unset: all)
   symmetricFieldId?: string;
@@ -116,7 +120,9 @@ export type FilterOp = "contains" | "not_contains" | "is" | "is_not" | "empty" |
 export interface Filter { field: string; op: FilterOp; value?: string }
 /** Conditions joined by "and"/"or"; items can be conditions or nested groups. */
 export interface FilterGroup { conjunction: "and" | "or"; items: (Filter | FilterGroup)[] }
-export interface SortSpec { field: string; dir: "asc" | "desc"; hideTitle?: boolean; noArrow?: boolean }  // the last two: group levels
+export type DateGrouping = "day" | "week" | "month" | "year" | "relative";
+export interface SortSpec { field: string; dir: "asc" | "desc"; hideTitle?: boolean; noArrow?: boolean;  // the last two: group levels
+  dateBy?: DateGrouping }  // group levels on a date: by day (default), week, month, year, or relative to today
 
 export type ListAlign = "start" | "left" | "center" | "right";
 

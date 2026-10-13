@@ -55,7 +55,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
 
   // ---- grouping
   const groupSpecs = viewGroups(view.config);
-  const groupKey = groupSpecs.map((g) => `${g.field}:${g.dir}:${g.hideTitle ? 1 : 0}${g.noArrow ? 1 : 0}`).join(",");
+  const groupKey = groupSpecs.map((g) => `${g.field}:${g.dir}:${g.hideTitle ? 1 : 0}${g.noArrow ? 1 : 0}${g.dateBy ?? ""}`).join(",");
   const groupedBy = new Set(groupSpecs.map((g) => g.field));
   const groups = useMemo(() => (groupSpecs.length ? buildGroups(records, groupSpecs, fields, refs) : null), [records, groupKey, fields, refs]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());

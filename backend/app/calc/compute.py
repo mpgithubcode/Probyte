@@ -251,6 +251,11 @@ class Engine:
                     o["_inner"] = {"type": t, "options": opts, "name": target["name"]}
             if f["type"] in ("formula", "rollup", "conditional_rollup"):
                 o["resultType"] = self.value_type(f)
+            if f["type"] == "date" and o.get("stampWhen"):
+                try:
+                    o["displayStampWhen"] = F.rewrite_refs(o["stampWhen"], lambda r: names.get(r, r))
+                except F.FormulaError:
+                    o["displayStampWhen"] = o["stampWhen"]
             if f["type"] == "formula" and o.get("expression"):
                 try:
                     o["displayExpression"] = F.rewrite_refs(o["expression"], lambda r: names.get(r, r))
@@ -577,6 +582,18 @@ class Engine:
 
     @staticmethod
     def _test(op, left, right, vt) -> bool:
+        if right[0] == "days":   # a day against a period: by local day, as a view's filter
+            lblank, ldt = left[0], left[3]
+            if op == "empty":
+                return lblank
+            if op == "not_empty":
+                return not lblank
+            if lblank or ldt is None:
+                return op in ("is_not", "not_contains")
+            day = (F.local(ldt).date() if isinstance(ldt, datetime) else ldt).isoformat()
+            a, b = right[1]
+            return {"is": a <= day <= b, "contains": a <= day <= b, "is_not": day < a or day > b, "not_contains": day < a or day > b,
+                    "gt": day > b, "gte": day >= a, "lt": day < a, "lte": day <= b}.get(op, False)
         lblank, ltexts, lnum, ldt, llist = left
         rblank, rtexts, rnum, rdt, _ = right
         if op == "empty":
@@ -615,7 +632,9 @@ class Engine:
             vt = self.value_type(cf)
             left = [self._norm(cf, fr["data"].get(c["field"]), vt) for fr in foreign]
             conds.append((c, vt, left))
-        static = [(c, vt, left, self._norm(None, c.get("value"), vt)) for c, vt, left in conds if not c.get("valueField")]
+        # (a date compared with a period worked out now — today, current week, 3 days ago… — gets its days)
+        static = [(c, vt, left, ("days", F.date_range(c.get("value"))) if vt == "date" and F.date_range(c.get("value"))
+                   else self._norm(None, c.get("value"), vt)) for c, vt, left in conds if not c.get("valueField")]
         dynamic = [(c, vt, left) for c, vt, left in conds if c.get("valueField")]
         base = [i for i in range(len(foreign)) if all(self._test(c.get("op", "is"), left[i], right, vt) for c, vt, left, right in static)]
 
