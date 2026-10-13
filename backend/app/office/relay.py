@@ -58,7 +58,10 @@ def forwarded_headers(headers, request_base: str, scheme: str = "") -> dict:
     """The browser's request headers, plus where it sees the Document Server (so the addresses it makes point back
     through Probyte, as an nginx in front of it would say)."""
     u = urlparse(request_base)
-    out = {k: v for k, v in headers.items() if k.lower() not in _HOP and k.lower() not in ("cookie", "authorization")}
+    # the reverse proxy's own forwarded headers go: sent next to ours (x-forwarded-proto: wss beside X-Forwarded-Proto),
+    # the Document Server reads the proxy's (no scheme it takes, so http; no /office-ds) and the editor can't download
+    out = {k: v for k, v in headers.items() if k.lower() not in _HOP and k.lower() not in ("cookie", "authorization", "forwarded")
+           and not k.lower().startswith("x-forwarded-")}
     out["X-Forwarded-Host"] = u.netloc + PREFIX
     # the web scheme, also for the editor's WebSocket (ws / wss): the Document Server writes the document's download
     # address with it, and a wss:// one can't be downloaded ("Download failed")

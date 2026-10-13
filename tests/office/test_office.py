@@ -554,6 +554,11 @@ def test_protocol_and_certificate_settings(admin, doc):
         # made the Document Server hand an https page http:// addresses ("Download failed")
         h = requests.get(relay + "/fake/headers", headers={"X-Forwarded-Proto": "http", "Origin": "https://probyte.example.com"}).json()
         assert h["x-forwarded-proto"] == "https" and h["x-forwarded-host"] == "probyte.example.com/office-ds"
+        # a proxy that adds its own forwarded headers (Pangolin: x-forwarded-proto: wss for the editor's connection): only
+        # the relay's reach the Document Server, which read the proxy's and handed out http:// addresses without /office-ds
+        h = requests.get(relay + "/fake/headers", headers={"x-forwarded-proto": "wss", "x-forwarded-host": "probyte.example.com",
+                                                           "x-forwarded-prefix": "/", "Origin": "https://probyte.example.com"}).json()
+        assert h["x-forwarded-proto"] == "https" and h["x-forwarded-host"] == "probyte.example.com/office-ds" and "x-forwarded-prefix" not in h
         # set by the admin
         admin.j("PUT", "/office/settings", json={**base, "browser_scheme": "https"})
         assert admin.j("GET", "/office/settings")["browser_scheme"] == "https"

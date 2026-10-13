@@ -123,7 +123,7 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/fake/log":
             return self._send(200, log)
         if self.path.startswith("/fake/headers"):  # what the relay told it (X-Forwarded-Proto, X-Forwarded-Host)
-            return self._send(200, {k.lower(): v for k, v in self.headers.items()})
+            return self._send(200, {k: ", ".join(self.headers.get_all(k)) for k in {k.lower() for k in self.headers.keys()}})  # (a header sent twice: both)
         self._send(404, {})
 
     def do_POST(self):
