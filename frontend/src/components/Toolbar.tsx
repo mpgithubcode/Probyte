@@ -301,7 +301,8 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
           </button>
           {listPop.anchor && (
             <Popover anchor={listPop.anchor} onClose={listPop.close} width={400}>
-              <ListOptions layout={listLayout(fields.filter((f) => !hiddenSet.has(f.id)), config)} config={config} setConfig={setConfig} />
+              <ListOptions layout={listLayout(fields.filter((f) => !hiddenSet.has(f.id)), config)} config={config} setConfig={setConfig}
+                extra={fields.filter((f) => !hiddenSet.has(f.id) && f.type === "long_text" && !config.listProps?.some((p) => p.field === f.id))} />
             </Popover>
           )}
         </>

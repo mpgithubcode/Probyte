@@ -1535,3 +1535,15 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 /* date filters: a period, a number of days, a date or a range */
 .date-filter { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .date-filter-n { width: 70px; }
+
+/* list: every property shows (desktop); when they don't all fit they share the room, each cut off with … */
+.list-view { overflow-x: hidden; }
+@media (min-width: 761px) {
+  .list-prop { max-width: 520px; }
+  .list-prop.long { max-width: 460px; }
+}
+.list-prop.long .list-prop-value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-soft); }
+.list-opt-extra { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border-top: 1px solid var(--border); padding-top: 8px; }
+.link-pick { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.link-pick-filter summary { cursor: pointer; font-size: 13px; color: var(--text-soft); }
+.link-pick-filter[open] summary { margin-bottom: 8px; }

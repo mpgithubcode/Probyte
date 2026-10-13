@@ -28,12 +28,23 @@ class Lookups:
         self._titles: dict = {}
         self._users: dict | None = None
 
-    def titles(self, table_id) -> dict:
-        """lower-cased record title -> record id."""
+    def link_index(self, table_id) -> tuple[set, dict]:
+        """Every record of a linked table: (record ids, lower-cased title -> [record ids]). Titles are only labels:
+        several records can share one, so a title maps to all of them and ids identify records."""
         key = str(table_id)
         if key not in self._titles:
-            self._titles[key] = {v.lower(): k for k, v in Engine(self.conn).titles(table_id).items()} if table_id else {}
+            ids, by_name = set(), {}
+            for rid, title in (Engine(self.conn).titles(table_id).items() if table_id else ()):
+                ids.add(str(rid))
+                by_name.setdefault(str(title).strip().lower(), []).append(str(rid))
+            self._titles[key] = (ids, by_name)
         return self._titles[key]
+
+    def titles(self, table_id) -> dict:
+        """For imports and type changes: lower-cased title -> record id, for titles only one record has (a title
+        shared by several records links none of them rather than a guess), and each record id -> itself."""
+        ids, by_name = self.link_index(table_id)
+        return {**{t: rs[0] for t, rs in by_name.items() if len(rs) == 1}, **{i: i for i in ids}}
 
     def users(self) -> dict:
         """lower-cased username -> user id."""
@@ -209,21 +220,26 @@ def from_api(f, val, lookups: "Lookups"):
     if val is None or (isinstance(val, str) and not val.strip()) or val == []:
         return [] if t in ("link", "multi_select", "user") else None
     if t == "link":
-        titles = lookups.titles(f["options"].get("foreignTableId"))
-        ids = set(titles.values())
-        whole = str(val).strip().lower() if isinstance(val, str) else None
-        if whole is not None and whole in titles:  # a title that contains commas
-            return [titles[whole]]
+        # record ids first (they identify records); a title only when exactly one record has it
+        ids, by_name = lookups.link_index(f["options"].get("foreignTableId"))
+
+        def by_title(s: str) -> str:
+            found = by_name.get(s.lower(), [])
+            if len(found) > 1:
+                bad(f"'{name}': {len(found)} records in the linked table are called '{s}': supply a record ID to say which")
+            if not found:
+                bad(f"'{name}': no record with the ID or title '{s}' in the linked table")
+            return found[0]
+        whole = str(val).strip() if isinstance(val, str) else None
+        if whole is not None and whole not in ids and "," in whole and whole.lower() in by_name:  # a title that contains commas
+            return [by_title(whole)]
         out = []
         for it in _items(val):
             it = it.get("id") if isinstance(it, dict) else it
             s = str(it).strip()
-            if s in ids:
-                out.append(s)
-            elif s.lower() in titles:
-                out.append(titles[s.lower()])
-            else:
-                bad(f"'{name}': no record called '{s}' in the linked table")
+            rid = s if s in ids else by_title(s)
+            if rid not in out:
+                out.append(rid)
         return out
     if t == "user":
         users = lookups.users()

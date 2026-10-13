@@ -397,7 +397,10 @@ function ChoicePicker({ field, value, onCommit, onDone, inline }: InputProps) {
 }
 
 const titleCache = new Map<string, Promise<{ id: string; title: string }[]>>();
-export const invalidateTitles = (tableId?: string) => (tableId ? titleCache.delete(tableId) : titleCache.clear());
+export const invalidateTitles = (tableId?: string) => {
+  if (!tableId) { titleCache.clear(); return; }
+  for (const k of [...titleCache.keys()]) if (k === tableId || k.startsWith(`${tableId}:`)) titleCache.delete(k);  // (and links' own lists)
+};
 
 function LinkInput({ field, value, onCommit, onDone, inline }: InputProps) {
   const { refs, addRefs } = useContext(RefsContext);
@@ -407,12 +410,16 @@ function LinkInput({ field, value, onCommit, onDone, inline }: InputProps) {
   const [q, setQ] = useState("");
   const [options, setOptions] = useState<{ id: string; title: string }[] | null>(null);
   const tid = field.options.foreignTableId ?? "";
+  // a link that offers only some records (a view of the other table, conditions): its own list
+  const limited = !!(field.options.pickView || field.options.pickFilter?.items?.length);
+  const cacheKey = limited ? `${tid}:${field.id}` : tid;
+  const titlesUrl = `/tables/${tid}/titles${limited ? `?field=${field.id}` : ""}`;
 
   useEffect(() => {
     if (!shell.open || !tid) return;
-    if (!titleCache.has(tid)) titleCache.set(tid, api.get(`/tables/${tid}/titles`));
-    titleCache.get(tid)!.then(setOptions).catch(() => { titleCache.delete(tid); setOptions([]); });
-  }, [shell.open, tid]);
+    if (!titleCache.has(cacheKey)) titleCache.set(cacheKey, api.get(titlesUrl));
+    titleCache.get(cacheKey)!.then(setOptions).catch(() => { titleCache.delete(cacheKey); setOptions([]); });
+  }, [shell.open, cacheKey]);
 
   const toggle = (o: { id: string; title: string }) => {
     addRefs({ records: { [o.id]: o.title } });
@@ -436,8 +443,8 @@ function LinkInput({ field, value, onCommit, onDone, inline }: InputProps) {
         r.records.forEach((x) => { added.push(x.id); addRefs({ records: { [x.id]: f.name } }); });
       } catch (e) { setUpErr(`${f.name}: ${(e as Error).message}`); }
     }
-    titleCache.set(tid, api.get(`/tables/${tid}/titles`));
-    titleCache.get(tid)!.then(setOptions).catch(() => undefined);
+    titleCache.delete(tid); titleCache.set(cacheKey, api.get(titlesUrl));
+    titleCache.get(cacheKey)!.then(setOptions).catch(() => undefined);
     if (added.length) onCommit(single ? added.slice(0, 1) : [...ids, ...added]);
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";

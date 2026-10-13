@@ -30,6 +30,7 @@ export function listLayout(visible: Field[], config: ViewConfig): ListProp[] {
     const f = usable.find((x) => x.id === p.field);
     return f ? [{ field: f, align: p.align, label: p.label ?? names }] : [];
   });
+  // (long text only when it's placed, under Properties: descriptions would otherwise fill every list)
   const rest = usable.filter((f) => !placed.some((p) => p.field.id === f.id) && f.type !== "long_text")
     .map((f) => ({ field: f, align: "right" as const, label: names }));
   return [...placed, ...rest.filter((p) => p.field.system_key !== "done"), ...rest.filter((p) => p.field.system_key === "done")];
@@ -73,8 +74,10 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
   // Which properties fit: each side fills its room in order and stops at the first that doesn't fit, so columns
   // drop off from the end as the list narrows. The Completed box (wherever it is) gets its room first.
   const all = listLayout(visible, view.config);
+  // On a desktop every property gets its column; when a row has more than fits, they share the room and each is cut
+  // off with "…" (nothing is left out, nothing runs off the row). On a phone, ones that don't fit are left out from the end.
   const shown = useMemo(() => {
-    if (!width) return all;
+    if (!width || !narrow) return all;
     const gap = narrow ? 10 : 16;
     const need = (p: ListProp) => propWidth(p) + gap;
     const keep = new Set<string>();
@@ -104,7 +107,8 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
     const f = p.field, v = r.data[f.id];
     const box = f.type === "checkbox";
     return (
-      <span key={f.id} className={`list-prop ${p.align} ${box ? "check" : ""}`} title={f.name}>
+      <span key={f.id} className={`list-prop ${p.align} ${box ? "check" : ""} ${f.type === "long_text" ? "long" : ""}`}
+        title={f.type === "long_text" && typeof v === "string" ? `${f.name}: ${v.slice(0, 500)}` : f.name}>
         {p.label && (isSet(v) || box) && <span className="list-prop-name">{f.name}</span>}
         {box ? (  // true/false fields are boxes, ticked or not, and can be ticked right here
           <input type="checkbox" className="checkbox" checked={!!v} aria-label={f.name}

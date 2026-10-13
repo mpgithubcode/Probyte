@@ -241,3 +241,28 @@ def test_date_filters_groups_and_automatic_dates(browser):
     u.j("PATCH", f"/records/{rec['id']}", json={"data": {done["id"]: True}})
     assert u.record(t["id"], rec["id"])["data"][fid]
     assert not pg.errors, pg.errors
+
+
+def test_a_list_row_with_more_than_fits_and_long_text(browser):
+    """List rows keep every property (running off the edge, clipped) and can show long text on one line."""
+    u = Client()
+    people, agencies = u.table(name="People"), u.table(name="Agencies")
+    A = u.fields(agencies["id"])
+    ids = [u.j("POST", f"/tables/{agencies['id']}/records", json={"data": {A["Name"]: f"{n} Housing Authority"}})["id"]
+           for n in ("East Bridgewater", "Randolph", "Walpole", "Mashpee", "Mansfield", "Worcester", "Upton")]
+    P = u.fields(people["id"])
+    link = u.j("POST", f"/tables/{people['id']}/fields", json={"name": "Agencies", "type": "link", "options": {"foreignTableId": agencies["id"]}})
+    u.j("POST", f"/tables/{people['id']}/records", json={"data": {P["Name"]: "Danielle Reid", P["Notes"]: "Line one\nline two of the notes",
+                                                                 P["Status"]: "Todo", link["id"]: ids}})
+    lst = u.j("POST", f"/tables/{people['id']}/views", json={"name": "List", "type": "list"})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{people['id']}/{lst['id']}")
+    row = pg.locator(".list-row", has_text="Danielle Reid")
+    expect(row.locator(".list-prop", has_text="East Bridgewater")).to_have_count(1)
+    expect(row.locator(".list-prop", has_text="Todo")).to_have_count(1)       # still there, past the long one
+    expect(row.locator(".list-prop.long")).to_have_count(0)                   # long text: only when added
+    pg.click(".tool-btn:has-text('Properties')")
+    pg.click(".popover .list-opt-extra button:has-text('Notes')")
+    expect(row.locator(".list-prop.long")).to_contain_text("Line one")
+    assert not pg.errors, pg.errors

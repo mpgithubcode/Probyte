@@ -389,6 +389,25 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
             o["dateFields"] = [str(d) for d in o["dateFields"]] or None
     if ftype == "link":
         o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), table["user_id"])
+        # which records the picker offers: a view of the linked table, and / or conditions on its fields
+        if o.get("pickView"):
+            if not conn.execute("SELECT 1 FROM views WHERE id = %s AND table_id = %s", (str(o["pickView"]), o["foreignTableId"])).fetchone():
+                bad("Choose a view of the linked table")
+            o["pickView"] = str(o["pickView"])
+        else:
+            o.pop("pickView", None)
+        pf = o.get("pickFilter")
+        if pf and isinstance(pf, dict) and pf.get("items"):
+            ftf = {str(f["id"]) for f in get_fields(conn, o["foreignTableId"])}
+            def walk(g):
+                for it in g.get("items") or []:
+                    if isinstance(it, dict) and "items" in it:
+                        walk(it)
+                    elif str(it.get("field")) not in ftf:
+                        bad("The conditions must use fields of the linked table")
+            walk(pf)
+        else:
+            o.pop("pickFilter", None)
         if is_remote_table(conn, o["foreignTableId"]):
             o["symmetric"] = False  # a linked table's fields belong to its source: the link is one-way
         o["relationship"] = "one" if o.get("relationship") == "one" else "many"

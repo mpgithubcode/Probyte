@@ -52,6 +52,8 @@ export interface FieldOptions {
   relationship?: "one" | "many";
   displayFieldId?: string | null;  // link: the field of the linked records shown in the cell (none: their title)
   displayFiles?: boolean;          // link / lookup: files shown as preview thumbnails (default) or by name
+  pickView?: string | null;          // Link: the picker offers the records of this view of the linked table…
+  pickFilter?: FilterGroup | null;   // …and / or those matching these conditions
   stampWhen?: string | null;      // Date: fill in the date when this formula is true (Started date, Completed date…)
   stampClear?: boolean;           // …and clear it when the formula is no longer true
   stampKind?: "started" | "completed" | null;

@@ -221,11 +221,26 @@ def remote_vcards_export(table_id: str, user=User):
 
 
 @router.get("/api/tables/{table_id}/titles")
-def table_titles(table_id: str, user=User):
-    """Record titles of a table, for the link picker."""
+def table_titles(table_id: str, field: str | None = None, user=User):
+    """Record titles of a table, for the link picker. field: the link field picking from it: only the records its
+    settings offer (those of a view of this table, in its order, and / or matching its own conditions)."""
+    from app.calc.viewfilter import apply_view
     with connection() as conn:
         store.get_table(conn, table_id, user["id"])
-        titles = Engine(conn).titles(table_id)
+        eng = Engine(conn)
+        titles = eng.titles(table_id)
+        lf = conn.execute("SELECT options FROM fields WHERE id = %s AND type = 'link'", (field,)).fetchone() if field else None
+        o = (lf or {}).get("options") or {}
+        if o.get("foreignTableId") == str(table_id) and (o.get("pickView") or o.get("pickFilter")):
+            fields = eng.describe(table_id)
+            recs = eng.records(table_id)
+            if o.get("pickView"):
+                v = conn.execute("SELECT config FROM views WHERE id = %s AND table_id = %s", (o["pickView"], table_id)).fetchone()
+                if v:
+                    recs = apply_view(eng, fields, recs, v["config"] or {})
+            if (o.get("pickFilter") or {}).get("items"):
+                recs = apply_view(eng, fields, recs, {"filter": o["pickFilter"]})
+            return [{"id": str(r["id"]), "title": titles.get(str(r["id"]), "Untitled")} for r in recs]
     return [{"id": k, "title": v} for k, v in titles.items()]
 
 

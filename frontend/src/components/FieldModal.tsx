@@ -1,22 +1,23 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../api";
-import type { Choice, Field, FieldOptions, FieldType, FilterCond, TableInfo } from "../types";
+import type { Choice, Field, FieldOptions, FieldType, FilterCond, FilterGroup, TableInfo, View } from "../types";
 import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable, BUILTIN_KEYS, valueType } from "../util";
 import { FormulaEditor } from "./FormulaEditor";
-import { DateValue } from "./ViewControls";
+import { DateValue, FilterEditor } from "./ViewControls";
 import { FieldIcon, Icon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
 
-const fieldCache = new Map<string, Promise<Field[]>>();
-function useTableFields(tableId?: string) {
-  const [fields, setFields] = useState<Field[] | null>(null);
+const fieldCache = new Map<string, Promise<{ fields: Field[]; views: View[] }>>();
+function useTableInfo(tableId?: string) {
+  const [info, setInfo] = useState<{ fields: Field[]; views: View[] } | null>(null);
   useEffect(() => {
-    setFields(null);
+    setInfo(null);
     if (!tableId) return;
-    if (!fieldCache.has(tableId)) fieldCache.set(tableId, api.get(`/tables/${tableId}`).then((r) => r.fields as Field[]));
-    fieldCache.get(tableId)!.then(setFields).catch(() => { fieldCache.delete(tableId); setFields([]); });
+    if (!fieldCache.has(tableId)) fieldCache.set(tableId, api.get<{ fields: Field[]; views: View[] }>(`/tables/${tableId}`)
+      .then((r) => ({ fields: r.fields, views: r.views ?? [] })));
+    fieldCache.get(tableId)!.then(setInfo).catch(() => { fieldCache.delete(tableId); setInfo({ fields: [], views: [] }); });
   }, [tableId]);
-  return fields;
+  return info;
 }
 
 const OPS = [
@@ -269,7 +270,8 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
   const linkFields = fields.filter((f) => f.type === "link" && f.id !== field?.id);
   const linkField = linkFields.find((f) => f.id === o.linkFieldId);
   const foreignId = type === "lookup" || type === "rollup" ? linkField?.options.foreignTableId : o.foreignTableId;
-  const foreignFields = useTableFields(foreignId);
+  const foreignInfo = useTableInfo(foreignId);
+  const foreignFields = foreignInfo?.fields ?? null;
   const otherTables = tables;
   const typeChanged = field && field.type !== type;
   // Values are converted on type change; say what happens in the cases that aren't a plain conversion.
@@ -527,6 +529,22 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
             {o.displayFieldId && ["attachment", "lookup", "conditional_lookup"].includes(foreignFields?.find((f) => f.id === o.displayFieldId)?.type ?? "") && (
               <label className="inline-check"><input type="checkbox" checked={o.displayFiles !== false} onChange={(e) => set({ displayFiles: e.target.checked })} />
                 Show files as preview thumbnails (a click opens the file)</label>
+            )}
+            {o.foreignTableId && foreignInfo && (
+              <div className="link-pick">
+                <label className="stack">Records to choose from
+                  <select className="input" value={o.pickView ?? ""} onChange={(e) => set({ pickView: e.target.value || null })}>
+                    <option value="">All records</option>
+                    {foreignInfo.views.filter((v) => v.type !== "chart").map((v) => <option key={v.id} value={v.id}>Those in the view “{v.name}”</option>)}
+                  </select>
+                </label>
+                <details className="link-pick-filter" open={!!o.pickFilter?.items?.length}>
+                  <summary>{o.pickFilter?.items?.length ? `Only records matching ${o.pickFilter.items.length} condition${o.pickFilter.items.length === 1 ? "" : "s"}` : "Filter the records…"}</summary>
+                  <FilterEditor fields={foreignInfo.fields} filter={o.pickFilter ?? { conjunction: "and", items: [] }}
+                    onChange={(g: FilterGroup) => set({ pickFilter: g.items.length ? g : null })} />
+                </details>
+                <span className="hint">The link's picker offers only these records (records already linked stay linked).</span>
+              </div>
             )}
             {o.foreignTableId && tables.find((t) => t.id === o.foreignTableId)?.kind === "remote" && (
               <p className="hint">This is a linked table, so the link is one-way: its records come from its owner and can't get a field pointing back.</p>

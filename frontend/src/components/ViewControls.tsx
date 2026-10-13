@@ -246,8 +246,9 @@ export function BoardOptions({ config, groupField, setConfig }: { config: ViewCo
 
 // ------------------------------------------------------------------ list properties
 
-export function ListOptions({ layout, config, setConfig }: {
+export function ListOptions({ layout, config, setConfig, extra = [] }: {
   layout: ListProp[]; config: ViewConfig; setConfig: (p: Partial<ViewConfig>) => void;
+  extra?: Field[];   // fields a list leaves out until they're added here (long text)
 }) {
   const save = (items: ListProp[]) =>
     setConfig({ listProps: items.map((x) => ({ field: x.field.id, align: x.align, label: x.label })) });
@@ -287,6 +288,23 @@ export function ListOptions({ layout, config, setConfig }: {
         </div>
       ))}
       {!layout.length && <div className="muted small">No visible properties besides the title.</div>}
+      {extra.length > 0 && (
+        <div className="list-opt-extra">
+          <span className="muted small">Long text (one line, cut off where the row ends):</span>
+          {extra.map((f) => (
+            <button key={f.id} className="btn sm" onClick={() => save([...layout, { field: f, align: "left", label: config.listLabels !== false }])}>
+              <Icon name="plus" size={13} /> {f.name}</button>
+          ))}
+        </div>
+      )}
+      {layout.some((x) => x.field.type === "long_text") && (
+        <div className="list-opt-extra">
+          {layout.filter((x) => x.field.type === "long_text").map((x) => (
+            <button key={x.field.id} className="btn sm ghost" onClick={() => save(layout.filter((y) => y.field.id !== x.field.id))}>
+              <Icon name="x" size={13} /> Remove {x.field.name}</button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
