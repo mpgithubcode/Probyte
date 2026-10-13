@@ -25,7 +25,9 @@ ALLOWED = {
     "ops":        {"core", "blobs"},
     "adapters":   {"core", "formats", "calc", "identity", "data", "blobs", "files", "dav", "sharing", "extensions"},
     "extensions": {"core", "formats", "calc", "identity", "data", "blobs", "files", "adapters"},
-    "web":        {"core", "formats", "calc", "identity", "data", "blobs", "files", "dav", "sharing", "office", "ops", "adapters"},
+    "automations": {"core", "formats", "calc", "identity", "data", "blobs", "files", "dav", "sharing", "adapters"},
+    "web":        {"core", "formats", "calc", "identity", "data", "blobs", "files", "dav", "sharing", "office", "ops", "adapters",
+                   "automations"},
 }
 PROGRAMS = {"main", "worker", "admin", "wiring", "tools", "__init__"}
 # Allowed exceptions, with the reason

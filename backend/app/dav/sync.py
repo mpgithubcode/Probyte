@@ -171,7 +171,7 @@ def _sync(table_id: str, full: bool) -> dict:
                                        (Jsonb(new_data), item_url, raw, etag, rec["id"], rec["updated_at"]))
                     if cur.rowcount:
                         audit.note(conn, table_id, rec["id"], "updated", rec["data"], new_data, fields)
-                        events.record_changed(conn, table, "record.updated", rec["id"], source="sync")
+                        events.record_changed(conn, table, "record.updated", rec["id"], source="sync", old=rec["data"])
                         stats["updated"] += 1
                 else:
                     conn.execute("UPDATE records SET caldav_href = %s, caldav_etag = %s WHERE id = %s", (item_url, etag, rec["id"]))
@@ -238,7 +238,7 @@ def schedule(table_id, delay: float | None = None, conn=None):
     jobs.enqueue(conn, "sync_table", {"table_id": str(table_id)}, key=f"sync:{table_id}", delay=delay, max_attempts=3)
 
 
-def on_record_change(conn, table, event, record_id, source):
+def on_record_change(conn, table, event, record_id, source, old=None):
     """Change feed: a record of a table linked to another server changed here; push it there shortly."""
     if source != "sync" and is_synced(table):
         schedule(table["id"], conn=conn)

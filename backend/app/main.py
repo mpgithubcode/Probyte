@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from app import wiring  # noqa: F401  (connects the components: before anything writes)
 from app import extensions, office
 from app.adapters import feeds, live, mcp_server, rest_v1
+from app.automations import api as automations
 from app.core.db import connection, init_db
 from app.data import contacts, store
 from app.dav import api as dav_api, server as dav_server
@@ -114,7 +115,7 @@ def _bad_id(request: Request, exc):
 
 
 
-for r in (auth_routes, dav_api, workspace, tables, records, views, live, admin, feeds, files, templates, contacts, office):
+for r in (auth_routes, dav_api, workspace, tables, records, views, live, admin, feeds, files, templates, contacts, office, automations):
     app.include_router(r.router)
 
 app.include_router(shares.router)

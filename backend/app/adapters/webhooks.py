@@ -44,7 +44,7 @@ def new_secret() -> str:
     return "whsec_" + secrets.token_urlsafe(24)
 
 
-def on_record_change(conn, table, event, record_id, source):
+def on_record_change(conn, table, event, record_id, source, old=None):
     """Change feed: every record change, from anywhere, can be a webhook delivery."""
     emit(conn, table["id"], event, record_id)
 

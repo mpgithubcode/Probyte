@@ -10,7 +10,8 @@ every program), and each decides from `source` whether the change concerns it. A
 just pulled, for instance.
 
 Sources: "app" (people and API clients), "dav" (a device through Probyte's CalDAV/CardDAV server), "sync" (pulled
-from another DAV server), "files" (found in a files table's storage).
+from another DAV server), "files" (found in a files table's storage), "automation" (an automation's action: these
+don't start automations, so automations can't set each other off in a loop).
 """
 import logging
 from typing import Callable
@@ -24,16 +25,17 @@ _warned = False
 
 
 def subscribe(fn: Callable) -> Callable:
-    """fn(conn, table, event, record_id, source): called in the writer's transaction. Usable as a decorator."""
+    """fn(conn, table, event, record_id, source, old): called in the writer's transaction; old is the record's data
+    before the change when the writer has it (updates). Usable as a decorator."""
     if fn not in _subscribers:
         _subscribers.append(fn)
     return fn
 
 
-def record_changed(conn, table, event: str, record_id, source: str = "app") -> None:
+def record_changed(conn, table, event: str, record_id, source: str = "app", old: dict | None = None) -> None:
     global _warned
     if not _subscribers and not _warned:
         _warned = True
         log.error("a record changed but nothing is subscribed to changes: import app.wiring in this program")
     for fn in _subscribers:
-        fn(conn, table, event, record_id, source)
+        fn(conn, table, event, record_id, source, old)

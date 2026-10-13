@@ -199,7 +199,7 @@ def _render(conn, table, mapper, r):
                  (uid, r["caldav_href"] or item_name(table["kind"], uid), body, make_etag(body), r["id"], r["row_version"]))
 
 
-def on_record_change(conn, table, event, record_id, source):
+def on_record_change(conn, table, event, record_id, source, old=None):
     """Change feed: a record of a served table was changed in Probyte. Its item is rendered by a job a moment later
     (one job for a burst of changes: an import of thousands of events doesn't render each as it's written), and in
     any case before a phone is answered (render_pending), so a phone never sees a stale item."""
@@ -259,7 +259,7 @@ def write_item(conn, user, t, name, text, if_match=None, if_none_match=None) -> 
                      "updated_at = now(), updated_by = %s WHERE id = %s",
                      (Jsonb(data), uid, text, et, user["id"], existing["id"]))
         audit.note(conn, t["id"], existing["id"], "updated", existing["data"], data, fields)
-        events.record_changed(conn, t, "record.updated", existing["id"], source="dav")
+        events.record_changed(conn, t, "record.updated", existing["id"], source="dav", old=existing["data"])
         return 204, et
     try:
         with conn.transaction():

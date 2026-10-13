@@ -117,8 +117,8 @@ def _remove_link(conn, rid, field_id, target, table_id=None):
                      ([str(field_id)], Jsonb(vals), rid))
 
 
-def _changed(conn, table, event, record_id, source="app"):
-    events.record_changed(conn, table, event, record_id, source)
+def _changed(conn, table, event, record_id, source="app", old=None):
+    events.record_changed(conn, table, event, record_id, source, old)
 
 
 def insert_record(conn, table_id, data, *, user_id=None, caldav_uid=None, caldav_href=None, caldav_raw=None, sync_status="synced",
@@ -131,7 +131,7 @@ def insert_record(conn, table_id, data, *, user_id=None, caldav_uid=None, caldav
     ).fetchone()
 
 
-def create_record(conn, table_id, data: dict, user_id=None, *, table=None, fields=None):
+def create_record(conn, table_id, data: dict, user_id=None, *, table=None, fields=None, source="app"):
     """table / fields: already loaded (and checked) by the caller, e.g. once for a whole import."""
     table = table or get_table(conn, table_id, user_id)
     if table["kind"] == "remote":
@@ -158,11 +158,11 @@ def create_record(conn, table_id, data: dict, user_id=None, *, table=None, field
         r = insert_record(conn, table_id, data, user_id=user_id)
     _sync_links(conn, fields, r["id"], table_id, {}, data)
     audit.note(conn, table_id, r["id"], "created")
-    _changed(conn, table, "record.created", r["id"])
+    _changed(conn, table, "record.created", r["id"], source)
     return r, table
 
 
-def update_record(conn, record_id, patch: dict, user_id=None):
+def update_record(conn, record_id, patch: dict, user_id=None, source="app"):
     # FOR UPDATE: simultaneous edits of one record wait for each other instead of overwriting each other's fields
     r = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted FOR UPDATE", (record_id,)).fetchone() or not_found("Record not found")
     table = get_table(conn, r["table_id"], user_id)
@@ -196,8 +196,8 @@ def update_record(conn, record_id, patch: dict, user_id=None):
         h = insert_record(conn, r["table_id"], history, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
         _sync_links(conn, fields, h["id"], r["table_id"], {}, history)
         audit.note(conn, r["table_id"], h["id"], "created")
-        _changed(conn, table, "record.created", h["id"])
-    _changed(conn, table, "record.updated", record_id)
+        _changed(conn, table, "record.created", h["id"], source)
+    _changed(conn, table, "record.updated", record_id, source, old)
     return r, table
 
 
@@ -220,7 +220,7 @@ def delete_record(conn, record_id, user_id=None, source="app"):
     else:
         conn.execute("DELETE FROM records WHERE id = %s", (record_id,))
     audit.note(conn, r["table_id"], record_id, "deleted")
-    _changed(conn, table, "record.deleted", record_id, source)
+    _changed(conn, table, "record.deleted", record_id, source, dict(r["data"]))
     return table
 
 

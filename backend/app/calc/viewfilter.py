@@ -111,6 +111,13 @@ def _test(eng, by_id, r, node) -> bool:
     return _matches(eng, f, r["data"].get(str(f["id"])), node)
 
 
+def matches(eng: Engine, fields: list, record: dict, group: dict) -> bool:
+    """Whether one record passes a filter group (a view's filter, or an automation's conditions)."""
+    if not isinstance(group, dict) or not group.get("items"):
+        return True
+    return _test(eng, {str(f["id"]): f for f in fields}, record, group)
+
+
 def apply_view(eng: Engine, fields: list, records: list, config: dict) -> list:
     by_id = {str(f["id"]): f for f in fields}
     out = records

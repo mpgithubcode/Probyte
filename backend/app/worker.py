@@ -12,6 +12,7 @@ import threading
 
 from app import wiring  # noqa: F401  (connects the components: before anything writes)
 from app.adapters import webhooks  # noqa: F401  (importing registers the job handlers)
+from app.automations import engine as automations
 from app.blobs import attachments
 from app.core import jobs
 from app.core.db import connection, init_db
@@ -43,6 +44,7 @@ def prune():
     purge_expired()  # the trash keeps things for 30 days
     with connection() as conn:
         audit.prune(conn)  # record history: 180 days
+        automations.prune(conn)  # automation runs: 30 days
 
 
 def start(stop: threading.Event):
@@ -53,6 +55,7 @@ def start(stop: threading.Event):
         (GC_INTERVAL, lambda: jobs.enqueue(None, "attachments_gc", key="attachments_gc"), 60),
         (3600, prune, 120),
         (3600, backup.backup_if_due, 300),  # daily backups (BACKUP_INTERVAL); checked hourly, so restarts don't skip one
+        (60, automations.run_due, 30),  # scheduled automations
     ]
     for seconds, fn, first in periodic:
         threading.Thread(target=jobs.every, args=(stop, seconds, fn, first), daemon=True).start()
