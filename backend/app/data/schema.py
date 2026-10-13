@@ -364,6 +364,14 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
             o["symmetricFieldId"] = field["options"].get("symmetricFieldId")
             if str(field["options"].get("foreignTableId")) != o["foreignTableId"]:
                 bad("The linked table of an existing link field can't be changed; create a new field instead")
+        # what the cell shows of each linked record: its title, or another of its fields (any: a formula, a lookup,
+        # its files, shown as previews unless displayFiles is off)
+        if o.get("displayFieldId"):
+            _field_in(conn, o["displayFieldId"], o["foreignTableId"], "field to show")
+            o["displayFieldId"] = str(o["displayFieldId"])
+        else:
+            o.pop("displayFieldId", None)
+        o["displayFiles"] = o.get("displayFiles") is not False
     elif ftype in ("lookup", "rollup"):
         link = _field_in(conn, o.get("linkFieldId"), tid, "link field")
         if link["type"] != "link":

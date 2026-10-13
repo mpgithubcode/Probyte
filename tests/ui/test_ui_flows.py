@@ -1516,3 +1516,38 @@ def test_resize_columns(browser):
     eventually(lambda: not (u.j("GET", f"/tables/{t['id']}")["views"][0]["config"].get("columnWidths") or {}).get(F["Name"]))
     assert abs(th.bounding_box()["width"] - w0) <= 2
     assert not pg.errors, pg.errors
+
+
+def test_a_link_shows_another_field_and_its_files_open(browser):
+    """A link field showing a formula of its records, then their files as previews that open the file viewer."""
+    u = Client()
+    clients, jobs = u.table(name="Clients"), u.table(name="Jobs")
+    C = u.fields(clients["id"])
+    code = u.j("POST", f"/tables/{clients['id']}/fields", json={"name": "Code", "type": "formula", "options": {"expression": 'UPPER({Name}) & "-1"'}})
+    logo = u.j("POST", f"/tables/{clients['id']}/fields", json={"name": "Logo", "type": "attachment"})
+    png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82")
+    up = u.post(API + "/attachments", files={"file": ("logo.png", png, "image/png")}).json()
+    acme = u.j("POST", f"/tables/{clients['id']}/records", json={"data": {C["Name"]: "acme", logo["id"]: [up]}})
+    link = u.j("POST", f"/tables/{jobs['id']}/fields", json={"name": "Client", "type": "link", "options": {"foreignTableId": clients["id"]}})
+    J = u.fields(jobs["id"])
+    u.j("POST", f"/tables/{jobs['id']}/records", json={"data": {J["Name"]: "Panel", link["id"]: [acme["id"]]}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{jobs['id']}")
+    cell = rows(pg).first.locator("td", has_text="acme")
+    expect(cell).to_have_count(1)
+    # the field's settings: show the Code instead of the title
+    pg.click("thead th:has-text('Client')")
+    pg.click(".menu-item:has-text('Edit field')")
+    pg.locator(".modal label:has-text('Show in the cell') select").select_option(code["id"])
+    pg.click(".modal button:has-text('Save')")
+    expect(rows(pg).first).to_contain_text("ACME-1")
+    # its logo: a preview that opens the file
+    u.j("PATCH", f"/fields/{link['id']}", json={"options": {"foreignTableId": clients["id"], "displayFieldId": logo["id"]}})
+    pg.reload()
+    thumb = rows(pg).first.locator(".thumb")
+    expect(thumb).to_have_count(1)
+    thumb.click()
+    expect(pg.locator(".viewer[aria-label='logo.png'], .preview, [role=dialog]").first).to_be_visible()
+    assert not pg.errors, pg.errors

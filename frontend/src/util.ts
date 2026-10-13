@@ -603,3 +603,14 @@ const phoneQuery = (q: string) => (/^[\d\s().+\-]+$/.test(q) && q.replace(/\D/g,
 
 /** A web address as shown: without https:// and a trailing slash. */
 export const shortUrl = (url: string) => url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+
+
+/** Refs merged: newer titles, names and shown values over older ones. */
+export function mergeRefs(a: Refs, b: Partial<Refs> | undefined): Refs {
+  if (!b) return a;
+  const display = { ...(a.display ?? {}) };
+  for (const [fid, d] of Object.entries(b.display ?? {})) {
+    display[fid] = { field: d.field, values: { ...(display[fid]?.values ?? {}), ...d.values } };
+  }
+  return { records: { ...a.records, ...b.records }, users: { ...a.users, ...b.users }, display };
+}

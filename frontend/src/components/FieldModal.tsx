@@ -428,6 +428,19 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
             </label>
             <label className="inline-check"><input type="checkbox" checked={o.relationship !== "one"}
               onChange={(e) => set({ relationship: e.target.checked ? "many" : "one" })} /> Allow linking to several records</label>
+            {o.foreignTableId && foreignFields && (
+              <label className="stack">Show in the cell
+                <select className="input" value={o.displayFieldId ?? ""} onChange={(e) => set({ displayFieldId: e.target.value || null })}>
+                  <option value="">Each record's title</option>
+                  {foreignFields.filter((f) => f.type !== "button" && !f.is_primary).map(fieldOpt)}
+                </select>
+                <span className="hint">Any of the linked records' fields: a formula, a lookup, a date, their files…</span>
+              </label>
+            )}
+            {o.displayFieldId && ["attachment", "lookup", "conditional_lookup"].includes(foreignFields?.find((f) => f.id === o.displayFieldId)?.type ?? "") && (
+              <label className="inline-check"><input type="checkbox" checked={o.displayFiles !== false} onChange={(e) => set({ displayFiles: e.target.checked })} />
+                Show files as preview thumbnails (a click opens the file)</label>
+            )}
             {o.foreignTableId && tables.find((t) => t.id === o.foreignTableId)?.kind === "remote" && (
               <p className="hint">This is a linked table, so the link is one-way: its records come from its owner and can't get a field pointing back.</p>
             )}
@@ -453,6 +466,10 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
                   {(foreignFields ?? []).filter((f) => f.type !== "button").map(fieldOpt)}
                 </Select>
               </label>
+            )}
+            {type === "lookup" && foreignFields?.find((f) => f.id === o.lookupFieldId)?.type === "attachment" && (
+              <label className="inline-check"><input type="checkbox" checked={o.displayFiles !== false} onChange={(e) => set({ displayFiles: e.target.checked })} />
+                Show files as preview thumbnails (a click opens the file)</label>
             )}
           </>
         )}

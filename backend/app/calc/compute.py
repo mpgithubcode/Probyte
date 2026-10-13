@@ -760,5 +760,30 @@ class Engine:
                 for r in records:
                     v = r["data"].get(fid)
                     user_ids.update(str(x) for x in (v if isinstance(v, list) else [v]) if x)
+        display = {}
+        for f in self.fields(table_id):  # links that show another field of their records than the title
+            o = f["options"] or {}
+            if f["type"] != "link" or not o.get("displayFieldId"):
+                continue
+            df = next((x for x in self.describe(o.get("foreignTableId")) if str(x["id"]) == str(o["displayFieldId"])), None)
+            if not df:
+                continue
+            wanted = {str(x) for r in records for x in (r["data"].get(str(f["id"])) or [])}
+            if not wanted:
+                continue
+            src = {str(r["id"]): r for r in self.records(o["foreignTableId"]) if str(r["id"]) in wanted}
+            values = {rid: src[rid]["data"].get(str(df["id"])) for rid in wanted if rid in src}
+            display[str(f["id"])] = {"field": df, "values": values}
+            if df["type"] == "link":  # its own links show as titles
+                titles = self.titles(df["options"].get("foreignTableId"))
+                for v in values.values():
+                    for x in v or []:
+                        rec_titles[str(x)] = titles.get(str(x), "Untitled")
+            elif df["type"] in ("user", "created_by", "last_modified_by"):
+                for v in values.values():
+                    user_ids.update(str(x) for x in (v if isinstance(v, list) else [v]) if x)
         users = self.users()
-        return {"records": rec_titles, "users": {u: users[u] for u in user_ids if u in users}}
+        out = {"records": rec_titles, "users": {u: users[u] for u in user_ids if u in users}}
+        if display:
+            out["display"] = display
+        return out

@@ -1,3 +1,4 @@
+import { mergeRefs } from "./util";
 import { api } from "./api";
 import type { Dataset, Field, Rec, Refs } from "./types";
 
@@ -39,7 +40,7 @@ export async function loadComboSource(ds: Dataset, tableId: string): Promise<(pr
     return {
       ...prev, records, pending: prev.pending.filter((t) => t !== tableId),
       sources: prev.sources?.map((s) => (s.table_id === tableId ? { ...s, link_sources: r.link_sources ?? undefined } : s)),
-      refs: { records: { ...prev.refs.records, ...r.refs.records }, users: { ...prev.refs.users, ...r.refs.users } },
+      refs: mergeRefs(prev.refs, r.refs),
     };
   };
 }
@@ -73,7 +74,7 @@ function applyChanges(ds: Dataset, ch: { token: string; records: Rec[]; deleted:
   for (const r of ch.records) if (!known.has(r.id) && !gone.has(r.id)) records.push(r);
   return {
     ...ds, records, token: ch.token,
-    refs: { records: { ...ds.refs.records, ...ch.refs.records }, users: { ...ds.refs.users, ...ch.refs.users } },
+    refs: mergeRefs(ds.refs, ch.refs),
   };
 }
 

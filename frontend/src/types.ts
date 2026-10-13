@@ -21,7 +21,12 @@ export interface Storage {
   path_style: boolean; has_secret: boolean; tables?: number;
 }
 
-export interface Refs { records: Record<string, string>; users: Record<string, string> }
+/** Titles and names that values refer to. display: link fields that show another field of their records than the
+ * title (the field, and its value for each linked record). */
+export interface Refs {
+  records: Record<string, string>; users: Record<string, string>;
+  display?: Record<string, { field: Field; values: Record<string, any> }>;
+}
 
 export interface Choice { name: string; color: string; from?: string }  // from: the name it had when the field editor opened
 
@@ -42,6 +47,8 @@ export interface FieldOptions {
   // link
   foreignTableId?: string;
   relationship?: "one" | "many";
+  displayFieldId?: string | null;  // link: the field of the linked records shown in the cell (none: their title)
+  displayFiles?: boolean;          // link / lookup: files shown as preview thumbnails (default) or by name
   symmetricFieldId?: string;
   symmetric?: boolean;
   // lookup / rollup / conditional

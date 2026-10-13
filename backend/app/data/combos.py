@@ -138,7 +138,7 @@ def combo_records(conn, combo, engine=None, only: set | None = None):
 
 
 def combo_refs(conn, combo, engine, only: set | None = None):
-    refs = {"records": {}, "users": {}}
+    refs = {"records": {}, "users": {}, "display": {}}
     for s in combo["sources"]:
         if only is not None and str(s["table_id"]) not in only:
             continue
@@ -149,6 +149,13 @@ def combo_refs(conn, combo, engine, only: set | None = None):
         r = engine.refs(s["table_id"], recs)
         refs["records"].update(r["records"])
         refs["users"].update(r["users"])
+        for src_fid, d in (r.get("display") or {}).items():  # under the combined database's field that shows it
+            for u in combo["fields"]:
+                if u["mapping"].get(str(s["table_id"])) == src_fid:
+                    cur = refs["display"].setdefault(u["id"], {"field": d["field"], "values": {}})
+                    cur["values"].update(d["values"])
+    if not refs["display"]:
+        refs.pop("display")
     return refs
 
 

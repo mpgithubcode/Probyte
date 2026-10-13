@@ -61,6 +61,32 @@ export function AttachmentThumbs({ items, size = 24 }: { items: Attachment[]; si
   );
 }
 
+/** The files in a value (an attachment field's, a files table's File, or lists of them, as lookups give). */
+export function fileItems(v: any): Attachment[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.flatMap(fileItems);
+  return typeof v === "object" && v.id && v.name ? [v as Attachment] : [];
+}
+
+/** A link field that shows another field of its records than their title: that field's value for each, its files as
+ * preview thumbnails (a click opens them) unless the field says to name them. */
+function LinkedValues({ ids, shown, files }: { ids: string[]; shown: { field: Field; values: Record<string, any> }; files: boolean }) {
+  const { refs } = useContext(RefsContext);
+  const all = ids.map((id) => shown.values[id]);
+  const items = fileItems(all);
+  if (items.length && files) return <AttachmentThumbs items={items} />;
+  return (
+    <span className="chips">
+      {ids.map((id, i) => {
+        const v = all[i];
+        const empty = v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length);
+        return <span key={id} className="ref-chip record" title={refs.records[id]}>
+          {empty ? <span className="muted">{refs.records[id] ?? ""}</span> : <CellValue field={shown.field} value={v} />}</span>;
+      })}
+    </span>
+  );
+}
+
 /** Read-only rendering of a value. */
 export function CellValue({ field, value }: { field: Field; value: any }) {
   const { refs } = useContext(RefsContext);
@@ -93,8 +119,11 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
       return <a className="cell-link" href={`mailto:${value}`} title={`Write to ${value}`} onClick={(e) => e.stopPropagation()}>{String(value)}</a>;
     case "phone":
       return <a className="cell-link" href={telHref(String(value))} title={`Call ${formatPhone(value)}`} onClick={(e) => e.stopPropagation()}>{formatPhone(value)}</a>;
-    case "link":
+    case "link": {
+      const shown = refs.display?.[field.id];
+      if (shown) return <LinkedValues ids={value as string[]} shown={shown} files={field.options.displayFiles !== false} />;
       return <span className="chips">{(value as string[]).map((id) => <RefChip key={id} kind="record" label={refs.records[id] ?? ""} />)}</span>;
+    }
     case "user": case "created_by": case "last_modified_by":
       return <span className="chips">{(Array.isArray(value) ? value : [value]).map((id: string) => (
         <RefChip key={id} kind="user" label={refs.users[id] ?? "unknown"} />))}</span>;
@@ -107,6 +136,9 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
     case "lookup": case "conditional_lookup": {
       const inner = innerField(field);
       const items = Array.isArray(value) ? value : [value];
+      if (inner?.type === "attachment" && field.options.displayFiles === false) {
+        return <span>{fileItems(items).map((a) => a.name).join(", ")}</span>;
+      }
       if (inner && ["single_select", "multi_select", "link", "user", "attachment", "checkbox", "rating"].includes(inner.type)) {
         return <span className="chips">{items.map((x, i) => (
           <CellValue key={i} field={inner} value={inner.type === "link" || inner.type === "user" || inner.type === "attachment" ? [x] : x} />))}</span>;

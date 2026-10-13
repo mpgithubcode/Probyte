@@ -157,12 +157,12 @@ def create_combo(body: ComboIn, user=User):
     if len(body.sources) < 1:
         raise HTTPException(400, "Pick at least one source table")
     with connection() as conn:
-        base = store.get_base(conn, body.base_id, user["id"]) if body.base_id else store.ensure_base(conn, user["id"])
+        base = store.get_base(conn, body.base_id, user["id"], need="admin") if body.base_id else store.ensure_base(conn, user["id"])
         sources = _sources_json(conn, body.sources, user)
         fields = store.build_combo_fields(conn, [s["table_id"] for s in sources])
-        c = conn.execute(
+        c = conn.execute(  # in a shared base, the base owner's (like its tables)
             "INSERT INTO combos (user_id, base_id, name, sources, fields) VALUES (%s,%s,%s,%s,%s) RETURNING *",
-            (user["id"], base["id"], body.name, Jsonb(sources), Jsonb(fields)),
+            (base["user_id"], base["id"], body.name, Jsonb(sources), Jsonb(fields)),
         ).fetchone()
         store.create_view(conn, combo_id=c["id"], name="Table", type="grid")
         sem = {s: next((f["id"] for f in fields if f["name"].lower() in names), None)
@@ -198,9 +198,18 @@ def combo_source(combo_id: str, table_id: str, user=User):
 @router.patch("/api/combos/{combo_id}")
 def update_combo(combo_id: str, body: ComboPatch, user=User):
     with connection() as conn:
-        c = store.get_combo(conn, combo_id, user["id"])
+        c = store.get_combo(conn, combo_id, user["id"], need="viewer")
+        if body.hidden is not None and access.role(conn, c["base_id"], user["id"]) != "owner":
+            # a member hides or shows it in their own sidebar only
+            conn.execute("UPDATE base_members SET hidden = hidden || jsonb_build_object(%s::text, %s::boolean) WHERE base_id = %s AND user_id = %s",
+                         (str(combo_id), body.hidden, c["base_id"], user["id"]))
+            body.hidden = None
+        if set(body.model_fields_set) - {"hidden"}:
+            access.check(conn, c["base_id"], user["id"], "admin", "Combined database")
         if body.base_id:
-            store.get_base(conn, body.base_id, user["id"])
+            nb = store.get_base(conn, body.base_id, user["id"], need="admin")
+            if str(nb["user_id"]) != str(c["user_id"]):
+                raise HTTPException(400, "A combined database can only move to another base of the same owner")
             conn.execute("UPDATE combos SET base_id = %s WHERE id = %s", (body.base_id, combo_id))
         if body.hidden is not None:
             conn.execute("UPDATE combos SET hidden = %s WHERE id = %s", (body.hidden, combo_id))
@@ -226,7 +235,7 @@ def update_combo(combo_id: str, body: ComboPatch, user=User):
 @router.delete("/api/combos/{combo_id}")
 def delete_combo(combo_id: str, user=User):
     with connection() as conn:
-        store.get_combo(conn, combo_id, user["id"])
+        store.get_combo(conn, combo_id, user["id"], need="admin")
         conn.execute("DELETE FROM combos WHERE id = %s", (combo_id,))
     return {"ok": True}
 

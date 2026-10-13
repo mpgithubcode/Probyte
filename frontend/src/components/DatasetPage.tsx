@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Attachment, Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
-import { applyView, choiceColor, debounce, hiddenIds, linkCan, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
+import { applyView, choiceColor, debounce, hiddenIds, linkCan, mergeRefs, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
 import { FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
 import { FullViewer, type ViewerEntry } from "./FileViewer";
 import { fromDrop, fromPicker, useUploads } from "./Uploads";
@@ -208,7 +208,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   };
 
   const addRefs = useCallback((r: Partial<Refs>) => setDs((d) => d && {
-    ...d, refs: { records: { ...d.refs.records, ...r.records }, users: { ...d.refs.users, ...r.users } },
+    ...d, refs: mergeRefs(d.refs, r),
   }), []);
 
   // A linked table can do only what its source link allows; its fields come from the source.
