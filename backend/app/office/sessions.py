@@ -23,10 +23,24 @@ log = logging.getLogger("probyte.office")
 TOKEN_DAYS = 7
 
 
-def doc_key(base: str, discards: int) -> str:
-    """The Document Server's document key: the same file version → the same key (people can edit together); a new
-    version, or a discarded edit, → a new key."""
-    return re.sub(r"[^0-9A-Za-z_-]", "", f"{base}-{discards}")[:120]
+def doc_key(base: str, n: int) -> str:
+    """The Document Server's document key: base (the file's version) and a counter."""
+    return re.sub(r"[^0-9A-Za-z_-]", "", f"{base}-{n}")[:120]
+
+
+def pick_key(conn, record_id, base: str) -> str:
+    """People opening the file while someone has it open join them (the same key: they edit together). Otherwise a
+    key the Document Server has never seen: it keeps a closed document under its key, and opening that key again
+    makes the editor fetch the old copy from its cache, which fails behind the relay ("Download failed", -4) and is
+    stale after a discard anyway. So every new editing session starts from the file in the storage."""
+    live = conn.execute("SELECT doc_key FROM office_sessions WHERE record_id = %s AND doc_key LIKE %s AND closed_at IS NULL "
+                        "AND created_at > now() - interval '12 hours' ORDER BY created_at DESC LIMIT 1",
+                        (record_id, base + "-%")).fetchone()
+    if live:
+        return live["doc_key"]
+    n = conn.execute("SELECT count(*) AS n FROM office_sessions WHERE record_id = %s AND doc_key LIKE %s",
+                     (record_id, base + "-%")).fetchone()["n"]
+    return doc_key(base, n)
 
 
 def settings_stamp(cfg: dict) -> str:
@@ -75,9 +89,7 @@ def open_editor(record_id: str, table_id: str | None, mode: str, user, *, probyt
         mode = "edit" if edit else "view"
         convert = CONVERT.get(ext) if edit else None
         base = re.sub(r"[^0-9A-Za-z_-]", "", f["base"] + (f"-{convert}" if convert else "") + f"-{settings_stamp(cfg)}")
-        discards = conn.execute("SELECT count(*) AS n FROM office_sessions WHERE record_id = %s AND discarded AND doc_key LIKE %s",
-                                (f["rid"], base + "-%")).fetchone()["n"]
-        key = doc_key(base, discards)
+        key = pick_key(conn, f["rid"], base)
         token = secrets.token_urlsafe(32)
         s = conn.execute("INSERT INTO office_sessions (token, record_id, table_id, user_id, doc_key, mode, linked, file_type, convert_from) "
                          "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",

@@ -55,15 +55,18 @@ def forwarded_headers(headers, request_base: str, scheme: str = "") -> dict:
 
 # Document Server 9 installs a service worker over its files; behind the relay a stale one (its cache from an earlier
 # version or a failed load) keeps the editor from ever loading: "a glimpse, then nothing". This one takes its place,
-# empties its caches and removes itself, so the browser loads the editor from the network again.
+# empties its caches and removes itself. It reloads the editor only when there was such a cache: a reload of an editor
+# that loaded fine reconnects to its document as a second visit, which the Document Server can't serve ("Download
+# failed").
 _SW_RESET = """
 self.addEventListener('install', function () { self.skipWaiting(); });
 self.addEventListener('activate', function (e) {
-  e.waitUntil(caches.keys()
-    .then(function (keys) { return Promise.all(keys.map(function (k) { return caches.delete(k); })); })
-    .then(function () { return self.registration.unregister(); })
-    .then(function () { return self.clients.matchAll({ type: 'window' }); })
-    .then(function (clients) { clients.forEach(function (c) { c.navigate(c.url); }); }));
+  e.waitUntil(caches.keys().then(function (keys) {
+    return Promise.all(keys.map(function (k) { return caches.delete(k); }))
+      .then(function () { return self.registration.unregister(); })
+      .then(function () { return keys.length ? self.clients.matchAll({ type: 'window' }) : []; })
+      .then(function (clients) { clients.forEach(function (c) { c.navigate(c.url); }); });
+  }));
 });
 """
 

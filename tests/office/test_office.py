@@ -559,3 +559,19 @@ def test_protocol_and_certificate_settings(admin, doc):
         assert requests.get(relay + "/healthcheck").text == "true"
     finally:
         admin.j("PUT", "/office/settings", json={**base, "browser_scheme": "", "verify_tls": True})
+
+
+def test_each_editing_session_gets_a_key_the_server_has_not_seen(doc):
+    """The Document Server keeps a closed document under its key, and an editor opening that key again gets its
+    cached copy, which fails behind the relay ("Download failed"). So only people editing at the same time share a
+    key; opening the file again later, even unchanged, starts a new one."""
+    u, t, rec = doc
+    a = u.j("POST", "/office/sessions", json={"record_id": rec["id"]})
+    editor(a)
+    close_editor(a)
+    wait(lambda: any(e["status"] == 4 for e in fake_log(a["config"]["document"]["key"])))
+    u.j("POST", f"/office/sessions/{a['session']}/close")
+    b = u.j("POST", "/office/sessions", json={"record_id": rec["id"]})
+    assert b["config"]["document"]["key"] != a["config"]["document"]["key"]
+    assert editor(b) == "first draft"
+    close_editor(b)
