@@ -22,7 +22,7 @@ Auth: HTTP Basic with the username and device password (dav/devices.py); everyon
 """
 import base64
 import logging
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from typing import NamedTuple
 from urllib.parse import quote, unquote, urlparse
@@ -677,15 +677,26 @@ class Ctx:
         return self.multistatus(out)
 
     def _query(self, conn, t, root, wanted):
-        comps = None
+        """calendar-query / addressbook-query: the items of the components asked for (a mixed calendar holds both),
+        within the time range when one is given (RFC 4791 9.9; a repeating item is included when it starts before
+        the range ends, which errs on the side of sending it)."""
+        comps, rng = None, None
+        cal = root.find(f"{q(C, 'filter')}/{q(C, 'comp-filter')}")
+        inner = cal.findall(q(C, "comp-filter")) if cal is not None else []
         if t["kind"] == "mixed":
-            cal = root.find(f"{q(C, 'filter')}/{q(C, 'comp-filter')}")
-            inner = cal.findall(q(C, "comp-filter")) if cal is not None else []
             comps = {c.get("name", "").upper() for c in inner} or None
-        rows = self.items(conn, t, list(wanted or []) + [q(C, "calendar-data")] if comps else wanted)
+        for c in inner:
+            tr = c.find(q(C, "time-range"))
+            if tr is not None:
+                rng = (_ical_time(tr.get("start")), _ical_time(tr.get("end")))
+        need_raw = bool(comps)
+        rows = self.items(conn, t, list(wanted or []) + [q(C, "calendar-data")] if need_raw else wanted)
+        dates = _item_dates(conn, t) if rng else {}
         out = []
         for r in rows:
             if comps and ("VTODO" if "BEGIN:VTODO" in (r["caldav_raw"] or "").upper() else "VEVENT") not in comps:
+                continue
+            if rng and not _overlaps(dates.get(r["id"]), rng):
                 continue
             out.append(self.response(self.item_path(t, r["caldav_href"]), self.item_props(t, r), wanted))
         return self.multistatus(out)
@@ -713,3 +724,59 @@ class Ctx:
         tok = ET.Element(q(D, "sync-token"))
         tok.text = SYNC_PREFIX + str(token)
         return self.multistatus(out, tok)
+
+
+# ---------------------------------------------------------------- time ranges (calendar-query)
+
+def _ical_time(v: str | None):
+    """An iCalendar UTC time (20261020T000000Z) as a datetime; None when absent (an open end)."""
+    if not v:
+        return None
+    try:
+        return datetime.strptime(v.strip(), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _value_time(v, end=False):
+    """A record's date value as a UTC datetime: "YYYY-MM-DD" (the start of that day, or the end for an end date)
+    or ISO-8601."""
+    if not v or not isinstance(v, str):
+        return None
+    try:
+        if len(v) == 10:
+            d = datetime.strptime(v, "%Y-%m-%d").replace(tzinfo=ical.DEFAULT_TZ)
+            return (d + timedelta(days=1) if end else d).astimezone(timezone.utc)
+        return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _item_dates(conn, t) -> dict:
+    """{record id: (start, end, repeats)} from the records' Start / End / Due / Repeat fields."""
+    keys = {f["system_key"]: str(f["id"]) for f in store.get_fields(conn, t["id"]) if f["system_key"]}
+    out = {}
+    for r in conn.execute("SELECT id, data FROM records WHERE table_id = %s AND NOT deleted", (t["id"],)).fetchall():
+        d = r["data"]
+        start = _value_time(d.get(keys.get("dtstart", "")))
+        end = _value_time(d.get(keys.get("dtend", "")) or d.get(keys.get("due", "")), end=True)
+        out[r["id"]] = (start, end, bool(d.get(keys.get("rrule", ""))))
+    return out
+
+
+def _overlaps(dates, rng) -> bool:
+    if not dates:
+        return True
+    start, end, repeats = dates
+    lo, hi = rng
+    if start is None and end is None:
+        return True  # a task with no dates is in every range (RFC 4791 9.9)
+    first = start or end
+    last = end or start
+    if repeats:
+        return hi is None or first < hi
+    if lo is not None and last < lo:
+        return False
+    if hi is not None and first >= hi:
+        return False
+    return True

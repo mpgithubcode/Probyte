@@ -178,3 +178,23 @@ def test_a_phone_cant_overwrite_an_edit_it_hasnt_seen(user):
     user.j("PATCH", f"/records/{r['id']}", json={"data": {F["summary"]: "Edited in Probyte"}})
     assert dav(user, "PUT", href, body.replace("SUMMARY:Original", "SUMMARY:Phone"), **{"If-Match": etag}).status_code == 412
     assert user.record(t["id"], r["id"])["data"][F["summary"]] == "Edited in Probyte"
+
+
+def test_calendar_query_answers_for_the_time_range_asked(user):
+    t = user.table("events", "Ranges")
+    F = user.fields(t["id"])
+    for title, start, end, rule in (("Early", "2026-10-01T09:00:00Z", "2026-10-01T10:00:00Z", None),
+                                    ("Inside", "2026-10-20T09:00:00Z", "2026-10-20T10:00:00Z", None),
+                                    ("Halloween", "2026-10-31", "2026-10-31", None),
+                                    ("Late", "2026-11-15T09:00:00Z", "2026-11-15T10:00:00Z", None),
+                                    ("Weekly", "2026-09-01T08:00:00Z", "2026-09-01T09:00:00Z", "FREQ=WEEKLY")):
+        data = {F["summary"]: title, F["dtstart"]: start, F["dtend"]: end}
+        if rule:
+            data[F["rrule"]] = rule
+        user.j("POST", f"/tables/{t['id']}/records", json={"data": data})
+    q = ('<?xml version="1.0"?><c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:getetag/>'
+         '<c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT">'
+         '<c:time-range start="20261015T000000Z" end="20261101T000000Z"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>')
+    r = dav(user, "REPORT", t["calendar_url"], q, Depth="1")
+    got = set(re.findall(r"SUMMARY:([^\r\n<]+)", r.text))
+    assert got == {"Inside", "Halloween", "Weekly"}, got
