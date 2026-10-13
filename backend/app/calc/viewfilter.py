@@ -10,6 +10,34 @@ from app.calc.compute import Engine
 from app.formats import fieldformats
 
 
+def format_number(n, o: dict) -> str:
+    """A number as the field shows it (formatNumber in frontend/src/util.ts): decimal, percent, currency or file size;
+    its decimal places (else as many as it has: 2 for currency) and thousands separators."""
+    kind = o.get("numberFormat") or "decimal"
+    if kind == "bytes":   # (formatBytes)
+        if n < 1024:
+            return f"{n:g} B"
+        units, x, i = ["KB", "MB", "GB", "TB"], n / 1024, 0
+        while x >= 1024 and i < len(units) - 1:
+            x, i = x / 1024, i + 1
+        return f"{round(x, 1 if x < 10 else 0):,g} {units[i]}"
+    x = n * 100 if kind == "percent" else n
+    p = o.get("precision")
+    sep = "," if o.get("separators") is not False else ""
+    if p is not None and p != "":
+        s = f"{x:{sep}.{int(p)}f}"
+    elif kind == "currency":
+        s = f"{x:{sep}.2f}"
+    else:
+        s = f"{round(x, 10):{sep}.10f}".rstrip("0").rstrip(".") if isinstance(x, float) and not float(x).is_integer() else f"{int(x):{sep}d}"
+    if kind == "percent":
+        s += "%"
+    if kind == "currency":
+        sym = o.get("currency") or "$"
+        s = f"-{sym}{s[1:]}" if s.startswith("-") else f"{sym}{s}"
+    return s
+
+
 def display_text(eng: Engine, f, v) -> str:
     if v is None or (isinstance(v, dict) and "__error" in v):
         return ""
@@ -26,6 +54,8 @@ def display_text(eng: Engine, f, v) -> str:
         return "true" if v else "false"
     if t == "phone":
         return fieldformats.format_phone(v)
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and eng.value_type(f) == "number" and t not in ("rating", "autonumber"):
+        return format_number(v, f.get("options") or {})
     if eng.value_type(f) == "date" and isinstance(v, str) and v:
         try:
             dt = F.local(F.parse_dt(v))

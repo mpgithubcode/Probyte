@@ -113,7 +113,7 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
     case "date":
       return <span>{formatDate(value, field.options.includeTime, field.options)}</span>;
     case "created_time": case "last_modified_time":
-      return <span>{formatDate(value, true)}</span>;
+      return <span>{formatDate(value, true, field.options)}</span>;
     case "recurrence":
       return <span className="repeat-value"><Icon name="repeat" size={12} /> {describeRepeat(value)}</span>;
     case "rating":
@@ -153,14 +153,19 @@ export function CellValue({ field, value }: { field: Field; value: any }) {
         return <span className="chips">{items.map((x, i) => (
           <CellValue key={i} field={inner} value={inner.type === "link" || inner.type === "user" || inner.type === "attachment" ? [x] : x} />))}</span>;
       }
-      return <span>{items.map((x) => (inner ? displayText(inner, x, refs) : String(x))).join(", ")}</span>;
+      // a lookup's own number / date format, when it has one; else as the looked-up field shows them
+      const own = field.options.numberFormat || field.options.precision != null || field.options.dateFormat || field.options.timeFormat;
+      const show = (x: unknown) => own && typeof x === "number" ? formatNumber(x, field.options)
+        : own && inner && valueType(inner) === "date" && typeof x === "string" ? formatDate(x, !isDateOnly(x), field.options)
+        : inner ? displayText(inner, x, refs) : String(x);
+      return <span>{items.map(show).join(", ")}</span>;
     }
   }
   const vt = valueType(field);
   if (vt === "boolean") return <span className={`check ${value ? "on" : ""}`}>{value ? "✓" : ""}</span>;
   if (vt === "number" && typeof value === "number") return <span className="num">{formatNumber(value, field.options)}</span>;
   if (vt === "date" || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(T[\d:.]+Z)?$/.test(value) && field.type === "formula")) {
-    return <span>{formatDate(value, !isDateOnly(value))}</span>;
+    return <span>{formatDate(value, !isDateOnly(value), field.options)}</span>;
   }
   if (Array.isArray(value)) return <span>{value.join(", ")}</span>;
   return <span>{String(value)}</span>;

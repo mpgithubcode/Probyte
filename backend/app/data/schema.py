@@ -366,6 +366,10 @@ def compile_formula(conn, table_id, expression: str, field_id=None) -> str:
     return compiled
 
 
+# how a field's numbers and dates are shown (number, formula, rollup, lookup, autonumber, created / modified time…)
+FORMAT_KEYS = ("numberFormat", "currency", "separators", "dateFormat", "timeFormat")
+
+
 def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -> dict:
     """Validate and normalise options for a field of the given type."""
     if ftype not in FIELD_TYPES:
@@ -460,7 +464,8 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
         expr = (o.get("expression") or "").strip()
         o = {"expression": compile_formula(conn, tid, expr, field["id"] if field else None),
              **({"precision": int(o["precision"])} if o.get("precision") not in (None, "") else {}),
-             **({"includeTime": bool(o["includeTime"])} if "includeTime" in o else {})}
+             **({"includeTime": bool(o["includeTime"])} if "includeTime" in o else {}),
+             **{k: o[k] for k in FORMAT_KEYS if o.get(k) not in (None, "")}}   # how its numbers / dates are shown
     elif ftype == "button":
         o["label"] = (o.get("label") or "Click").strip()[:40]
         o["action"] = "url" if o.get("action") == "url" else "update"

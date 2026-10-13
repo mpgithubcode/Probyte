@@ -414,31 +414,28 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
               label="Allow new options when editing" hint="Off: only the options above can be picked; new ones are added here." />
           </Section>
         )}
-        {type === "number" && (
+        {type === "number" && <Section title="Formatting"><NumberFormat o={o} set={set} /></Section>}
+        {/* fields that work out a number or a date: how it's shown */}
+        {["formula", "rollup", "conditional_rollup", "lookup", "conditional_lookup"].includes(type) && (
           <Section title="Formatting">
-            <div className="segmented">
-              {(["decimal", "percent", "currency"] as const).map((f) => (
-                <button type="button" key={f} className={(o.numberFormat ?? "decimal") === f ? "active" : ""}
-                  onClick={() => set({ numberFormat: f === "decimal" ? undefined : f })}>{f[0].toUpperCase() + f.slice(1)}</button>
-              ))}
-            </div>
-            <div className="row-2">
-              <label className="stack">Decimal places
-                <select className="input" value={o.precision ?? ""} onChange={(e) => set({ precision: e.target.value === "" ? undefined : Number(e.target.value) })}>
-                  <option value="">Automatic</option>
-                  {[0, 1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 0 ? "1" : `1.${"0".repeat(n)}`}</option>)}
-                </select>
-              </label>
-              {o.numberFormat === "currency" && (
-                <label className="stack">Symbol
-                  <input className="input" value={o.currency ?? "$"} maxLength={4} onChange={(e) => set({ currency: e.target.value })} />
-                </label>
-              )}
-            </div>
-            <Toggle checked={o.separators !== false} onChange={(v) => set({ separators: v ? undefined : false })} label="Thousands separators" />
-            <span className="hint">Example: {formatNumber(o.numberFormat === "percent" ? 0.4567 : 12345.678, o)}</span>
+            {(() => {
+              const inner = type === "lookup" || type === "conditional_lookup" ? foreignFields?.find((f) => f.id === o.lookupFieldId) : undefined;
+              const rollup = type === "rollup" || type === "conditional_rollup";
+              // (a rollup's result: a number for counts, sums, averages; max / min of dates are dates)
+              const rt = inner ? valueType(inner) : field?.type === type ? field.options.resultType : undefined;
+              const numeric = rollup && ["countall", "counta", "count", "sum", "average", "max", "min"].includes(o.func ?? "");
+              const showNumber = rt === "number" || (numeric && rt !== "date") || (!rt && type === "formula");
+              const showDate = rt === "date" || (!rt && type === "formula");
+              return (<>
+                {!rt && type === "formula" && <span className="hint">Used when the formula works out a number (or a date, below).</span>}
+                {showNumber && <NumberFormat o={o} set={set} />}
+                {showDate && <DateFormat o={o} set={set} />}
+                {!showNumber && !showDate && <span className="hint">{inner ? "Shown as the looked-up field shows it." : "Text and other values are shown as they are."}</span>}
+              </>);
+            })()}
           </Section>
         )}
+        {(type === "created_time" || type === "last_modified_time") && <Section title="Formatting"><DateFormat o={o} set={set} always /></Section>}
         {type === "date" && (o.stampKind || o.stampWhen != null) && (
           <Section title="Fills itself in">
             <span className="hint">The date (and time) is filled in when this formula becomes true, for example
@@ -730,5 +727,58 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
       </fieldset>
       {error && <div className="error">{error}</div>}
     </Modal>
+  );
+}
+
+const NUMBER_FORMATS: { value: NonNullable<FieldOptions["numberFormat"]> | "decimal"; label: string }[] = [
+  { value: "decimal", label: "Decimal (1.23)" }, { value: "percent", label: "Percent (12%)" }, { value: "currency", label: "Currency ($100)" },
+  { value: "bytes", label: "File size (1.2 MB)" },
+];
+
+/** How a number is shown: decimal, percent, currency (with its symbol), file size; decimal places and separators. */
+function NumberFormat({ o, set }: { o: FieldOptions; set: (p: Partial<FieldOptions>) => void }) {
+  const kind = o.numberFormat ?? "decimal";
+  return (
+    <div className="format-block">
+      <label className="stack">Format type
+        <select className="input" value={kind} onChange={(e) => set({ numberFormat: e.target.value === "decimal" ? undefined : e.target.value as FieldOptions["numberFormat"] })}>
+          {NUMBER_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label.replace("$", kind === "currency" ? o.currency ?? "$" : "$")}</option>)}
+        </select>
+      </label>
+      {kind === "currency" && (
+        <label className="stack">Currency symbol
+          <input className="input" value={o.currency ?? "$"} maxLength={4} onChange={(e) => set({ currency: e.target.value })} />
+        </label>
+      )}
+      {kind !== "bytes" && (
+        <label className="stack">Precision
+          <select className="input" value={o.precision ?? ""} onChange={(e) => set({ precision: e.target.value === "" ? undefined : Number(e.target.value) })}>
+            <option value="">Automatic</option>
+            {[0, 1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 0 ? "1" : `1.${"0".repeat(n)}`}</option>)}
+          </select>
+        </label>
+      )}
+      {kind !== "bytes" && <Toggle checked={o.separators !== false} onChange={(v) => set({ separators: v ? undefined : false })} label="Thousands separators" />}
+      <span className="hint">Example: {formatNumber(kind === "percent" ? 0.4567 : kind === "bytes" ? 1234567 : 12345.678, o)}</span>
+    </div>
+  );
+}
+
+/** How a date is shown (fields that work one out: formulas, rollups, lookups, created / modified time). */
+function DateFormat({ o, set, always }: { o: FieldOptions; set: (p: Partial<FieldOptions>) => void; always?: boolean }) {
+  return (
+    <div className="format-block">
+      <label className="stack">Date format
+        <select className="input" value={o.dateFormat ?? "local"} onChange={(e) => set({ dateFormat: e.target.value === "local" ? undefined : e.target.value as FieldOptions["dateFormat"] })}>
+          {DATE_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+        </select>
+      </label>
+      <label className="stack">Time format
+        <select className="input" value={o.timeFormat ?? ""} onChange={(e) => set({ timeFormat: (e.target.value || undefined) as FieldOptions["timeFormat"] })}>
+          <option value="">As on this device</option><option value="12">12 hour (2:30 PM)</option><option value="24">24 hour (14:30)</option>
+        </select>
+      </label>
+      <span className="hint">Example: {formatDate("2026-10-11T14:30:00Z", true, o)}{always ? "" : " (a date without a time shows just the date)"}</span>
+    </div>
   );
 }

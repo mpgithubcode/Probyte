@@ -215,10 +215,10 @@ export function displayText(field: Field, v: unknown, refs?: Refs): string {
     case "checkbox": return v ? "true" : "false";
     case "phone": return formatPhone(v);
     case "date": return formatDate(v, field.options.includeTime, field.options);
-    case "created_time": case "last_modified_time": return formatDate(v, true);
+    case "created_time": case "last_modified_time": return formatDate(v, true, field.options);
   }
   const vt = valueType(field);
-  if (vt === "date") return formatDate(v, !isDateOnly(v));
+  if (vt === "date") return formatDate(v, !isDateOnly(v), field.options);
   if (vt === "number" && typeof v === "number") return formatNumber(v, field.type === "rating" ? undefined : field.options);
   if (vt === "boolean") return v ? "true" : "false";
   if (Array.isArray(v)) return v.join(", ");

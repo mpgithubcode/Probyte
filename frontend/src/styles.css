@@ -1547,3 +1547,4 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .link-pick { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
 .link-pick-filter summary { cursor: pointer; font-size: 13px; color: var(--text-soft); }
 .link-pick-filter[open] summary { margin-bottom: 8px; }
+.format-block { display: flex; flex-direction: column; gap: 10px; }
