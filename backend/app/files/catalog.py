@@ -312,8 +312,9 @@ def _check_size(f: UploadFile):
         raise HTTPException(413, f"{f.filename} is larger than {MAX_UPLOAD // (1024 * 1024)} MB")
 
 
-def upload_files(table_id: str, files: list[UploadFile], folder: str, user_id) -> list[dict]:
-    """Add files to a files table (the app, a public link that may add, or a linked table through its link)."""
+def upload_files(table_id: str, files: list[UploadFile], folder: str, user_id, extra: dict | None = None) -> list[dict]:
+    """Add files to a files table (the app, a public link that may add, or a linked table through its link).
+    extra: values for the new records' own fields."""
     out = []
     with connection() as conn:
         table = store.get_table(conn, table_id)
@@ -334,7 +335,7 @@ def upload_files(table_id: str, files: list[UploadFile], folder: str, user_id) -
                                if f.content_type and f.content_type != "application/octet-stream" else guess_mime(rel))
             except StorageError as e:
                 _bad(e)
-            r = _insert(conn, table, fields, {**meta, "mime": f.content_type}, user_id)
+            r = _insert(conn, table, fields, {**meta, "mime": f.content_type}, user_id, extra)
             out.append(store.clean_record(conn.execute("SELECT * FROM records WHERE id = %s", (r["id"],)).fetchone()))
     return out
 

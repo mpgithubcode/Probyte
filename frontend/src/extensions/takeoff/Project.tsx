@@ -138,6 +138,10 @@ export default function Project({ id, go, onMenu, onError, onWorkspaceChanged }:
             <div className="menu-list">
               <a className="menu-item" href={tk.csvUrl(id)} onClick={exportMenu.close}><Icon name="table" size={14} /> Takeoff list (CSV)</a>
               <a className="menu-item" href={tk.pdfUrl(id)} onClick={exportMenu.close}><Icon name="file" size={14} /> Marked-up drawings (PDF)</a>
+              {p.source?.kind === "files" && (["csv", "pdf"] as const).map((what) => (
+                <button key={what} className="menu-item" onClick={() => { exportMenu.close(); tk.saveToFiles(id, what).then(() => setNote(`Saved next to ${p.file_name}`)).catch(fail); }}>
+                  <Icon name="folder" size={14} /> {what === "csv" ? "Takeoff list" : "Marked-up drawings"} → next to the drawings
+                </button>))}
               <button className="menu-item" onClick={() => { exportMenu.close(); setTab("takeoff"); }}><Icon name="grid" size={14} /> To a Probyte table…</button>
             </div>
           </Popover>

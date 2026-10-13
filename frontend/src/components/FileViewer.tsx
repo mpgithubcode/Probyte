@@ -144,6 +144,9 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
   const kind = viewKind(item);
   const canEditFile = !!canChangeFile && editableKind(item) && item.size <= MAX_TEXT;
   const oMode = officeMode(officeStatus, item);
+  // what extensions do with this file (Blueprint takeoff for a PDF): in the Edit menu
+  const fileActions = !item.url && item.file
+    ? extensions.filter((x) => x.enabled).flatMap((x) => FILE_ACTIONS.filter((a) => a.ext === x.id && a.accepts(item))) : [];
   const canOffice = !!oMode;
   const newFormat = convertsTo(officeStatus, item);   // .doc → edited and saved as .docx
 
@@ -199,7 +202,7 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
           </>
         ) : (
           <>
-            {canOffice ? <button className="viewer-btn text" onClick={editMenu.open} disabled={busy} aria-haspopup="menu">
+            {canOffice || fileActions.length ? <button className="viewer-btn text" onClick={editMenu.open} disabled={busy} aria-haspopup="menu">
               <Icon name="edit" size={16} /> <span>Edit</span> ▾</button>
               : canEditFile && <button className="viewer-btn text" disabled={busy || original === null} onClick={() => setDraft(original ?? "")}>
                 <Icon name="edit" size={16} /> <span>Edit</span></button>}
@@ -212,19 +215,19 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
                     <Icon name="file" size={14} /> Edit in ONLYOFFICE{newFormat && <span className="muted small"> (saves as .{newFormat})</span>}</button>}
                   {canOffice && <button className="menu-item" onClick={() => openOffice("view", true)}>
                     <Icon name="eye" size={14} /> Open in ONLYOFFICE (read-only)</button>}
+                  {fileActions.map((a) => (
+                    <button key={a.ext} className="menu-item" disabled={busy} onClick={async () => {
+                      editMenu.close(); setBusy(true); setErr("");
+                      try { const to = await a.run(item.id, item.name); window.location.hash = to; onClose(); } catch (e) { setErr((e as Error).message); }
+                      setBusy(false);
+                    }}><Icon name={a.icon} size={14} /> {a.label}</button>
+                  ))}
                 </div>
               </Popover>
             )}
             {(kind === "pdf" || kind === "image" || kind === "video" || kind === "audio") && (item.file || item.url) && (
               <a className="viewer-btn" href={attachmentUrl(item)} target="_blank" rel="noreferrer" title="Open in a new tab"><Icon name="external" size={17} /></a>
             )}
-            {!item.url && item.file && extensions.filter((x) => x.enabled).flatMap((x) => FILE_ACTIONS.filter((a) => a.ext === x.id && a.accepts(item))).map((a) => (
-              <button key={a.ext} className="viewer-btn text" disabled={busy} title={a.label} onClick={async () => {
-                setBusy(true); setErr("");
-                try { const to = await a.run(item.id, item.name); window.location.hash = to; onClose(); } catch (e) { setErr((e as Error).message); }
-                setBusy(false);
-              }}><Icon name={a.icon} size={16} /> <span>{a.label.replace(/^Open in /, "")}</span></button>
-            ))}
             <a className="viewer-btn text" href={attachmentUrl(item, true)} title="Download"><Icon name="download" size={17} /> <span>Download</span></a>
             {onReplace && canChangeFile && entry.rec && (<>
               <input ref={replaceRef} type="file" hidden onChange={(e) => replace(e.target.files)} />

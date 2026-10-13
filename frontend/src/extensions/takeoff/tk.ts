@@ -76,6 +76,11 @@ export const tk = {
   summary: (id: string) => api.get<SummaryRow[]>(`${X}/projects/${id}/summary`),
   csvUrl: (id: string) => `/api${X}/projects/${id}/export.csv`,
   pdfUrl: (id: string) => `/api${X}/projects/${id}/export.pdf`,
+  /** saved as a new file next to the drawing set (a takeoff made from a files table), with its folder and fields */
+  saveToFiles: (id: string, what: "pdf" | "csv") =>
+    api.post<{ record: { id: string; data: Record<string, any> }; table_id: string }>(`${X}/projects/${id}/export/files`, { what }),
+  settings: () => api.get<{ inherit: string[] | null; fields: string[] }>(`${X}/settings`),
+  saveSettings: (inherit: string[] | null) => api.put<{ inherit: string[] | null; fields: string[] }>(`${X}/settings`, { inherit }),
   toTable: (id: string, base_id: string, name: string) => api.post<{ table_id: string; rows: number }>(`${X}/projects/${id}/export/table`, { base_id, name }),
   scheduleToTable: (id: string, base_id: string, name: string, cells: string[][]) =>
     api.post<{ table_id: string; rows: number }>(`${X}/projects/${id}/export/schedule`, { base_id, name, cells }),

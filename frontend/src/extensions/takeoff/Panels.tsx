@@ -554,6 +554,14 @@ export function SummaryPanel({ project, page, onGo, onItem, onError, onWorkspace
         <a className="btn sm" href={tk.csvUrl(project.id)}><Icon name="download" size={13} /> CSV</a>
         <a className="btn sm" href={tk.pdfUrl(project.id)}><Icon name="file" size={13} /> Marked-up PDF</a>
       </div>
+      {project.source?.kind === "files" && (
+        <div className="tk-actions" title="A new file in the drawing set's files table, with its folder and fields (Settings → Extensions)">
+          {(["csv", "pdf"] as const).map((what) => (
+            <button key={what} className="btn sm" onClick={() => tk.saveToFiles(project.id, what).then(() => onNote(`Saved next to ${project.file_name}`)).catch(onError)}>
+              <Icon name="folder" size={13} /> Save {what === "csv" ? "CSV" : "PDF"} next to the drawings
+            </button>))}
+        </div>
+      )}
       <div className="row">
         <select className="input sm" value={base} onChange={(e) => setBase(e.target.value)} aria-label="Base">{bases.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
         <button className="btn sm" disabled={!base || !rows.length} onClick={toTable}><Icon name="grid" size={13} /> To a Probyte table</button>

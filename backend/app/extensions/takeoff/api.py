@@ -20,6 +20,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 from app.blobs.attachments import ATTACH_DIR
+from app.calc.compute import COMPUTED_TYPES
 from app.core.db import connection
 from app.data import store
 from app.extensions.takeoff import drawings, symbols
@@ -906,8 +907,17 @@ def _sheets(s: dict) -> str:
     return ", ".join(f"{p['sheet_no'] or 'p' + str(p['page_no'] + 1)}: {p['qty']:g}" for p in s["pages"])
 
 
+def _slug(p) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "-", p["name"]).strip("-") or "takeoff"
+
+
 @router.get("/projects/{pid}/export.csv")
 def export_csv(pid: str, user=User):
+    data, name = _csv(pid, user)
+    return Response(data, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _csv(pid: str, user) -> tuple[bytes, str]:
     with connection() as conn:
         p = _project(conn, pid, user)
     rows = summary(pid, user)
@@ -918,9 +928,7 @@ def export_csv(pid: str, user=User):
         w.writerow([s["name"], s["category"] or "", s["tag"] or "", f"{s['qty']:g}", s["unit"], f"{s['waste_pct']:g}", f"{s['total']:g}",
                     "" if s["unit_cost"] is None else f"{s['unit_cost']:g}", "" if s["extended"] is None else f"{s['extended']:.2f}",
                     _sheets(s), "; ".join(f"{k}: {v}" for k, v in (s["details"] or {}).items()), s["notes"] or ""])
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", p["name"]).strip("-") or "takeoff"
-    return Response("﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": f'attachment; filename="{slug}-takeoff.csv"'})
+    return ("\ufeff" + buf.getvalue()).encode(), f"{_slug(p)}-takeoff.csv"
 
 
 def _rgb(hex_color: str):
@@ -930,6 +938,11 @@ def _rgb(hex_color: str):
 
 @router.get("/projects/{pid}/export.pdf")
 def export_pdf(pid: str, all_pages: bool = False, user=User):
+    data, name = _marked_up(pid, user, all_pages)
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _marked_up(pid: str, user, all_pages: bool = False) -> tuple[bytes, str]:
     """The drawing set with the takeoff drawn on it: each mark in its item's color, and a key with the quantities on
     every sheet that has marks."""
     with connection() as conn:
@@ -983,9 +996,89 @@ def export_pdf(pid: str, all_pages: bool = False, user=User):
         shape.commit()
     if keep and len(keep) < doc.page_count:
         doc.select(keep)
-    data = doc.tobytes(garbage=3, deflate=True)
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", p["name"]).strip("-") or "takeoff"
-    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{slug}-marked-up.pdf"'})
+    return doc.tobytes(garbage=3, deflate=True), f"{_slug(p)}-marked-up.pdf"
+
+
+# ---------------------------------------------------------------- saved next to the drawing
+
+class InheritIn(BaseModel):
+    inherit: list[str] | None = None   # names of the fields new files copy from the drawing; None: the folder and every field you added
+
+
+def _inheritable(f: dict, keys: dict) -> bool:
+    """A field a new file can copy: the folder, and the fields people added (calculated fields work themselves out,
+    and a value that must be unique can't be copied)."""
+    return str(f["id"]) == keys["folder"] or (not f.get("system_key") and f["type"] not in COMPUTED_TYPES and f["type"] != "button"
+                                              and not f.get("unique_values"))
+
+
+@router.get("/settings")
+def get_settings(user=User):
+    """Your choice of the fields new files copy, and the fields of your files tables to choose from."""
+    from app.data import access
+    with connection() as conn:
+        row = conn.execute("SELECT prefs FROM users WHERE id = %s", (user["id"],)).fetchone()
+        names: dict[str, None] = {}
+        for t in conn.execute("SELECT id FROM tables WHERE kind = 'files' AND trashed_at IS NULL AND base_id = ANY(%s::uuid[]) ORDER BY created_at",
+                              (access.base_ids(conn, user["id"]),)).fetchall():
+            fields = store.get_fields(conn, t["id"])
+            keys = files._keys(fields)
+            names.update({f["name"]: None for f in fields if _inheritable(f, keys)})
+    return {"inherit": ((row or {}).get("prefs") or {}).get("takeoff_inherit"), "fields": list(names)}
+
+
+@router.put("/settings")
+def put_settings(body: InheritIn, user=User):
+    inherit = None if body.inherit is None else sorted({n.strip() for n in body.inherit if n.strip()})
+    with connection() as conn:
+        conn.execute("UPDATE users SET prefs = prefs || %s WHERE id = %s", (Jsonb({"takeoff_inherit": inherit}), user["id"]))
+    return get_settings(user)
+
+
+def inherited(fields: list, data: dict, inherit: list[str] | None) -> tuple[str | None, dict]:
+    """What a new file copies from the drawing it was made from: its folder (or None: the top), and the values of the
+    fields chosen (inherit: by name; None: the folder and every field the person added)."""
+    keys = files._keys(fields)
+    chosen = [f for f in fields if _inheritable(f, keys) and (inherit is None or f["name"] in inherit)]
+    folder = next((data.get(keys["folder"]) or "" for f in chosen if str(f["id"]) == keys["folder"]), None)
+    values = {str(f["id"]): data[str(f["id"])] for f in chosen if str(f["id"]) != keys["folder"] and data.get(str(f["id"])) not in (None, "", [])}
+    return folder, values
+
+
+class SaveIn(BaseModel):
+    what: str = "pdf"        # "pdf": the marked-up drawings; "csv": the takeoff
+    all_pages: bool = False
+
+
+@router.post("/projects/{pid}/export/files")
+def save_to_files(pid: str, body: SaveIn, user=User):
+    """The marked-up drawings or the takeoff, saved as a new file next to the drawing set it was made from, with the
+    drawing's folder and fields (the ones chosen in Settings → Extensions)."""
+    if body.what not in ("pdf", "csv"):
+        raise HTTPException(400, "Save the marked-up drawings (pdf) or the takeoff (csv)")
+    with connection() as conn:
+        p = _project(conn, pid, user)
+        src = p["source"] or {}
+        if src.get("kind") != "files":
+            raise HTTPException(400, "This takeoff wasn't made from a file in a files table")
+        rec = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted", (src["record_id"],)).fetchone()
+        if not rec:
+            raise HTTPException(400, "The drawing set's file isn't in its files table anymore")
+        table, rec, _ = files._own_record(conn, src["record_id"], user["id"], need="editor")
+        fields = store.get_fields(conn, table["id"])
+        row = conn.execute("SELECT prefs FROM users WHERE id = %s", (user["id"],)).fetchone()
+    folder, values = inherited(fields, rec["data"], ((row or {}).get("prefs") or {}).get("takeoff_inherit"))
+    data, name = _marked_up(pid, user, body.all_pages) if body.what == "pdf" else _csv(pid, user)
+    up = UploadFile(io.BytesIO(data), filename=name, size=len(data),
+                    headers={"content-type": "application/pdf" if body.what == "pdf" else "text/csv"})
+    # links to other records are written by the record's own update (it keeps the other side in step)
+    links = {k: v for k, v in values.items() if next(f for f in fields if str(f["id"]) == k)["type"] == "link"}
+    out = files.upload_files(str(table["id"]), [up], folder or "", user["id"], {k: v for k, v in values.items() if k not in links})[0]
+    if links:
+        with connection() as conn:
+            store.update_record(conn, out["id"], links, user["id"], source="takeoff")
+            out = store.clean_record(conn.execute("SELECT * FROM records WHERE id = %s", (out["id"],)).fetchone())
+    return {"record": out, "table_id": str(table["id"])}
 
 
 class ToTable(BaseModel):

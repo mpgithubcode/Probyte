@@ -40,7 +40,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "links", label: "Public links", icon: "share" }, { id: "keys", label: "API & MCP", icon: "key" },
   { id: "backups", label: "Backups", icon: "download" },  // the server's admin only
   { id: "office", label: "Document editing", icon: "file" },  // the server's admin only
-  { id: "extensions", label: "Extensions", icon: "layers" },   // the server's admin only
+  { id: "extensions", label: "Extensions", icon: "layers" },   // switching them on and off: the server's admin
 ];
 
 export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChanged, initialTab = "account" }: {
@@ -93,7 +93,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
     <Modal title="Settings" width={760} onClose={onClose}>
       <div className="settings">
         <nav className="settings-tabs">
-          {TABS.filter((t) => (t.id !== "backups" && t.id !== "office" && t.id !== "extensions") || user.is_admin).map((t) => (
+          {TABS.filter((t) => (t.id !== "backups" && t.id !== "office") || user.is_admin).map((t) => (
             <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
               <Icon name={t.icon} size={15} /> <span>{t.label}</span>
             </button>
@@ -103,7 +103,7 @@ export function SettingsModal({ user, ws, onClose, onAccountsChanged, onUserChan
         {tab === "links" && <SharesPanel ws={ws} />}
         {tab === "backups" && user.is_admin && <BackupsPanel />}
         {tab === "office" && user.is_admin && <section className="settings-section"><OfficeSettings /></section>}
-        {tab === "extensions" && user.is_admin && <section className="settings-section"><ExtensionsSettings /></section>}
+        {tab === "extensions" && <section className="settings-section"><ExtensionsSettings admin={!!user.is_admin} /></section>}
         {tab === "keys" && <ApiPanel ws={ws} />}
         {tab === "accounts" && (
           <section className="settings-section">

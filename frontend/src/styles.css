@@ -1378,6 +1378,8 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 /* extensions: the sidebar section and Settings → Extensions */
 .side-extensions { margin-top: 8px; }
 .ext-card .list-card-head { align-items: flex-start; }
+.ext-settings { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.ext-fields { display: flex; flex-wrap: wrap; gap: 4px 14px; padding-left: 22px; }
 .ext-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; }
 
 /* Settings → Phone sync: connected devices */

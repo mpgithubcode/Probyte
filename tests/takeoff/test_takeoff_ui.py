@@ -52,7 +52,7 @@ def test_takeoff_in_the_browser(admin, tmp_path):
         card = pg.locator(".ext-card", has_text="Blueprint takeoff")
         expect(card).to_contain_text("Count symbols")
         card.locator(".switch").click()
-        expect(card.locator("input")).to_be_checked()
+        expect(card.locator(".switch input")).to_be_checked()
         pg.close()
 
         pg = b.new_page(viewport={"width": 1440, "height": 900})
@@ -160,22 +160,43 @@ def test_takeoff_in_the_browser(admin, tmp_path):
         expect(table.locator(".tk-sum-row", has_text="Branch circuit")).to_contain_text(re.compile(r"(19|20)(\.\d)? LF"))
         pg.screenshot(path=f"{SHOTS}/takeoff-summary.png")
         expect(pg.locator(".tk-pane a:has-text('CSV')")).to_have_attribute("href", re.compile("export.csv"))
+        # saved next to the drawings: in its folder
+        pg.click("button:has-text('Save PDF next to the drawings')")
+        expect(pg.locator(".tk-note")).to_contain_text("Saved next to Lighting set.pdf", timeout=30000)
+        saved = {r["data"][F["name"]]: r["data"][F["folder"]] for r in u.records(drive["id"])}
+        assert saved["Lighting-set-marked-up.pdf"] == "Jobs/Assembly Row"
         pg.click("button:has-text('To a Probyte table')")
         expect(pg.locator(".page-head h1, .title-row h1")).to_contain_text("Takeoff – Lighting set", timeout=15000)
         expect(pg.locator(".grid tbody")).to_contain_text("2X4 LED TROFFER")
         # from the file viewer: the same PDF opens its takeoff (no second one is made)
         pg.goto(f"{BASE}/#/table/{drive['id']}?record={kept[0]['id']}")
-        pg.click(".viewer-bar button:has-text('Blueprint takeoff')")
+        pg.click(".viewer-bar button:has-text('Edit')")                    # it's in the viewer's Edit menu
+        pg.click(".popover .menu-item:has-text('Open in Blueprint takeoff')")
         expect(pg.locator(".tk-name")).to_have_value("Lighting set", timeout=30000)
         assert len(u.j("GET", "/x/takeoff/projects")) == 1
         # the picker searches every files table
         pg.click("button[title='All takeoffs']")
         pg.click("button:has-text('From a files table')")
         picker = pg.locator(".modal", has_text="Drawings from your files tables")
-        expect(picker.locator(".tk-pick-row")).to_have_count(1)
+        expect(picker.locator(".tk-pick-row")).to_have_count(2)                # the drawings and the marked-up copy
         picker.locator("input[aria-label='Search PDFs']").fill("assembly lighting")
-        expect(picker.locator(".tk-pick-row")).to_contain_text("Jobs/Assembly Row/Lighting set.pdf")
+        expect(picker.locator(".tk-pick-row", has_text="Jobs/Assembly Row/Lighting set.pdf")).to_have_count(1)
         picker.locator("input[aria-label='Search PDFs']").fill("nothing like it")
         expect(picker.locator(".tk-pick-row")).to_have_count(0)
+        # which fields saved files copy: everyone's own setting, in Settings → Extensions
+        pg.keyboard.press("Escape")
+        pg.click(".side-user .side-item")
+        pg.click(".settings-tabs button:has-text('Extensions')")
+        card = pg.locator(".ext-card", has_text="Blueprint takeoff")
+        expect(card.locator(".switch")).to_have_count(0)                     # (switching it off: the admin's)
+        card.locator("label:has-text('Only these fields') input").check()
+        expect(card.locator(".ext-fields label:has-text('Folder') input")).to_be_checked()
+        card.locator(".ext-fields label:has-text('Folder') input").uncheck()
+        expect(card.locator(".ext-fields label:has-text('Folder') input")).not_to_be_checked()
+        for _ in range(20):                                                  # (saved as it's clicked)
+            if u.j("GET", "/x/takeoff/settings")["inherit"] == []:
+                break
+            pg.wait_for_timeout(250)
+        assert u.j("GET", "/x/takeoff/settings")["inherit"] == []
         assert not errors, errors
         b.close()
