@@ -154,9 +154,14 @@ export interface RemoteInfo {
   url: string; origin: string; local: boolean; name: string | null;
   source_kind?: TableKind | "combo" | null;  // what the shared table is (files, contacts, tasks & events…): it behaves like one
   permissions: LinkPerms; error: string | null; has_password: boolean;
+  follow_views?: boolean;  // its view stays in step with the source's view
 }
 
-export interface Base { id: string; name: string; color: string; position: number }
+export type Role = "owner" | "admin" | "editor" | "viewer";
+/** A base: the user's own (role owner) or one shared with them (owner: whose it is). */
+export interface Base { id: string; name: string; color: string; position: number; role?: Role; follow_views?: boolean; owner?: string | null }
+/** What the user may do in a table's / combined database's base. */
+export interface Access { role: Role; follow_views: boolean; owner: string | null }
 
 export interface TableInfo {
   id: string;
@@ -236,6 +241,7 @@ export interface Dataset {
   dav?: { account: string | null; builtin: boolean; shared: boolean; items: number; collection: "calendar" | "address book"; path?: string } | null;
   storage?: { name: string | null; kind: "s3" | "webdav" | null; location: string | null } | null;  // files tables
   baseId?: string;
+  access?: Access | null;  // the user's role in its base (a shared base: not "owner")
   fields: Field[];
   views: View[];
   records: Rec[];

@@ -106,6 +106,12 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
                 <dt>You can</dt><dd>{linkSummary(t.remote.permissions, nativeKind(t) === "files").replace(/^can /, "view, ")}</dd>
                 {t.remote.error && (<><dt>Problem</dt><dd className="error small">{t.remote.error}</dd></>)}
               </dl>
+              <label className="inline-check">
+                <input type="checkbox" checked={t.remote.follow_views !== false} disabled={!!ds.access && !["owner", "admin"].includes(ds.access.role)}
+                  onChange={(e) => api.patch(`/tables/${t.id}/link`, { follow_views: e.target.checked }).then(actions.syncNow)} />
+                <span><b>Stay updated with the source's view</b>: its sort, grouping, hidden fields and layout follow the view it was
+                  shared from (its filters always apply at the source). Off: the view here is yours to arrange, and stays as you leave it.</span>
+              </label>
               <div className="settings-actions">
                 {actions.linkSettings && <button className="btn sm" onClick={actions.linkSettings}><Icon name="link" size={14} /> Change the link…</button>}
                 <button className="btn sm" disabled={syncing} onClick={actions.syncNow}><Icon name="sync" size={14} className={syncing ? "spin" : ""} /> Refresh</button>

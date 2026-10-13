@@ -6,6 +6,7 @@ import type { ExtensionInfo } from "../extensions";
 import { Icon, tableIcon } from "./Icon";
 import { nativeKind } from "../util";
 import { Popover } from "./Overlay";
+import { BaseSharing } from "./BaseSharing";
 
 const COLLAPSED_KEY = "probyte.collapsedBases";
 
@@ -35,6 +36,8 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
   const [menu, setMenu] = useState<{ base: Base; anchor: HTMLElement } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [sharing, setSharing] = useState<Base | null>(null);
+  const rankOf = (b: Base) => ({ viewer: 1, editor: 2, admin: 3, owner: 4 }[b.role ?? "owner"]);
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());  // bases whose hidden tables are shown
   const is = (kind: string, id: string) => active?.kind === kind && active.id === id;
   // reordering bases: drag a base's header (or Move up / down in its menu); shown at once, saved in the background
@@ -124,6 +127,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                         onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== b.name) patchBase(b, { name: v }); setRenaming(null); }}
                         onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setRenaming(null); }} />
                     ) : <span className="base-name">{b.name}</span>}
+                    {b.owner && <span className="base-shared" title={`Shared with you by ${b.owner} (${b.role})`}><Icon name="share" size={11} /></span>}
                   </button>
                   <button className="icon-btn base-more" title="Base options"
                     onClick={(e) => { setConfirmDelete(false); setMenu({ base: b, anchor: e.currentTarget }); }}>
@@ -155,7 +159,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                         <Icon name="eye" size={13} /> {reveal ? "Hide hidden" : `Show ${nHidden} hidden`}
                       </button>
                     )}
-                    <button className="side-add" onClick={() => onNewTable(b.id)}><Icon name="plus" size={13} /> New table</button>
+                    {rankOf(b) >= 3 && <button className="side-add" onClick={() => onNewTable(b.id)}><Icon name="plus" size={13} /> New table</button>}
                   </div>
                 )}
               </div>
@@ -188,9 +192,13 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
       {menu && (
         <Popover anchor={menu.anchor} onClose={() => setMenu(null)} width={220}>
           <div className="menu-list">
-            <button className="menu-item" onClick={() => { onNewTable(menu.base.id); setMenu(null); }}><Icon name="table" size={14} /> New table</button>
-            <button className="menu-item" onClick={() => { onNewCombo(menu.base.id); setMenu(null); }}><Icon name="layers" size={14} /> New combined database</button>
-            <button className="menu-item" onClick={() => { setRenaming(menu.base.id); setMenu(null); }}><Icon name="edit" size={14} /> Rename</button>
+            {rankOf(menu.base) >= 3 && <>
+              <button className="menu-item" onClick={() => { onNewTable(menu.base.id); setMenu(null); }}><Icon name="table" size={14} /> New table</button>
+              <button className="menu-item" onClick={() => { onNewCombo(menu.base.id); setMenu(null); }}><Icon name="layers" size={14} /> New combined database</button>
+              <button className="menu-item" onClick={() => { setRenaming(menu.base.id); setMenu(null); }}><Icon name="edit" size={14} /> Rename</button>
+            </>}
+            <button className="menu-item" onClick={() => { setSharing(menu.base); setMenu(null); }}><Icon name="share" size={14} />
+              {menu.base.owner ? " Sharing and your views…" : " Share with people…"}</button>
             {bases.length > 1 && (() => {
               const i = bases.findIndex((x) => x.id === menu.base.id);
               return (<>
@@ -204,13 +212,13 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
               navigator.clipboard?.writeText(id).then(() => onError(`Copied base ID ${id}`), () => onError(id));
               setMenu(null);
             }}><Icon name="copy" size={14} /> Copy base ID</button>
-            <div className="swatch-row">
+            {rankOf(menu.base) >= 3 && <div className="swatch-row">
               {PALETTE.slice(0, 8).map((c) => (
                 <button key={c} className={`swatch-btn ${menu.base.color === c ? "on" : ""}`} style={{ background: c }}
                   title="Base color" onClick={() => { patchBase(menu.base, { color: c }); setMenu(null); }} />
               ))}
-            </div>
-            {ws.bases.length > 1 && (confirmDelete ? (
+            </div>}
+            {!menu.base.owner && ws.bases.filter((x) => !x.owner).length > 1 && (confirmDelete ? (
               <button className="menu-item danger" onClick={() => deleteBase(menu.base)}><Icon name="trash" size={14} /> Delete base and its tables</button>
             ) : (
               <button className="menu-item danger" onClick={() => setConfirmDelete(true)}><Icon name="trash" size={14} /> Delete base…</button>
@@ -218,6 +226,7 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
           </div>
         </Popover>
       )}
+      {sharing && <BaseSharing base={sharing} me={user.username} onClose={() => setSharing(null)} onChanged={onChanged} />}
     </>
   );
 }

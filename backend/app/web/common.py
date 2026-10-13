@@ -168,6 +168,14 @@ def _own_account(conn, account_id, user):
     return a or store.not_found("Account not found")
 
 
+def access_info(conn, base_id, user_id) -> dict:
+    """What the user may do in a base (the app shows only what applies): their role, whether they follow the base's
+    views, and whose base it is."""
+    m = access.membership(conn, base_id, user_id) or {"role": "viewer", "follow_views": True, "owner": None}
+    owner = conn.execute("SELECT username FROM users WHERE id = %s", (m["owner"],)).fetchone() if m["role"] != "owner" else None
+    return {"role": m["role"], "follow_views": m["follow_views"], "owner": owner["username"] if owner else None}
+
+
 def _own_field(conn, field_id, user, need="admin"):
     """A field of a table the user may change the fields of (its owner, or an admin of its base)."""
     f = conn.execute("SELECT f.*, t.base_id AS _base_id FROM fields f JOIN tables t ON t.id = f.table_id WHERE f.id = %s",

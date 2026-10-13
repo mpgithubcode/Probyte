@@ -11,7 +11,7 @@ from app.core.secretbox import unseal
 from app.data import access, store, values
 from app.dav import sync
 from app.sharing import linked as remote
-from app.web.common import _own_account, _own_field, _table_out, COMPONENTS, FastJSON, FieldIn, FieldPatch, FormulaCheck, RelinkIn, TableIn, TablePatch, User
+from app.web.common import _own_account, access_info, _own_field, _table_out, COMPONENTS, FastJSON, FieldIn, FieldPatch, FormulaCheck, RelinkIn, TableIn, TablePatch, User
 
 router = APIRouter()
 log = logging.getLogger("probyte.trash")
@@ -72,17 +72,9 @@ def get_table(table_id: str, user=User):
             t = conn.execute("SELECT * FROM tables WHERE id = %s", (table_id,)).fetchone()  # load() may have updated its status
         return FastJSON({"table": _table_out(t), "fields": eng.describe(table_id),
                          "views": store.get_views(conn, table_id=table_id, user_id=user["id"]),
-                         "records": records, "refs": refs, "access": _access(conn, t["base_id"], user),
+                         "records": records, "refs": refs, "access": access_info(conn, t["base_id"], user["id"]),
                          "link_sources": remote.sources(conn, t) if t["kind"] == "remote" else None,
                          "dav": _dav_info(conn, t), "storage": _storage_info(conn, t), "token": token})
-
-
-def _access(conn, base_id, user) -> dict:
-    """What the user may do here (the app shows only what applies): their role, and whether they follow the base's
-    views."""
-    m = access.membership(conn, base_id, user["id"]) or {"role": "viewer", "follow_views": True, "owner": None}
-    owner = conn.execute("SELECT username FROM users WHERE id = %s", (m["owner"],)).fetchone() if m["role"] != "owner" else None
-    return {"role": m["role"], "follow_views": m["follow_views"], "owner": owner["username"] if owner else None}
 
 
 @router.get("/api/tables/{table_id}/changes")

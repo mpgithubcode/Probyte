@@ -9,7 +9,7 @@ from app.core.db import connection, Jsonb
 from app.data import access, store
 from app.formats.ical import PALETTE
 from app.sharing import linked as remote, recordops
-from app.web.common import _own_view, _record_out, ComboIn, ComboPatch, ComboRecordIn, ComboSource, FastJSON, RecordIn, User, ViewIn, ViewPatch
+from app.web.common import _own_view, access_info, _record_out, ComboIn, ComboPatch, ComboRecordIn, ComboSource, FastJSON, RecordIn, User, ViewIn, ViewPatch
 
 router = APIRouter()
 
@@ -141,6 +141,7 @@ def _combo_payload(conn, combo, defer_remote=False, user_id=None):
             s["link_sources"] = remote.sources(conn, store.get_table(conn, s["table_id"]))
     now = {str(s["table_id"]) for s in sources} - set(pending)
     return {"combo": {"id": combo["id"], "name": combo["name"], "base_id": combo["base_id"], "icon": combo.get("icon")}, "sources": sources, "fields": fields,
+            "access": access_info(conn, combo["base_id"], user_id) if user_id else None,
             "views": store.get_views(conn, combo_id=combo["id"], user_id=user_id), "records": store.combo_records(conn, combo, eng, only=now),
             "refs": store.combo_refs(conn, combo, eng, only=now), "pending": pending}
 

@@ -214,8 +214,12 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   // A linked table can do only what its source link allows; its fields come from the source.
   const linkPerms = ds?.table?.kind === "remote" ? ds.table.remote?.permissions ?? {} : null;
   const linkAllows = linkPerms ? linkCan(linkPerms) : null;
-  const can = linkAllows ? { add: nativeKind(ds?.table) === "files" ? linkAllows.upload_files : linkAllows.add,  // a files table adds by uploading
+  const linkCanDo = linkAllows ? { add: nativeKind(ds?.table) === "files" ? linkAllows.upload_files : linkAllows.add,  // a files table adds by uploading
     edit: linkAllows.edit, delete: linkAllows.delete, manage: false } : CAN_ALL;
+  // a base shared with the user: viewers read, editors change records, admins also fields and tables
+  const rank = { viewer: 1, editor: 2, admin: 3, owner: 4 }[ds?.access?.role ?? "owner"];
+  const can = { add: linkCanDo.add && rank >= 2, edit: linkCanDo.edit && rank >= 2, delete: linkCanDo.delete && rank >= 2,
+    manage: linkCanDo.manage && rank >= 3 };
 
   const ops: Ops = {
     can,

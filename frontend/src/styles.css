@@ -1387,3 +1387,14 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .devices-table th { text-align: left; font-weight: 500; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .devices-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); }
 .devices-table td:last-child { width: 28px; text-align: right; }
+
+/* sharing a base */
+.base-shared { display: inline-flex; margin-left: 4px; color: var(--muted); }
+.share-add { gap: 6px; }
+.share-add .input:first-child { flex: 1; }
+.members-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13.5px; }
+.members-table td { padding: 6px; border-bottom: 1px solid var(--border); }
+.members-table td:nth-child(2) { width: 130px; }
+.members-table td:last-child { width: 32px; text-align: right; }
+.share-mine { margin-top: 14px; display: grid; gap: 8px; }
+.share-mine h4 { margin: 0; font-size: 13px; }
