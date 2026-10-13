@@ -292,14 +292,14 @@ def paste(table_id: str, body: PasteIn, user=User):
 def record_history(record_id: str, user=User):
     """Who changed what in a record, newest first (kept 180 days)."""
     with connection() as conn:
-        rows = conn.execute(
-            "SELECT h.at, h.actor, h.action, h.changes, h.table_id FROM record_history h JOIN tables t ON t.id = h.table_id "
-            "WHERE h.record_id = %s AND t.user_id = %s ORDER BY h.at DESC, h.id DESC LIMIT 200", (record_id, user["id"])).fetchall()
+        rec = conn.execute("SELECT table_id FROM records WHERE id = %s UNION SELECT table_id FROM record_history WHERE record_id = %s "
+                           "LIMIT 1", (record_id, record_id)).fetchone()
+        if not rec:
+            store.not_found("Record not found")
+        store.get_table(conn, rec["table_id"], user["id"], trashed=True)
+        rows = conn.execute("SELECT at, actor, action, changes, table_id FROM record_history WHERE record_id = %s "
+                            "ORDER BY at DESC, id DESC LIMIT 200", (record_id,)).fetchall()
         if not rows:
-            exists = conn.execute("SELECT 1 FROM records r JOIN tables t ON t.id = r.table_id WHERE r.id = %s AND t.user_id = %s",
-                                  (record_id, user["id"])).fetchone()
-            if not exists:
-                store.not_found("Record not found")
             return {"entries": []}
         fields = {str(f["id"]): f for f in store.get_fields(conn, rows[0]["table_id"])}
     out = []

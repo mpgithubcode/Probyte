@@ -566,6 +566,7 @@ def test_each_editing_session_gets_a_key_the_server_has_not_seen(doc):
     cached copy, which fails behind the relay ("Download failed"). So only people editing at the same time share a
     key; opening the file again later, even unchanged, starts a new one."""
     u, t, rec = doc
+    requests.post(FAKE + "/fake/fail-next", json={"count": 0})  # (whatever another test left armed)
     a = u.j("POST", "/office/sessions", json={"record_id": rec["id"]})
     editor(a)
     close_editor(a)

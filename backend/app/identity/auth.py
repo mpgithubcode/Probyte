@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from app.core.context import api_bases, set_actor
+from app.core.context import api_bases, set_actor, writing
 from app.core.db import connection
 
 SESSION_COOKIE = "probyte_session"
@@ -136,6 +136,7 @@ async def current_user(request: Request) -> dict:
     """FastAPI dependency: the logged-in user (session cookie or API key), or 401.
 
     Async so the API-key base limit, kept in a context variable, carries over into the endpoint."""
+    writing.set(request.method not in ("GET", "HEAD", "OPTIONS"))
     key = request_key(request)
     if key:
         user, bases = await run_in_threadpool(_key_user, key, request.method, request.url.path)

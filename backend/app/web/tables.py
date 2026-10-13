@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.calc.compute import Engine
 from app.core.db import connection, Jsonb
 from app.core.secretbox import unseal
-from app.data import store, values
+from app.data import access, store, values
 from app.dav import sync
 from app.sharing import linked as remote
 from app.web.common import _own_account, _own_field, _table_out, COMPONENTS, FastJSON, FieldIn, FieldPatch, FormulaCheck, RelinkIn, TableIn, TablePatch, User
@@ -22,15 +22,16 @@ log = logging.getLogger("probyte.trash")
 @router.post("/api/tables")
 def create_table(body: TableIn, user=User):
     with connection() as conn:
-        base = store.get_base(conn, body.base_id, user["id"]) if body.base_id else store.ensure_base(conn, user["id"])
+        base = store.get_base(conn, body.base_id, user["id"], need="admin") if body.base_id else store.ensure_base(conn, user["id"])
+        owner = base["user_id"]  # a table made in a shared base is the base owner's, like the rest of it
         if body.kind == "remote":
             if not body.remote:
                 raise HTTPException(400, "Paste the public link to add")
             r = body.remote
-            return _table_out(remote.create_table(conn, store, user["id"], base["id"], body.name, r.url, r.password, r.item_id, r.view_id))
+            return _table_out(remote.create_table(conn, store, owner, base["id"], body.name, r.url, r.password, r.item_id, r.view_id))
         if body.kind == "files":
             from app.files import catalog as files
-            t = files.create_table(conn, user["id"], base["id"], body)
+            t = files.create_table(conn, owner, base["id"], body)
     if body.kind == "files":
         sync.schedule(t["id"], 0)
         return _table_out(t)
@@ -39,7 +40,7 @@ def create_table(body: TableIn, user=User):
         with connection() as conn:
             a = _own_account(conn, body.account_id, user) if body.account_id else None
             if a is None or a["is_builtin"]:  # on Probyte's own server: the table is the calendar / address book
-                t = store.create_table(conn, user["id"], base["id"], body.name, body.kind)
+                t = store.create_table(conn, owner, base["id"], body.name, body.kind)
                 return _table_out(conn.execute("UPDATE tables SET dav_slug = %s WHERE id = %s RETURNING *", (str(t["id"]), t["id"])).fetchone())
         book = body.kind == "contacts"
         if body.new_calendar_name:
@@ -51,7 +52,7 @@ def create_table(body: TableIn, user=User):
         if not calendar_url:
             raise HTTPException(400, "Choose an address book" if book else "Choose a calendar")
     with connection() as conn:
-        t = store.create_table(conn, user["id"], base["id"], body.name, body.kind,
+        t = store.create_table(conn, owner, base["id"], body.name, body.kind,
                                body.account_id if body.kind != "generic" else None, calendar_url)
     if body.kind != "generic":
         sync.schedule(t["id"], 0)
@@ -69,10 +70,19 @@ def get_table(table_id: str, user=User):
         refs = eng.refs(table_id, eng.records(table_id))
         if t["kind"] == "remote":
             t = conn.execute("SELECT * FROM tables WHERE id = %s", (table_id,)).fetchone()  # load() may have updated its status
-        return FastJSON({"table": _table_out(t), "fields": eng.describe(table_id), "views": store.get_views(conn, table_id=table_id),
-                         "records": records, "refs": refs,
+        return FastJSON({"table": _table_out(t), "fields": eng.describe(table_id),
+                         "views": store.get_views(conn, table_id=table_id, user_id=user["id"]),
+                         "records": records, "refs": refs, "access": _access(conn, t["base_id"], user),
                          "link_sources": remote.sources(conn, t) if t["kind"] == "remote" else None,
                          "dav": _dav_info(conn, t), "storage": _storage_info(conn, t), "token": token})
+
+
+def _access(conn, base_id, user) -> dict:
+    """What the user may do here (the app shows only what applies): their role, and whether they follow the base's
+    views."""
+    m = access.membership(conn, base_id, user["id"]) or {"role": "viewer", "follow_views": True, "owner": None}
+    owner = conn.execute("SELECT username FROM users WHERE id = %s", (m["owner"],)).fetchone() if m["role"] != "owner" else None
+    return {"role": m["role"], "follow_views": m["follow_views"], "owner": owner["username"] if owner else None}
 
 
 @router.get("/api/tables/{table_id}/changes")
@@ -103,6 +113,21 @@ def inspect_link(body: InspectIn, user=User):
             link["cookie"] = remote.unlock(conn, link, body.password)
         meta = remote.fetch_meta(conn, link)
     return {**meta, "local": link["local"], "origin": link["origin"], "view_hint": link["view_id"]}
+
+
+class LinkSettings(BaseModel):
+    follow_views: bool
+
+
+@router.patch("/api/tables/{table_id}/link")
+def link_settings(table_id: str, body: LinkSettings, user=User):
+    """A linked table's settings: whether its view stays in step with the source's view."""
+    with connection() as conn:
+        t = store.get_table(conn, table_id, user["id"], need="admin")
+        if t["kind"] != "remote":
+            raise HTTPException(400, "Only linked tables have a link")
+        remote.set_follow_views(conn, t, body.follow_views)
+        return _table_out(store.get_table(conn, table_id))
 
 
 @router.post("/api/tables/{table_id}/relink")
@@ -214,7 +239,7 @@ def table_titles(table_id: str, user=User):
 def check_formula(table_id: str, body: FormulaCheck, user=User):
     """Validate a formula and preview its result on the first few records."""
     with connection() as conn:
-        store.get_table(conn, table_id, user["id"])
+        store.get_table(conn, table_id, user["id"], need="viewer")
         try:
             compiled = store.compile_formula(conn, table_id, body.expression, body.field_id)
         except HTTPException as e:
@@ -231,11 +256,20 @@ def check_formula(table_id: str, body: FormulaCheck, user=User):
 @router.patch("/api/tables/{table_id}")
 def update_table(table_id: str, body: TablePatch, user=User):
     with connection() as conn:
-        store.get_table(conn, table_id, user["id"])
+        t = store.get_table(conn, table_id, user["id"], need="viewer")
+        if body.hidden is not None and access.role(conn, t["base_id"], user["id"]) != "owner":
+            # a member hides or shows it in their own sidebar only
+            conn.execute("UPDATE base_members SET hidden = hidden || jsonb_build_object(%s::text, %s::boolean) WHERE base_id = %s AND user_id = %s",
+                         (str(table_id), body.hidden, t["base_id"], user["id"]))
+            body.hidden = None
+        if set(body.model_fields_set) - {"hidden"}:
+            access.check(conn, t["base_id"], user["id"], "admin")
         if body.name:
             conn.execute("UPDATE tables SET name = %s WHERE id = %s", (body.name, table_id))
         if body.base_id:
-            store.get_base(conn, body.base_id, user["id"])
+            nb = store.get_base(conn, body.base_id, user["id"], need="admin")
+            if str(nb["user_id"]) != str(t["user_id"]):
+                raise HTTPException(400, "A table can only move to another base of the same owner")
             conn.execute("UPDATE tables SET base_id = %s WHERE id = %s", (body.base_id, table_id))
         if body.hidden is not None:
             conn.execute("UPDATE tables SET hidden = %s WHERE id = %s", (body.hidden, table_id))
@@ -254,7 +288,7 @@ class FieldOrder(BaseModel):
 def order_fields(table_id: str, body: FieldOrder, user=User):
     """The table's own field order (views follow it unless they set their own); Record ID stays last."""
     with connection() as conn:
-        store.get_table(conn, table_id, user["id"])
+        store.get_table(conn, table_id, user["id"], need="admin")
         fields = store.get_fields(conn, table_id)
         rank = {fid: n for n, fid in enumerate(body.ids)}
         ordered = sorted((f for f in fields if f["type"] != "record_id"), key=lambda f: (rank.get(str(f["id"]), len(rank)), f["position"]))
@@ -330,7 +364,7 @@ def delete_table(table_id: str, delete_on_server: bool | None = None, forever: b
     For a synced table, its data on the DAV server goes too when it's really deleted: by default when it's on
     Probyte's own server (the whole calendar / address book), for other accounts only with ?delete_on_server=true."""
     with connection() as conn:
-        t = store.get_table(conn, table_id, user["id"])
+        t = store.get_table(conn, table_id, user["id"], need="admin")
         info = _dav_info(conn, t)
         on_server = bool(info and (delete_on_server if delete_on_server is not None else info["builtin"]))
         if not forever:
@@ -357,13 +391,15 @@ def trash(user=User):
         tables = conn.execute(
             "SELECT t.id, t.name, t.kind, t.base_id, t.trashed_at, t.trash_delete_on_server, b.name AS base_name, "
             "(SELECT count(*) FROM records r WHERE r.table_id = t.id AND NOT r.deleted) AS records "
-            "FROM tables t JOIN bases b ON b.id = t.base_id WHERE t.user_id = %s AND t.trashed_at IS NOT NULL ORDER BY t.trashed_at DESC",
-            (user["id"],)).fetchall()
+            "FROM tables t JOIN bases b ON b.id = t.base_id WHERE t.trashed_at IS NOT NULL AND (t.user_id = %s OR t.base_id IN "
+            "(SELECT base_id FROM base_members WHERE user_id = %s AND role = 'admin')) ORDER BY t.trashed_at DESC",
+            (user["id"], user["id"])).fetchall()
         records = conn.execute(
             "SELECT r.id, r.table_id, t.name AS table_name, r.deleted_at, r.data -> (SELECT f.id::text FROM fields f "
             "  WHERE f.table_id = t.id AND f.is_primary LIMIT 1) AS title "
-            "FROM record_trash r JOIN tables t ON t.id = r.table_id WHERE t.user_id = %s AND t.trashed_at IS NULL "
-            "ORDER BY r.deleted_at DESC LIMIT 500", (user["id"],)).fetchall()
+            "FROM record_trash r JOIN tables t ON t.id = r.table_id WHERE t.trashed_at IS NULL AND (t.user_id = %s OR t.base_id IN "
+            "(SELECT base_id FROM base_members WHERE user_id = %s AND role IN ('editor', 'admin'))) "
+            "ORDER BY r.deleted_at DESC LIMIT 500", (user["id"], user["id"])).fetchall()
     return {"tables": tables, "records": records}
 
 
@@ -390,8 +426,9 @@ def restore_records(body: Ids, user=User):
 def purge_records(body: Ids, user=User):
     """Empty records from the trash for good."""
     with connection() as conn:
-        n = conn.execute("DELETE FROM record_trash r USING tables t WHERE r.table_id = t.id AND t.user_id = %s AND r.id = ANY(%s::uuid[])",
-                         (user["id"], body.ids)).rowcount
+        n = conn.execute("DELETE FROM record_trash r USING tables t WHERE r.table_id = t.id AND r.id = ANY(%s::uuid[]) AND (t.user_id = %s "
+                         "OR t.base_id IN (SELECT base_id FROM base_members WHERE user_id = %s AND role IN ('editor', 'admin')))",
+                         (body.ids, user["id"], user["id"])).rowcount
     from app.files import catalog as files
     files.purge_deleted()  # files of files tables: deleted from the storage now
     return {"deleted": n}
@@ -400,7 +437,7 @@ def purge_records(body: Ids, user=User):
 @router.post("/api/trash/tables/{table_id}/restore")
 def restore_table(table_id: str, user=User):
     with connection() as conn:
-        store.get_table(conn, table_id, user["id"], trashed=True)
+        store.get_table(conn, table_id, user["id"], trashed=True, need="admin")
         conn.execute("UPDATE tables SET trashed_at = NULL, trash_delete_on_server = false WHERE id = %s", (table_id,))
         t = store.get_table(conn, table_id)
         if store.is_synced(t) or (t["kind"] == "files" and t["storage_id"]):
@@ -412,7 +449,7 @@ def restore_table(table_id: str, user=User):
 def purge_trashed_table(table_id: str, user=User):
     """Delete a table in the trash for good now."""
     with connection() as conn:
-        t = store.get_table(conn, table_id, user["id"], trashed=True)
+        t = store.get_table(conn, table_id, user["id"], trashed=True, need="admin")
         if not t["trashed_at"]:
             raise HTTPException(400, "Only tables in the trash can be deleted for good here")
         server = purge_table(conn, t, t["trash_delete_on_server"])
@@ -454,7 +491,7 @@ def _describe_field(conn, field_id, table_id):
 @router.post("/api/tables/{table_id}/fields")
 def create_field(table_id: str, body: FieldIn, user=User):
     with connection() as conn:
-        table = store.get_table(conn, table_id, user["id"])
+        table = store.get_table(conn, table_id, user["id"], need="admin")
         if table["kind"] == "remote":
             raise HTTPException(400, "A linked table's fields come from its source link")
         opts = store.prepare_field(conn, table, body.type, body.options, user["id"])
@@ -481,7 +518,7 @@ def update_field(field_id: str, body: FieldPatch, user=User):
         if f["system_key"] and f["system_key"] != "remote":
             raise HTTPException(400, "This field is locked: it's part of the synced calendar / contact item (or built in). "
                                      "Hide it in a view, or add your own field next to it.")
-        table = store.get_table(conn, f["table_id"], user["id"])
+        table = store.get_table(conn, f["table_id"], user["id"], need="admin")
         new_type = body.type or f["type"]
         if new_type != f["type"] and f["system_key"]:
             raise HTTPException(400, "The type of a CalDAV field can't be changed")

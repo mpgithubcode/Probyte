@@ -288,6 +288,8 @@ def load(conn, table, force=False) -> dict:
         name = payload.get("link_name", name)
         source_kind = (payload.get("item") or {}).get("table_kind") or link.get("source_kind")
         entry = _convert(tid, payload)
+        if link.get("follow_views", True):
+            _follow_view(conn, table, link, payload)
     except HTTPException as e:
         error = "The link needs its password again (it may have changed)" if e.detail == "password_required" else str(e.detail)
         sig = link.get("fields_hash")
@@ -305,6 +307,30 @@ def load(conn, table, force=False) -> dict:
     return entry
 
 
+def _follow_view(conn, table, link, payload):
+    """The linked table's view stays in step with the source's view (sort, grouping, hidden fields, layout; its filters
+    are applied at the source anyway), unless the table's owner turned that off ("stay updated")."""
+    src = payload.get("view") or {}
+    vid = link.get("mirror_view")
+    view = conn.execute("SELECT * FROM views WHERE id = %s AND table_id = %s", (vid, table["id"])).fetchone() if vid else None
+    if view is None:  # a table linked before views followed: its first view mirrors the source
+        view = conn.execute("SELECT * FROM views WHERE table_id = %s AND user_id IS NULL ORDER BY position, name LIMIT 1",
+                            (table["id"],)).fetchone()
+        if view is None:
+            return
+        link["mirror_view"] = str(view["id"])
+        conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"mirror_view": str(view["id"])}), table["id"]))
+    cfg = map_view_config(table["id"], src.get("config") or {})
+    vtype = src.get("type") or view["type"]
+    if cfg != view["config"] or vtype != view["type"]:
+        conn.execute("UPDATE views SET config = %s, type = %s, updated_at = now() WHERE id = %s", (Jsonb(cfg), vtype, view["id"]))
+
+
+def set_follow_views(conn, table, on: bool):
+    conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"follow_views": bool(on)}), table["id"]))
+    invalidate(table["id"])
+
+
 def records(conn, table) -> list:
     return [{**r, "data": dict(r["data"])} for r in load(conn, table)["records"]]
 
@@ -320,7 +346,7 @@ def public_info(table) -> dict | None:
     if not r:
         return None
     return {"url": r.get("url"), "origin": r.get("origin"), "local": r.get("local"), "name": r.get("name"),
-            "source_kind": r.get("source_kind"),
+            "source_kind": r.get("source_kind"), "follow_views": r.get("follow_views", True),
             "permissions": effective(r.get("permissions")), "error": r.get("error"), "has_password": bool(r.get("cookie"))}
 
 
@@ -348,7 +374,9 @@ def create_table(conn, store, user_id, base_id, name, url, password, item_id, vi
     link["fields_hash"] = sync_fields(conn, t, payload)
     conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), t["id"]))
     cfg = map_view_config(t["id"], payload.get("view", {}).get("config") or {})
-    store.create_view(conn, table_id=t["id"], name=view["name"], type=view["type"], config=cfg)
+    mirror = store.create_view(conn, table_id=t["id"], name=view["name"], type=view["type"], config=cfg)
+    link.update(mirror_view=str(mirror["id"]), follow_views=True)
+    conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), t["id"]))
     if view["type"] != "grid":
         store.create_view(conn, table_id=t["id"], name="Table", type="grid", config={"hidden": cfg.get("hidden", [])})
     return conn.execute("SELECT * FROM tables WHERE id = %s", (t["id"],)).fetchone()

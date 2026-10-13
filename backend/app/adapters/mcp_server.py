@@ -18,7 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.adapters import apiv1
-from app.core.context import api_bases
+from app.core.context import api_bases, writing
 from app.core.db import connection
 from app.data import audit
 from app.identity import auth
@@ -208,6 +208,7 @@ async def handle(msg, user: dict, bases) -> dict | None:
 
         def work():
             api_bases.set(bases)
+            writing.set(not _read_only(tool))  # (every MCP call is a POST: what it does decides, for a base's viewers)
             if name in owners:  # an extension's tool
                 return owners[name].call(user, name, args)
             return _call(user, name, args)

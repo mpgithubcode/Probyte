@@ -12,7 +12,7 @@ import time
 from fastapi import HTTPException
 
 from app.core.db import connection
-from app.data import audit, store
+from app.data import access, audit, store
 from app.files import catalog as files
 from app.office import docserver
 from app.office.config import CONVERT, CONVERTED_DIR, doc_type, EDITABLE, settings
@@ -53,7 +53,7 @@ def target(conn, record_id: str, table_id: str | None, user) -> dict:
     """The file to open: its name, a version stamp, and whether this user may change it."""
     if table_id:  # a linked table: through its link
         from app.sharing import linked as remote
-        t = store.get_table(conn, table_id, user["id"])
+        t = store.get_table(conn, table_id, user["id"], need="viewer")
         if t["kind"] != "remote" or (t["remote"] or {}).get("source_kind") != "files":
             store.not_found("File not found")
         for r in remote.records(conn, t):
@@ -65,10 +65,11 @@ def target(conn, record_id: str, table_id: str | None, user) -> dict:
                         "base": "l" + hashlib.sha1(f"{t['id']}:{record_id}:{stamp}".encode()).hexdigest()[:40],
                         "can_edit": remote.can(t, "edit_files")}
         store.not_found("File not found")
-    table, rec, keys = files._own_record(conn, record_id, user["id"])
+    table, rec, keys = files._own_record(conn, record_id, user["id"], need="viewer")
     item = (rec["data"].get(keys["file"]) or [{}])[0]
+    can = access.RANK[access.role(conn, table["base_id"], user["id"])] >= access.RANK["editor"]
     return {"table": table, "rid": str(rec["id"]), "name": item.get("name") or "file", "linked": False,
-            "base": f"{rec['id']}-{(rec['caldav_etag'] or 'x')[:20]}", "can_edit": True}
+            "base": f"{rec['id']}-{(rec['caldav_etag'] or 'x')[:20]}", "can_edit": can}
 
 
 def open_editor(record_id: str, table_id: str | None, mode: str, user, *, probyte: str, browser: str, lang: str) -> dict:

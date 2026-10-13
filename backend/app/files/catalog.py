@@ -287,9 +287,9 @@ def thumb_response(rid):
     return FileResponse(p, media_type="image/webp", headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
 
 
-def _own_record(conn, rid, user_id):
+def _own_record(conn, rid, user_id, need=None):
     rec = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted", (rid,)).fetchone() or store.not_found("File not found")
-    table = store.get_table(conn, rec["table_id"], user_id)
+    table = store.get_table(conn, rec["table_id"], user_id, need=need)
     if table["kind"] != "files":
         store.not_found("File not found")
     return table, rec, _keys(store.get_fields(conn, table["id"]))

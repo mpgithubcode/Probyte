@@ -414,9 +414,9 @@ def table_from_template(body: FromTemplateIn, user=User):
         tpl = find(conn, body.template_id, user["id"]) if body.template_id else body.body
         if tpl is None:
             bad("Choose a template")
-        base = store.get_base(conn, body.base_id, user["id"]) if body.base_id else store.ensure_base(conn, user["id"])
+        base = store.get_base(conn, body.base_id, user["id"], need="admin") if body.base_id else store.ensure_base(conn, user["id"])
         from app.web.common import _table_out
-        return _table_out(create_table(conn, user["id"], base["id"], tpl, body.name, body.include_records))
+        return _table_out(create_table(conn, base["user_id"], base["id"], tpl, body.name, body.include_records))
 
 
 @router.post("/api/views/from-template")

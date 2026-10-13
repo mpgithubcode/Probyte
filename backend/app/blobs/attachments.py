@@ -44,7 +44,12 @@ async def save_upload(conn, user_id, file: UploadFile) -> dict:
 
 
 def serve(conn, user_id, attachment_id, download: bool):
-    a = conn.execute("SELECT * FROM attachments WHERE id = %s AND user_id = %s", (attachment_id, user_id)).fetchone()
+    """An uploaded file, for whoever uploaded it or can see a record it's in (a base shared with them, too)."""
+    a = conn.execute(
+        "SELECT a.* FROM attachments a WHERE a.id = %s AND (a.user_id = %s OR EXISTS (SELECT 1 FROM records r JOIN tables t ON "
+        "t.id = r.table_id WHERE (t.user_id = %s OR t.base_id IN (SELECT base_id FROM base_members WHERE user_id = %s)) "
+        "AND jsonb_path_exists(r.data, '$.*[*] ? (@.id == $id)', jsonb_build_object('id', a.id::text))))",
+        (attachment_id, user_id, user_id, user_id)).fetchone()
     path = ATTACH_DIR / str(a["id"]) if a else None
     if not a or not path.exists():
         raise HTTPException(404, "File not found")
@@ -71,7 +76,7 @@ def collect_garbage(conn, grace_hours: int = 1) -> int:
         WHERE a.created_at < now() - make_interval(hours => %s)
           AND NOT EXISTS (
               SELECT 1 FROM records r JOIN tables t ON t.id = r.table_id
-              WHERE t.user_id = a.user_id
+              WHERE (t.user_id = a.user_id OR t.base_id IN (SELECT base_id FROM base_members m WHERE m.user_id = a.user_id))
                 AND jsonb_path_exists(r.data, '$.*[*] ? (@.id == $id)', jsonb_build_object('id', a.id::text)))
         """,
         (grace_hours,),

@@ -1,15 +1,17 @@
 """Combined databases: several tables shown as one through a field mapping, and writing back to the sources."""
 from app.calc.compute import Engine
+from app.data import access
 from app.data.records import clean_record, computed_record, list_records
 from app.data.schema import base_allowed, get_fields, not_found, SELECT_TYPES
 from app.formats.ical import SEMANTIC_KEY
 
 
-def get_combo(conn, combo_id, user_id=None):
-    c = conn.execute("SELECT * FROM combos WHERE id = %s AND (%s::uuid IS NULL OR user_id = %s)",
-                     (combo_id, user_id, user_id)).fetchone()
+def get_combo(conn, combo_id, user_id=None, need=None):
+    c = conn.execute("SELECT * FROM combos WHERE id = %s", (combo_id,)).fetchone()
     if not c or (user_id and not base_allowed(c["base_id"])):
         not_found("Combined database not found")
+    if user_id:
+        access.check(conn, c["base_id"], user_id, need, "Combined database")
     return c
 
 

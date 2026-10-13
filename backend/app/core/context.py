@@ -3,11 +3,13 @@ link, a phone's login, a sync) and read wherever it matters, so the record store
 
     actor      the label record history shows ("mike", "API key “Zapier”", "iPhone (calendar sync)"), and the user
     api_bases  the bases an API key is limited to (None: all)
+    writing    whether the request changes something (from its HTTP method): a base's viewers may only read
 """
 from contextvars import ContextVar
 
 _actor: ContextVar[tuple[str, str | None]] = ContextVar("probyte_actor", default=("Probyte", None))
 api_bases: ContextVar[set | None] = ContextVar("api_bases", default=None)
+writing: ContextVar[bool] = ContextVar("writing", default=False)
 
 
 def set_actor(label: str, user_id=None):

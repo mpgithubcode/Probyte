@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from app.calc.compute import COMPUTED_TYPES, Engine, FILTER_OPS
 from app.calc.viewfilter import apply_view, display_text, view_filter, view_sorts
-from app.data import store, values as values_
+from app.data import access, store, values as values_
 from app.dav import sync
 from app.sharing import linked as remote, recordops
 
@@ -28,16 +28,22 @@ def bad(msg: str, code: int = 400):
 # ---------------------------------------------------------------- bases & tables
 
 def _bases(conn, user):
-    return [b for b in conn.execute("SELECT id, name, color FROM bases WHERE user_id = %s ORDER BY position, created_at",
-                                    (user["id"],)).fetchall() if store.base_allowed(b["id"])]
+    """The user's bases and those shared with them (with their "role")."""
+    return [b for b in access.bases(conn, user["id"]) if store.base_allowed(b["id"])]
+
+
+def _ids(conn, user) -> list[str]:
+    return [str(b["id"]) for b in _bases(conn, user)]
 
 
 def list_bases(conn, user) -> list[dict]:
     bases = _bases(conn, user)
-    tables = conn.execute("SELECT id, base_id, name, kind FROM tables WHERE user_id = %s AND trashed_at IS NULL ORDER BY created_at", (user["id"],)).fetchall()
-    combos = conn.execute("SELECT id, base_id, name FROM combos WHERE user_id = %s ORDER BY created_at", (user["id"],)).fetchall()
+    ids = [str(b["id"]) for b in bases]
+    tables = conn.execute("SELECT id, base_id, name, kind FROM tables WHERE base_id = ANY(%s::uuid[]) AND trashed_at IS NULL "
+                          "ORDER BY created_at", (ids,)).fetchall()
+    combos = conn.execute("SELECT id, base_id, name FROM combos WHERE base_id = ANY(%s::uuid[]) ORDER BY created_at", (ids,)).fetchall()
     return [{
-        "id": str(b["id"]), "name": b["name"],
+        "id": str(b["id"]), "name": b["name"], "role": b["role"], **({"owner": b["owner_name"]} if b["owner_name"] else {}),
         "tables": [{"id": str(t["id"]), "name": t["name"], "kind": t["kind"]} for t in tables if t["base_id"] == b["id"]],
         "combined_databases": [{"id": str(c["id"]), "name": c["name"]} for c in combos if c["base_id"] == b["id"]],
     } for b in bases]
@@ -62,12 +68,13 @@ def resolve(conn, user, ref, base=None, allow_combo=True):
     if not ref:
         bad("Say which table: its id or name")
     if UUID_RE.match(ref):
-        t = conn.execute("SELECT * FROM tables WHERE id = %s AND user_id = %s AND trashed_at IS NULL", (ref, user["id"])).fetchone()
-        if t and store.base_allowed(t["base_id"]):
+        ids = _ids(conn, user)
+        t = conn.execute("SELECT * FROM tables WHERE id = %s AND base_id = ANY(%s::uuid[]) AND trashed_at IS NULL", (ref, ids)).fetchone()
+        if t:
             return "table", t
         if allow_combo:
-            c = conn.execute("SELECT * FROM combos WHERE id = %s AND user_id = %s", (ref, user["id"])).fetchone()
-            if c and store.base_allowed(c["base_id"]):
+            c = conn.execute("SELECT * FROM combos WHERE id = %s AND base_id = ANY(%s::uuid[])", (ref, ids)).fetchone()
+            if c:
                 return "combo", c
         bad("Table not found", 404)
     if base is None and " / " in ref:
@@ -76,11 +83,10 @@ def resolve(conn, user, ref, base=None, allow_combo=True):
     if base:
         b = resolve_base(conn, user, base)
         bases = {str(b["id"]): b}
-    cands = [("table", t) for t in conn.execute("SELECT * FROM tables WHERE user_id = %s AND trashed_at IS NULL", (user["id"],)).fetchall()
-             if str(t["base_id"]) in bases]
+    cands = [("table", t) for t in conn.execute("SELECT * FROM tables WHERE base_id = ANY(%s::uuid[]) AND trashed_at IS NULL",
+                                                 (list(bases),)).fetchall()]
     if allow_combo:
-        cands += [("combo", c) for c in conn.execute("SELECT * FROM combos WHERE user_id = %s", (user["id"],)).fetchall()
-                  if str(c["base_id"]) in bases]
+        cands += [("combo", c) for c in conn.execute("SELECT * FROM combos WHERE base_id = ANY(%s::uuid[])", (list(bases),)).fetchall()]
     hit = [x for x in cands if x[1]["name"].lower() == ref.lower()]
     if len(hit) == 1:
         return hit[0]
@@ -519,6 +525,7 @@ def _field_options(conn, user, ftype, options):
 
 def add_field(conn, user, ref, name, ftype, options=None, base=None) -> dict:
     t = _writable_table(conn, user, ref, base)
+    access.check(conn, t["base_id"], user["id"], "admin")
     if t["kind"] == "remote":
         bad("A linked table's fields come from its source link")
     name = (name or "").strip()
@@ -539,7 +546,8 @@ def create_table(conn, user, name, base=None, fields=None) -> dict:
     if not name:
         bad("The table needs a name")
     b = resolve_base(conn, user, base)
-    t = store.create_table(conn, user["id"], b["id"], name, "generic")
+    access.check(conn, b["id"], user["id"], "admin", "Base")
+    t = store.create_table(conn, b["user_id"], b["id"], name, "generic")
     if fields:
         existing = store.get_fields(conn, t["id"])
         primary = next(f for f in existing if f["is_primary"])

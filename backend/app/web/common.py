@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.calc.compute import Engine
 from app.core.http import FastJSON  # noqa: F401  (used by the route modules)
-from app.data import store
+from app.data import access, store
 from app.identity.auth import User  # noqa: F401
 from app.sharing import linked as remote
 
@@ -168,19 +168,25 @@ def _own_account(conn, account_id, user):
     return a or store.not_found("Account not found")
 
 
-def _own_field(conn, field_id, user):
-    f = conn.execute(
-        "SELECT f.* FROM fields f JOIN tables t ON t.id = f.table_id WHERE f.id = %s AND t.user_id = %s", (field_id, user["id"])
-    ).fetchone()
-    return f or store.not_found("Field not found")
+def _own_field(conn, field_id, user, need="admin"):
+    """A field of a table the user may change the fields of (its owner, or an admin of its base)."""
+    f = conn.execute("SELECT f.*, t.base_id AS _base_id FROM fields f JOIN tables t ON t.id = f.table_id WHERE f.id = %s",
+                     (field_id,)).fetchone()
+    if not f or not store.base_allowed(f["_base_id"]):
+        store.not_found("Field not found")
+    access.check(conn, f["_base_id"], user["id"], need, "Field")
+    return {k: v for k, v in f.items() if k != "_base_id"}
 
 
 def _own_view(conn, view_id, user):
+    """A view the user can see: one of a base they have access to, or their own copy."""
     v = conn.execute(
-        "SELECT v.* FROM views v LEFT JOIN tables t ON t.id = v.table_id LEFT JOIN combos c ON c.id = v.combo_id "
-        "WHERE v.id = %s AND (t.user_id = %s OR c.user_id = %s)", (view_id, user["id"], user["id"])
-    ).fetchone()
-    return v or store.not_found("View not found")
+        "SELECT v.*, COALESCE(t.base_id, c.base_id) AS _base_id FROM views v LEFT JOIN tables t ON t.id = v.table_id "
+        "LEFT JOIN combos c ON c.id = v.combo_id WHERE v.id = %s", (view_id,)).fetchone()
+    if not v or not store.base_allowed(v["_base_id"]) or (v["user_id"] and str(v["user_id"]) != str(user["id"])):
+        store.not_found("View not found")
+    access.check(conn, v["_base_id"], user["id"], "viewer", "View")
+    return v
 
 
 def _record_out(conn, table_id, record_id):

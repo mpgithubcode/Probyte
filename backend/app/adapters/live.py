@@ -3,7 +3,7 @@ tables just changed, so open pages fetch the changes (GET /api/tables/{id}/chang
 
 Changes are announced by the database itself (NOTIFY probyte_changes from the record/field triggers), so writes
 from the worker (DAV sync), the API, MCP and shared views all reach the browser. One listener thread per web
-process relays them to the connected streams of each table's owner.
+process relays them to the connected streams of everyone who sees each table (its base's owner and members).
 """
 import asyncio
 import logging
@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.db import connection, DATABASE_URL
+from app.data import access
 from app.identity.auth import current_user
 
 log = logging.getLogger("probyte.live")
@@ -22,13 +23,14 @@ router = APIRouter()
 
 CHANNEL = "probyte_changes"
 HEARTBEAT = 25  # seconds; keeps proxies from closing a quiet stream
+AUDIENCE_SECONDS = 30  # how long who-sees-a-table is remembered (a base shared with someone new: they hear within that)
 
 
 class Hub:
     def __init__(self):
         self.lock = threading.Lock()
         self.subs: dict[str, set[tuple[asyncio.AbstractEventLoop, asyncio.Queue]]] = {}  # user id -> streams
-        self.owners: dict[str, str | None] = {}  # table id -> owner's user id
+        self.audiences: dict[str, tuple[float, set[str]]] = {}  # table id -> (until, user ids that see it)
         self.thread: threading.Thread | None = None
 
     def subscribe(self, user_id: str, loop, queue):
@@ -46,21 +48,27 @@ class Hub:
                 if not s:
                     del self.subs[user_id]
 
-    def _owner(self, table_id: str) -> str | None:
-        if table_id not in self.owners:
-            with connection() as conn:
-                row = conn.execute("SELECT user_id FROM tables WHERE id = %s", (table_id,)).fetchone()
-            self.owners[table_id] = str(row["user_id"]) if row else None
-        return self.owners[table_id]
+    def _audience(self, table_id: str) -> set[str]:
+        """Who sees the table: its base's owner and the users it's shared with (kept for a little while)."""
+        now = time.monotonic()
+        hit = self.audiences.get(table_id)
+        if hit and hit[0] > now:
+            return hit[1]
+        with connection() as conn:
+            row = conn.execute("SELECT base_id FROM tables WHERE id = %s UNION SELECT base_id FROM combos WHERE id = %s",
+                               (table_id, table_id)).fetchone()
+            users = access.audience(conn, row["base_id"]) if row else set()
+        self.audiences[table_id] = (now + AUDIENCE_SECONDS, users)
+        return users
 
     def _publish(self, payload: str):
         for tid in {t for t in payload.split(",") if t}:
             try:
-                owner = self._owner(tid)
+                users = self._audience(tid)
             except Exception:
                 continue
             with self.lock:
-                targets = list(self.subs.get(owner, ())) if owner else []
+                targets = [x for u in users for x in self.subs.get(u, ())]
             for loop, queue in targets:
                 loop.call_soon_threadsafe(queue.put_nowait, tid)
 

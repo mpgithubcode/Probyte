@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from app.calc import formula as F
 from app.calc.compute import COMPUTED_TYPES, Engine, FIELD_TYPES, FILTER_OPS
 from app.core.context import api_bases
+from app.data import access
 from app.core.db import Jsonb
 from app.formats.ical import component_kind, ical_to_values, PALETTE, SYSTEM_FIELDS
 
@@ -38,11 +39,12 @@ def base_allowed(base_id) -> bool:
     return allowed is None or str(base_id) in allowed
 
 
-def get_base(conn, base_id, user_id):
-    b = conn.execute("SELECT * FROM bases WHERE id = %s AND user_id = %s", (base_id, user_id)).fetchone()
+def get_base(conn, base_id, user_id, need=None):
+    """A base the user owns or was given access to (at least `need`: see data/access.py), with their "role"."""
+    b = conn.execute("SELECT * FROM bases WHERE id = %s", (base_id,)).fetchone()
     if not b or not base_allowed(b["id"]):
         not_found("Base not found")
-    return b
+    return {**b, "role": access.check(conn, b["id"], user_id, need, "Base")}
 
 
 def ensure_base(conn, user_id):
@@ -51,13 +53,15 @@ def ensure_base(conn, user_id):
     return b or conn.execute("INSERT INTO bases (user_id, name) VALUES (%s, 'My Base') RETURNING *", (user_id,)).fetchone()
 
 
-def get_table(conn, table_id, user_id=None, trashed=False):
-    """Load a table; with user_id, only if that user owns it (and an API key may use its base).
+def get_table(conn, table_id, user_id=None, trashed=False, need=None):
+    """Load a table; with user_id, only if that user may (its owner, or a member of its base with at least `need`,
+    which by default follows the request: reading or changing; see data/access.py), and an API key may use its base.
     Tables in the trash count as gone, except with trashed=True (restoring them)."""
-    t = conn.execute("SELECT * FROM tables WHERE id = %s AND (%s::uuid IS NULL OR user_id = %s) AND (trashed_at IS NULL OR %s)",
-                     (table_id, user_id, user_id, trashed)).fetchone()
+    t = conn.execute("SELECT * FROM tables WHERE id = %s AND (trashed_at IS NULL OR %s)", (table_id, trashed)).fetchone()
     if not t or (user_id and not base_allowed(t["base_id"])):
         not_found("Table not found")
+    if user_id:
+        access.check(conn, t["base_id"], user_id, need)
     return t
 
 
@@ -65,9 +69,46 @@ def get_fields(conn, table_id):
     return conn.execute("SELECT * FROM fields WHERE table_id = %s ORDER BY position, name", (table_id,)).fetchall()
 
 
-def get_views(conn, *, table_id=None, combo_id=None):
+def get_views(conn, *, table_id=None, combo_id=None, user_id=None):
+    """A table's (or combined database's) views as a user sees them: the base's views, with the member's own settings
+    for them where they have them (data/access.py: always when they keep their own copies, else only until the view
+    is changed for everyone), and their own views. Without a user: the base's views as they are."""
     col = "table_id" if table_id else "combo_id"
-    return conn.execute(f"SELECT * FROM views WHERE {col} = %s ORDER BY position, name", (table_id or combo_id,)).fetchall()
+    rows = conn.execute(f"SELECT * FROM views WHERE {col} = %s AND (user_id IS NULL OR user_id = %s) ORDER BY position, name",
+                        (table_id or combo_id, user_id)).fetchall()
+    if not user_id:
+        return rows
+    base = conn.execute(f"SELECT base_id FROM {'tables' if table_id else 'combos'} WHERE id = %s", (table_id or combo_id,)).fetchone()
+    m = access.membership(conn, base["base_id"], user_id) if base else None
+    if not m or m["role"] == "owner":
+        return rows
+    shared = [v["id"] for v in rows if v["user_id"] is None]
+    if not m["follow_views"]:  # their own copies: one is made of a view the first time they see it
+        for vid in shared:
+            conn.execute("INSERT INTO view_overrides (view_id, user_id, config) SELECT id, %s, config FROM views WHERE id = %s "
+                         "ON CONFLICT DO NOTHING", (user_id, vid))
+    ov = {r["view_id"]: r for r in conn.execute("SELECT * FROM view_overrides WHERE user_id = %s AND view_id = ANY(%s)",
+                                                 (user_id, shared)).fetchall()}
+    out = []
+    for v in rows:
+        o = ov.get(v["id"])
+        if o and (not m["follow_views"] or o["updated_at"] > v["updated_at"]):
+            v = {**v, "config": o["config"], "own_settings": True}
+        out.append(v)
+    return out
+
+
+def view_edit_target(conn, view, user_id) -> str:
+    """Where a user's change to a view goes: "view" (the view itself: theirs, or the base's for its owner and for
+    editors and admins following the base's views), or "own" (their own settings for the base's view)."""
+    if view["user_id"]:
+        return "view"
+    base = conn.execute("SELECT COALESCE(t.base_id, c.base_id) AS b FROM views v LEFT JOIN tables t ON t.id = v.table_id "
+                        "LEFT JOIN combos c ON c.id = v.combo_id WHERE v.id = %s", (view["id"],)).fetchone()["b"]
+    m = access.membership(conn, base, user_id)
+    if m and (m["role"] == "owner" or (access.RANK[m["role"]] >= access.RANK["editor"] and m["follow_views"])):
+        return "view"
+    return "own"
 
 
 def create_view(conn, *, name, type, config=None, table_id=None, combo_id=None):
@@ -251,8 +292,9 @@ def ensure_choices(conn, field, values):
         conn.execute("UPDATE fields SET options = %s WHERE id = %s", (Jsonb(field["options"]), field["id"]))
 
 
-def _own_table_id(conn, table_id, user_id):
-    if not table_id or not conn.execute("SELECT 1 FROM tables WHERE id = %s AND user_id = %s AND trashed_at IS NULL", (table_id, user_id)).fetchone():
+def _own_table_id(conn, table_id, owner_id):
+    """A table a field may point at (links, lookups): one of the same owner's (in their bases, shared or not)."""
+    if not table_id or not conn.execute("SELECT 1 FROM tables WHERE id = %s AND user_id = %s AND trashed_at IS NULL", (table_id, owner_id)).fetchone():
         bad("Choose one of your tables")
     return str(table_id)
 
@@ -314,7 +356,7 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
     if table["kind"] == "remote":
         bad("A linked table's fields come from its source link")
     if ftype == "link":
-        o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), user_id)
+        o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), table["user_id"])
         if is_remote_table(conn, o["foreignTableId"]):
             o["symmetric"] = False  # a linked table's fields belong to its source: the link is one-way
         o["relationship"] = "one" if o.get("relationship") == "one" else "many"
@@ -330,7 +372,7 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
         if ftype == "rollup" and o.get("func") not in F.ROLLUPS:
             bad("Choose a rollup function")
     elif ftype in ("conditional_lookup", "conditional_rollup"):
-        ftid = o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), user_id)
+        ftid = o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), table["user_id"])
         _field_in(conn, o.get("lookupFieldId"), ftid, "field to look up")
         filters = []
         for c in o.get("filters") or []:

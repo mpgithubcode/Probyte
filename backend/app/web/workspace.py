@@ -2,12 +2,13 @@
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.core import webdav as dav
 from app.core.context import api_bases
 from app.core.db import connection
 from app.core.secretbox import seal, unseal
-from app.data import store
+from app.data import access, store
 from app.dav import devices, sync
 from app.formats.ical import PALETTE
 from app.web.common import _account_public, _own_account, _table_out, AccountIn, AccountTest, BaseIn, BasePatch, User
@@ -23,15 +24,25 @@ def workspace(user=User):
         store.ensure_base(conn, user["id"])
         if not user.get("api_key"):
             devices.ensure(conn, user["id"])  # the built-in account: phones' login for Probyte's own calendar server
-        bases = [b for b in conn.execute("SELECT id, name, color, position FROM bases WHERE user_id = %s ORDER BY position, created_at",
-                                         (user["id"],)).fetchall() if store.base_allowed(b["id"])]
-        allowed = {str(b["id"]) for b in bases}
-        tables = [_table_out(t) for t in conn.execute(
-            "SELECT id, base_id, name, kind, account_id, calendar_url, last_synced_at, last_sync_error, remote, hidden, icon FROM tables "
-            "WHERE user_id = %s AND trashed_at IS NULL ORDER BY created_at", (user["id"],)
-        ).fetchall() if str(t["base_id"]) in allowed]
-        combos = [c for c in conn.execute("SELECT id, base_id, name, sources, hidden, icon FROM combos WHERE user_id = %s ORDER BY created_at",
-                                          (user["id"],)).fetchall() if str(c["base_id"]) in allowed]
+        bases, hidden = [], {}
+        for i, b in enumerate(access.bases(conn, user["id"])):
+            if not store.base_allowed(b["id"]):
+                continue
+            bases.append({"id": b["id"], "name": b["name"], "color": b["color"], "position": i, "role": b["role"],
+                          "follow_views": b["follow_views"], "owner": b["owner_name"]})
+            if b["role"] != "owner":
+                row = conn.execute("SELECT hidden FROM base_members WHERE base_id = %s AND user_id = %s", (b["id"], user["id"])).fetchone()
+                hidden[str(b["id"])] = row["hidden"] if row else {}
+        ids = [str(b["id"]) for b in bases]
+
+        def own_sidebar(x):  # a member's own hide / show wins over the owner's
+            h = hidden.get(str(x["base_id"]), {})
+            return {**x, "hidden": h[str(x["id"])]} if str(x["id"]) in h else x
+        tables = [_table_out(own_sidebar(t)) for t in conn.execute(
+            "SELECT id, base_id, name, kind, account_id, calendar_url, last_synced_at, last_sync_error, remote, hidden, icon, dav_slug "
+            "FROM tables WHERE base_id = ANY(%s::uuid[]) AND trashed_at IS NULL ORDER BY created_at", (ids,)).fetchall()]
+        combos = [own_sidebar(c) for c in conn.execute(
+            "SELECT id, base_id, name, sources, hidden, icon FROM combos WHERE base_id = ANY(%s::uuid[]) ORDER BY created_at", (ids,)).fetchall()]
         accounts = [] if user.get("api_key") else conn.execute(
             "SELECT * FROM caldav_accounts WHERE user_id = %s ORDER BY is_builtin DESC, created_at", (user["id"],)
         ).fetchall()
@@ -58,15 +69,18 @@ def create_base(body: BaseIn, user=User):
 @router.patch("/api/bases/{base_id}")
 def update_base(base_id: str, body: BasePatch, user=User):
     with connection() as conn:
-        b = store.get_base(conn, base_id, user["id"])
-        if body.position is not None:  # move to that place in the list; the others keep their order
-            ids = [str(r["id"]) for r in conn.execute("SELECT id FROM bases WHERE user_id = %s AND id <> %s ORDER BY position, created_at",
-                                                      (user["id"], base_id)).fetchall()]
-            ids.insert(max(0, min(body.position, len(ids))), str(base_id))
-            for i, bid in enumerate(ids):
-                conn.execute("UPDATE bases SET position = %s WHERE id = %s", (i, bid))
-        return conn.execute("UPDATE bases SET name = %s, color = %s WHERE id = %s RETURNING id, name, color, position",
-                            ((body.name or b["name"]).strip(), body.color or b["color"], base_id)).fetchone()
+        b = store.get_base(conn, base_id, user["id"], need="viewer")
+        if body.position is not None:  # move to that place in this user's list; the others keep their order
+            order = [str(x["id"]) for x in access.bases(conn, user["id"]) if str(x["id"]) != str(base_id)]
+            order.insert(max(0, min(body.position, len(order))), str(base_id))
+            for i, bid in enumerate(order):
+                conn.execute("UPDATE bases SET position = %s WHERE id = %s AND user_id = %s", (i, bid, user["id"]))
+                conn.execute("UPDATE base_members SET position = %s WHERE base_id = %s AND user_id = %s", (i, bid, user["id"]))
+        if body.name is not None or body.color is not None:
+            access.check(conn, base_id, user["id"], "admin", "Base")
+            conn.execute("UPDATE bases SET name = %s, color = %s WHERE id = %s",
+                         ((body.name or b["name"]).strip(), body.color or b["color"], base_id))
+        return conn.execute("SELECT id, name, color, position FROM bases WHERE id = %s", (base_id,)).fetchone()
 
 
 @router.get("/api/bases/{base_id}/views")
@@ -77,20 +91,111 @@ def base_views(base_id: str, user=User):
         out = []
         for kind, tbl, col in (("table", "tables", "table_id"), ("combo", "combos", "combo_id")):
             for t in conn.execute(f"SELECT id, name FROM {tbl} WHERE base_id = %s ORDER BY created_at", (base_id,)).fetchall():
-                views = conn.execute(f"SELECT id, name, type FROM views WHERE {col} = %s ORDER BY position", (t["id"],)).fetchall()
+                views = conn.execute(f"SELECT id, name, type FROM views WHERE {col} = %s AND user_id IS NULL ORDER BY position",
+                                     (t["id"],)).fetchall()
                 out.append({"kind": kind, "id": t["id"], "name": t["name"], "views": views})
         return out
 
 
 @router.delete("/api/bases/{base_id}")
 def delete_base(base_id: str, user=User):
-    """Deletes the base with its tables and combined databases (CalDAV calendars themselves are untouched)."""
+    """Deletes the base with its tables and combined databases (CalDAV calendars themselves are untouched). Only its
+    owner can; someone it's shared with leaves it instead (DELETE /api/bases/{id}/members/{their id})."""
     with connection() as conn:
-        store.get_base(conn, base_id, user["id"])
+        store.get_base(conn, base_id, user["id"], need="owner")
         if conn.execute("SELECT count(*) AS n FROM bases WHERE user_id = %s", (user["id"],)).fetchone()["n"] <= 1:
             raise HTTPException(400, "You need at least one base")
         conn.execute("DELETE FROM bases WHERE id = %s", (base_id,))
     return {"ok": True}
+
+
+# ======================================================================== sharing a base with other users
+
+class MemberIn(BaseModel):
+    username: str
+    role: str = "editor"
+
+
+class MemberPatch(BaseModel):
+    role: str
+
+
+class MyMembership(BaseModel):
+    follow_views: bool
+
+
+def _role(r: str) -> str:
+    if r not in access.ROLES:
+        raise HTTPException(400, "The role is viewer, editor or admin")
+    return r
+
+
+@router.get("/api/bases/{base_id}/members")
+def list_members(base_id: str, user=User):
+    """Who the base is shared with (its owner first)."""
+    with connection() as conn:
+        b = store.get_base(conn, base_id, user["id"])
+        owner = conn.execute("SELECT id, username FROM users WHERE id = %s", (b["user_id"],)).fetchone()
+        members = conn.execute("SELECT u.id, u.username, m.role, m.follow_views, m.created_at FROM base_members m "
+                               "JOIN users u ON u.id = m.user_id WHERE m.base_id = %s ORDER BY u.username", (base_id,)).fetchall()
+    return {"owner": {"id": owner["id"], "username": owner["username"], "role": "owner"}, "members": members, "you": b["role"]}
+
+
+@router.post("/api/bases/{base_id}/members")
+def add_member(base_id: str, body: MemberIn, user=User):
+    """Share the base with another user of this server (by username)."""
+    with connection() as conn:
+        b = store.get_base(conn, base_id, user["id"], need="admin")
+        other = conn.execute("SELECT id, username FROM users WHERE username = %s", (body.username.strip().lower(),)).fetchone()
+        if not other:
+            raise HTTPException(404, f"There's no user called “{body.username.strip()}” on this server")
+        if str(other["id"]) == str(b["user_id"]):
+            raise HTTPException(400, "That's the base's owner")
+        conn.execute("INSERT INTO base_members (base_id, user_id, role, added_by) VALUES (%s,%s,%s,%s) "
+                     "ON CONFLICT (base_id, user_id) DO UPDATE SET role = EXCLUDED.role", (base_id, other["id"], _role(body.role), user["id"]))
+    return list_members(base_id, user)
+
+
+@router.patch("/api/bases/{base_id}/members/{member_id}")
+def change_member(base_id: str, member_id: str, body: MemberPatch, user=User):
+    with connection() as conn:
+        store.get_base(conn, base_id, user["id"], need="admin")
+        conn.execute("UPDATE base_members SET role = %s WHERE base_id = %s AND user_id = %s", (_role(body.role), base_id, member_id))
+    return list_members(base_id, user)
+
+
+@router.delete("/api/bases/{base_id}/members/{member_id}")
+def remove_member(base_id: str, member_id: str, user=User):
+    """Stop sharing the base with someone (an admin), or leave it (yourself)."""
+    with connection() as conn:
+        store.get_base(conn, base_id, user["id"], need="viewer" if str(member_id) == str(user["id"]) else "admin")
+        conn.execute("DELETE FROM view_overrides o USING views v LEFT JOIN tables t ON t.id = v.table_id LEFT JOIN combos c ON "
+                     "c.id = v.combo_id WHERE o.view_id = v.id AND o.user_id = %s AND COALESCE(t.base_id, c.base_id) = %s", (member_id, base_id))
+        conn.execute("DELETE FROM views v USING tables t WHERE v.table_id = t.id AND v.user_id = %s AND t.base_id = %s", (member_id, base_id))
+        conn.execute("DELETE FROM views v USING combos c WHERE v.combo_id = c.id AND v.user_id = %s AND c.base_id = %s", (member_id, base_id))
+        conn.execute("DELETE FROM base_members WHERE base_id = %s AND user_id = %s", (base_id, member_id))
+    return {"ok": True}
+
+
+@router.patch("/api/bases/{base_id}/me")
+def my_membership(base_id: str, body: MyMembership, user=User):
+    """For someone the base is shared with: whether their views stay those of the base (follow_views), or become their
+    own copies, which later changes to the base's views don't touch."""
+    with connection() as conn:
+        b = store.get_base(conn, base_id, user["id"], need="viewer")
+        if b["role"] == "owner":
+            raise HTTPException(400, "The base's views are yours")
+        views_of_base = ("SELECT v.id, v.config, v.updated_at FROM views v LEFT JOIN tables t ON t.id = v.table_id LEFT JOIN combos c "
+                         "ON c.id = v.combo_id WHERE v.user_id IS NULL AND COALESCE(t.base_id, c.base_id) = %s")
+        if body.follow_views:  # back to the base's views (their own extra views stay)
+            conn.execute(f"DELETE FROM view_overrides WHERE user_id = %s AND view_id IN (SELECT id FROM ({views_of_base}) x)", (user["id"], base_id))
+        else:  # copies of the views as they see them now
+            conn.execute(f"DELETE FROM view_overrides o USING ({views_of_base}) v WHERE o.view_id = v.id AND o.user_id = %s "
+                         "AND o.updated_at <= v.updated_at", (base_id, user["id"]))
+            conn.execute(f"INSERT INTO view_overrides (view_id, user_id, config) SELECT id, %s, config FROM ({views_of_base}) v "
+                         "ON CONFLICT DO NOTHING", (user["id"], base_id))
+        conn.execute("UPDATE base_members SET follow_views = %s WHERE base_id = %s AND user_id = %s", (body.follow_views, base_id, user["id"]))
+    return {"ok": True, "follow_views": body.follow_views}
 
 
 # ======================================================================== caldav accounts

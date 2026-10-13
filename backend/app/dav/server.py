@@ -33,7 +33,7 @@ from fastapi import HTTPException
 
 from app.core import events, jobs, ratelimit
 from app.core.db import connection, Jsonb
-from app.data import audit, store
+from app.data import access, audit, store
 from app.dav import devices
 from app.dav.items import etag as make_etag, item_name, Mapper, parse_item
 from app.formats import ical, vcard
@@ -140,14 +140,33 @@ def _http_date(dt) -> str:
 
 # ======================================================================== resources
 
+SHARED = ("SELECT t.*, m.role AS _role FROM tables t JOIN base_members m ON m.base_id = t.base_id AND m.user_id = %s "
+          "WHERE t.dav_slug IS NOT NULL AND t.trashed_at IS NULL AND t.kind = ANY(%s)")
+
+
 def served_tables(conn, user_id):
-    return conn.execute("SELECT * FROM tables WHERE user_id = %s AND dav_slug IS NOT NULL AND trashed_at IS NULL AND kind = ANY(%s) "
-                        "ORDER BY created_at", (user_id, list(store.DAV_KINDS))).fetchall()
+    """The user's calendars and address books, and those of bases shared with them (at /dav/<user>/<table id>/)."""
+    own = conn.execute("SELECT *, 'owner' AS _role FROM tables WHERE user_id = %s AND dav_slug IS NOT NULL AND trashed_at IS NULL "
+                       "AND kind = ANY(%s) ORDER BY created_at", (user_id, list(store.DAV_KINDS))).fetchall()
+    return own + conn.execute(SHARED + " ORDER BY t.created_at", (user_id, list(store.DAV_KINDS))).fetchall()
 
 
 def _table(conn, user_id, slug):
-    return conn.execute("SELECT * FROM tables WHERE user_id = %s AND dav_slug = %s AND trashed_at IS NULL AND kind = ANY(%s)",
-                        (user_id, slug, list(store.DAV_KINDS))).fetchone()
+    t = conn.execute("SELECT *, 'owner' AS _role FROM tables WHERE user_id = %s AND dav_slug = %s AND trashed_at IS NULL AND kind = ANY(%s)",
+                     (user_id, slug, list(store.DAV_KINDS))).fetchone()
+    if t is None and len(slug) == 36:  # a shared base's: by the table's id
+        try:
+            t = conn.execute(SHARED + " AND t.id = %s::uuid", (user_id, list(store.DAV_KINDS), slug)).fetchone()
+        except Exception:
+            t = None
+    return t
+
+
+def _may_change(t, items=True):
+    """Whether this user may change a collection's items (editors and up) or the collection itself (admins and up)."""
+    need = "editor" if items else "admin"
+    if access.RANK.get(t.get("_role") or "viewer", 0) < access.RANK[need]:
+        raise DavFail(403, (D, "need-privileges"))
 
 
 def sync_token(conn, table_id) -> int:
@@ -257,9 +276,13 @@ def write_item(conn, user, t, name, text, if_match=None, if_none_match=None) -> 
 PRIVILEGES = ["read", "write", "write-properties", "write-content", "bind", "unbind", "read-current-user-privilege-set"]
 
 
-def _privileges(el):
-    for p in PRIVILEGES:
+def _privileges(el, names=PRIVILEGES):
+    for p in names:
         ET.SubElement(ET.SubElement(el, q(D, "privilege")), q(D, p))
+
+
+def _read_only(el):  # a viewer of a shared base: phones show the calendar read-only
+    _privileges(el, ("read", "read-current-user-privilege-set"))
 
 
 def _reports(names):
@@ -278,11 +301,14 @@ class Ctx:
         self.home = f"{prefix}/{user['username']}/"
 
     # ---------------------------------------------------------------- paths
+    def slug(self, t):
+        return t["dav_slug"] if str(t["user_id"]) == str(self.user["id"]) else str(t["id"])
+
     def coll_path(self, t):
-        return f"{self.home}{t['dav_slug']}/"
+        return f"{self.home}{self.slug(t)}/"
 
     def item_path(self, t, name):
-        return f"{self.home}{t['dav_slug']}/{name}"
+        return f"{self.home}{self.slug(t)}/{name}"
 
     def depth(self) -> int:
         """0 or 1 (infinity is answered as 1, which every client copes with)."""
@@ -334,7 +360,7 @@ class Ctx:
             q(D, "getetag"): f'"{t["data_version"]}"',
             q(D, "sync-token"): lambda el: setattr(el, "text", SYNC_PREFIX + str(token if token is not None else sync_token(conn, t["id"]))),
             q(D, "owner"): lambda el: el.append(_href(self.home)),
-            q(D, "current-user-privilege-set"): _privileges,
+            q(D, "current-user-privilege-set"): _read_only if t.get("_role") == "viewer" else _privileges,
             q(D, "getcontenttype"): "text/vcard" if book else "text/calendar",
         }
         if book:
@@ -499,6 +525,7 @@ class Ctx:
             kind, t, name = self.target(conn)
             if kind != "item" or not t:
                 raise DavFail(409 if kind == "item" else 405)
+            _may_change(t)
             status, et = self.write_item(conn, t, name, text, self.headers.get("if-match"), self.headers.get("if-none-match"))
         return Response(status, {"ETag": et})
 
@@ -509,11 +536,13 @@ class Ctx:
         with connection() as conn:
             kind, t, name = self.target(conn)
             if kind == "collection" and t:
+                _may_change(t, items=False)
                 # a calendar deleted on a device goes to Probyte's trash (restorable for 30 days)
                 conn.execute("UPDATE tables SET trashed_at = now(), trash_delete_on_server = false WHERE id = %s", (t["id"],))
                 return Response(204, {})
             if kind != "item" or not t:
                 raise DavFail(404 if kind != "home" else 403)
+            _may_change(t)
             render_pending(conn, t)
             r = self._item(conn, t, name, with_body=False, lock=True)
             if not r:
@@ -536,6 +565,7 @@ class Ctx:
             dt = _table(conn, self.user["id"], dparts[1])
             if not t or not dt:
                 raise DavFail(409)
+            _may_change(t), _may_change(dt)
             render_pending(conn, t)
             r = self._item(conn, t, name, lock=True)
             if not r:
@@ -604,6 +634,8 @@ class Ctx:
                 t = None
             elif kind != "collection" or not t:
                 raise DavFail(404 if kind != "item" else 403)
+            if t:
+                _may_change(t, items=False)
             changed = []
             dead = dict((t or {}).get("dav_props") or {})
             name, desc = (t or {}).get("name"), (t or {}).get("description")

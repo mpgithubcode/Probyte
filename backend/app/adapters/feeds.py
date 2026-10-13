@@ -51,9 +51,9 @@ def list_feeds(request: Request, table_id: str | None = None, combo_id: str | No
 def create_feed(body: FeedIn, request: Request, user=User):
     with connection() as conn:
         if body.table_id:
-            src = store.get_table(conn, body.table_id, user["id"])
+            src = store.get_table(conn, body.table_id, user["id"], need="viewer")
         elif body.combo_id:
-            src = store.get_combo(conn, body.combo_id, user["id"])
+            src = store.get_combo(conn, body.combo_id, user["id"], need="viewer")
         else:
             raise HTTPException(400, "Say which table the calendar is for")
         if body.view_id and not conn.execute("SELECT 1 FROM views WHERE id = %s AND (table_id = %s OR combo_id = %s)",

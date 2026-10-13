@@ -141,3 +141,19 @@ def test_linked_calendar_tables_line_up_and_keep_record_ids(user, other_user):
     title = next(f["id"] for f in combo["fields"] if f["name"].startswith("Title"))
     got = {r["data"].get(title): r["data"]["__id"] for r in combo["records"]}
     assert got["Walkthrough"] == rec["id"]
+
+
+def test_a_linked_tables_view_stays_in_step_with_the_source_unless_turned_off(user, other_user):
+    t = user.table(name="Source view")
+    s, view = share(user, t)
+    lt = link(other_user, s, view)
+    mirror = lambda: other_user.j("GET", f"/tables/{lt['id']}")["views"][0]  # noqa: E731
+    assert other_user.j("GET", f"/tables/{lt['id']}")["table"]["remote"]["follow_views"] is True
+    user.j("PATCH", f"/views/{view['id']}", json={"config": {"rowHeight": "tall"}})
+    other_user.post(API + f"/tables/{lt['id']}/refresh")
+    assert mirror()["config"].get("rowHeight") == "tall"
+    other_user.j("PATCH", f"/tables/{lt['id']}/link", json={"follow_views": False})
+    other_user.j("PATCH", f"/views/{mirror()['id']}", json={"config": {"rowHeight": "short"}})
+    user.j("PATCH", f"/views/{view['id']}", json={"config": {"rowHeight": "medium"}})
+    other_user.post(API + f"/tables/{lt['id']}/refresh")
+    assert mirror()["config"].get("rowHeight") == "short"      # kept as the linked table's owner set it
