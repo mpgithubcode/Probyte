@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import StreamingResponse
 
 from app.core.db import connection
-from app.identity.oauth import public_base
+from app.identity.oauth import PUBLIC_URL, public_base
 from app.office.config import PREFIX, settings
 
 log = logging.getLogger("probyte.office.relay")
@@ -38,6 +38,20 @@ def target(path: str) -> tuple[str, dict]:
     if not cfg["url"] or not cfg["via_probyte"] or _NOT_RELAYED.match(path.lstrip("/")) or ".." in path.split("/"):
         raise HTTPException(404, "Not found")
     return (cfg["server_url"] or cfg["url"]).rstrip("/") + "/" + path.lstrip("/"), cfg
+
+
+def browser_base(conn) -> str:
+    """Where the browser sees Probyte: PUBLIC_URL when it's set; else the page's own origin, which the browser states
+    itself (Origin, sent with every WebSocket and the editor's requests, or Referer); else what the reverse proxy
+    forwarded. A proxy can call the editor's WebSocket plain http behind HTTPS: the Document Server then gives the
+    browser http:// addresses for the document, which an https page refuses to load ("Download failed")."""
+    if PUBLIC_URL:
+        return PUBLIC_URL
+    for value in (conn.headers.get("origin"), conn.headers.get("referer")):
+        u = urlparse(value or "")
+        if u.scheme in ("http", "https") and u.netloc:
+            return f"{u.scheme}://{u.netloc}"
+    return public_base(conn)
 
 
 def forwarded_headers(headers, request_base: str, scheme: str = "") -> dict:
@@ -83,7 +97,7 @@ async def relay(path: str, request: Request):
     body = await request.body() if request.method in ("POST", "PUT") else None  # (with its length: not every server takes chunks)
     try:
         up = await client.send(client.build_request(request.method, url, content=body,
-                                                    headers=forwarded_headers(request.headers, public_base(request), cfg["browser_scheme"])),
+                                                    headers=forwarded_headers(request.headers, browser_base(request), cfg["browser_scheme"])),
                                stream=True)
     except httpx.HTTPError as e:
         raise HTTPException(502, f"Probyte can't reach the document server ({e.__class__.__name__})")
@@ -91,7 +105,7 @@ async def relay(path: str, request: Request):
     if "location" in headers:  # a redirect to its own address: through the relay instead
         loc = urlparse(headers["location"])
         if loc.netloc:
-            headers["location"] = public_base(request).rstrip("/") + PREFIX + loc.path + (f"?{loc.query}" if loc.query else "")
+            headers["location"] = browser_base(request).rstrip("/") + PREFIX + loc.path + (f"?{loc.query}" if loc.query else "")
         elif loc.path.startswith("/") and not loc.path.startswith(PREFIX):
             headers["location"] = PREFIX + headers["location"]
     return StreamingResponse(up.aiter_raw(), status_code=up.status_code, headers=headers, background=BackgroundTask(up.aclose))
@@ -108,7 +122,10 @@ async def relay_ws(ws: WebSocket, path: str):
     url = re.sub(r"^http", "ws", url) + (f"?{ws.url.query}" if ws.url.query else "")
     headers = forwarded_headers({k: v for k, v in ws.headers.items() if k.lower() not in (
         "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions", "sec-websocket-protocol")},
-        public_base(ws), cfg["browser_scheme"])
+        browser_base(ws), cfg["browser_scheme"])
+    log.info("editor connection: the browser is at %s (the proxy said %s://%s); the Document Server is told %s://%s",
+             browser_base(ws), ws.headers.get("x-forwarded-proto", "-"), ws.headers.get("x-forwarded-host") or ws.headers.get("host", "-"),
+             headers.get("X-Forwarded-Proto"), headers.get("X-Forwarded-Host"))
     tls = None
     if url.startswith("wss:") and not cfg["verify_tls"]:  # an HTTPS Document Server with a self-signed certificate
         tls = ssl.create_default_context()

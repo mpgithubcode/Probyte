@@ -550,6 +550,10 @@ def test_protocol_and_certificate_settings(admin, doc):
         # automatic: as it arrives (here http; behind an HTTPS proxy, https)
         assert requests.get(relay + "/fake/headers").json()["x-forwarded-proto"] == "http"
         assert requests.get(relay + "/fake/headers", headers={"X-Forwarded-Proto": "https"}).json()["x-forwarded-proto"] == "https"
+        # the browser's own word wins over the proxy's: a proxy that calls the editor's connection http behind HTTPS
+        # made the Document Server hand an https page http:// addresses ("Download failed")
+        h = requests.get(relay + "/fake/headers", headers={"X-Forwarded-Proto": "http", "Origin": "https://probyte.example.com"}).json()
+        assert h["x-forwarded-proto"] == "https" and h["x-forwarded-host"] == "probyte.example.com/office-ds"
         # set by the admin
         admin.j("PUT", "/office/settings", json={**base, "browser_scheme": "https"})
         assert admin.j("GET", "/office/settings")["browser_scheme"] == "https"

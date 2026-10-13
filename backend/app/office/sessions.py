@@ -165,6 +165,14 @@ def save_now(session_id, user) -> dict:
     raise HTTPException(502, f"The document server couldn't save (error {err})")
 
 
+def editor_error(session_id, user, code, message: str, page: str) -> None:
+    with connection() as conn:
+        s = own(conn, session_id, user)
+        conn.execute("UPDATE office_sessions SET last_error = %s WHERE id = %s",
+                     (f"The editor said: {message} (code {code})", session_id))
+    log.warning("editor error on %s: %s (code %s), page %s", s["doc_key"], message, code, page)
+
+
 def close(session_id, user, discard: bool) -> None:
     """Closed; with discard, the Document Server's final save is ignored (unless someone else editing the document
     along keeps their changes)."""

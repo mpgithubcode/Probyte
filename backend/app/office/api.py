@@ -68,6 +68,19 @@ def discard(session_id: str, user=User):
     return {"ok": True}
 
 
+class EditorError(BaseModel):
+    code: int | None = None
+    message: str = ""
+    page: str = ""
+
+
+@router.post("/api/office/sessions/{session_id}/error")
+def editor_error(session_id: str, body: EditorError, user=User):
+    """The editor in the browser reported an error: kept on the session and logged, so it can be looked into."""
+    sessions.editor_error(session_id, user, body.code, body.message[:300], body.page[:200])
+    return {"ok": True}
+
+
 @router.post("/api/office/sessions/{session_id}/close")
 def close(session_id: str, user=User):
     sessions.close(session_id, user, discard=False)

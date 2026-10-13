@@ -242,6 +242,8 @@ export function FullViewer({ entries, index, onClose, fields, canEdit, canChange
           {office
             ? <OfficeEditor key={office.session} session={office} onModified={() => { setOfficeDirty(true); setOfficeNote("Unsaved changes"); }}
                 onError={(m, code) => {
+                  // what the editor said goes to the server too (Settings can't see a browser's console)
+                  api.post(`/office/sessions/${office.session}/error`, { code: code ?? null, message: m, page: window.location.origin }).catch(() => undefined);
                   // -4: the Document Server couldn't download the file. It keeps that result under the document's key,
                   // so reopening would fail the same way: retire the key and reopen once with a new one.
                   if (code === -4 && office && !retried.current) {
