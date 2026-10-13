@@ -8,9 +8,10 @@ import { anchorOf } from "../recur";
 import { FieldIcon, Icon } from "./Icon";
 import { Popover } from "./Overlay";
 import { useVirtualRows } from "./useVirtualRows";
+import { densityOf, GRID_ROW } from "./viewTypes";
+import { SelectionBar } from "./BulkBar";
 import type { ViewProps } from "./viewTypes";
 
-const ROW_H = 36;    // keep in sync with .grid td height
 const HEADER_H = 36;
 const MIN_WIDTH = 40;
 const WIDTHS: Record<string, number> = {
@@ -23,6 +24,7 @@ type Row = { kind: "group"; g: GroupNode } | { kind: "rec"; r: Rec; n: number };
 export function GridView({ ds, view, fields, visible, records, allRecords, ops, setConfig }: ViewProps) {
   const canEdit = (f: Field) => ops.can.edit && isEditable(f);
   const { refs } = useContext(RefsContext);
+  const ROW_H = GRID_ROW[densityOf(view.config)];
   const [editing, setEditing] = useState<{ rec: string; field: string; initial?: string } | null>(null);
   // the selected cell (spreadsheet keys: arrows / Tab move, Enter or typing edits, Delete clears, copy & paste)
   const [active, setActive] = useState<{ rec: string; field: string } | null>(null);
@@ -322,7 +324,7 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
   return (
     <div className={`grid-wrap ${sel.size ? "selecting" : ""}`} tabIndex={0} onKeyDown={onKeyDown} onCopy={onCopy} onPaste={onPaste}
       ref={(el) => { win.ref(el); wrapRef.current = el; }}>
-      <table className="grid" style={{ width: tableWidth }}>
+      <table className={`grid density-${densityOf(view.config)}`} style={{ width: tableWidth }}>
         <thead>
           <tr ref={headRow}>
             <th className="rownum">
@@ -427,12 +429,8 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
         </Popover>
       )}
 
-      {sel.size > 0 && ops.bulk && (
-        <BulkBar count={sel.size} fields={fields.filter((f) => canEdit(f) && f.type !== "button")} can={ops.can}
-          onUpdate={(patch) => ops.bulk!("update", selected, patch)}
-          onDelete={() => { ops.bulk!("delete", selected); setSel(new Set()); }}
-          onClear={() => setSel(new Set())} />
-      )}
+      <SelectionBar selected={selected} total={records.length} fields={fields} shown={visible} ops={ops} name={ds.name}
+        onAll={() => setSel(new Set(records.map((r) => r.id)))} onClear={() => setSel(new Set())} />
 
       {menu && (
         <Popover anchor={menu.anchor} onClose={() => setMenu(null)} width={200}>
@@ -483,56 +481,3 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
   );
 }
 
-/** Actions for the selected rows: set a field on all of them, or delete them. */
-function BulkBar({ count, fields, can, onUpdate, onDelete, onClear }: {
-  count: number; fields: Field[]; can: { edit: boolean; delete: boolean };
-  onUpdate: (patch: Record<string, unknown>) => void; onDelete: () => void; onClear: () => void;
-}) {
-  const [editAnchor, setEditAnchor] = useState<HTMLElement | null>(null);
-  const [fieldId, setFieldId] = useState("");
-  const [value, setValue] = useState<unknown>(null);
-  const [confirm, setConfirm] = useState(false);
-  const field = fields.find((f) => f.id === fieldId);
-  useEffect(() => setConfirm(false), [count]);
-  return (
-    <div className="bulk-bar" role="toolbar" aria-label="Selected rows">
-      <b>{count} selected</b>
-      {can.edit && fields.length > 0 && (
-        <button className="btn sm" onClick={(e) => { setEditAnchor(e.currentTarget); setFieldId(fields[0].id); setValue(null); }}>
-          <Icon name="edit" size={14} /> Edit
-        </button>
-      )}
-      {can.delete && (confirm ? (
-        <button className="btn sm danger" onClick={onDelete}><Icon name="trash" size={14} /> Delete {count}?</button>
-      ) : (
-        <button className="btn sm" onClick={() => setConfirm(true)}><Icon name="trash" size={14} /> Delete</button>
-      ))}
-      <span className="spacer" />
-      <button className="icon-btn" onClick={onClear} aria-label="Clear selection"><Icon name="x" size={16} /></button>
-      {editAnchor && (
-        <Popover anchor={editAnchor} onClose={() => setEditAnchor(null)} width={320}>
-          <div className="pop-body bulk-edit">
-            <label className="stack">Field
-              <select className="input sm" value={fieldId} onChange={(e) => { setFieldId(e.target.value); setValue(null); }}>
-                {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-            </label>
-            {field && (
-              <label className="stack">New value
-                <FieldInput key={field.id} field={field} value={value} onCommit={setValue} />
-              </label>
-            )}
-            <p className="muted small">Sets this value on all {count} selected records. Leave it empty to clear the field.</p>
-            <div className="row">
-              <span className="spacer" />
-              <button className="btn sm" onClick={() => setEditAnchor(null)}>Cancel</button>
-              <button className="btn sm primary" disabled={!field} onClick={() => { onUpdate({ [field!.id]: value ?? null }); setEditAnchor(null); }}>
-                Apply to {count}
-              </button>
-            </div>
-          </div>
-        </Popover>
-      )}
-    </div>
-  );
-}

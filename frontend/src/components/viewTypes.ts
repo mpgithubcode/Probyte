@@ -1,4 +1,4 @@
-import type { Dataset, Field, Rec, View, ViewConfig } from "../types";
+import type { Dataset, Density, Field, Rec, View, ViewConfig } from "../types";
 
 /** What the current viewer may do (everything in the app; limited on public links). */
 export interface Can { add: boolean; edit: boolean; delete: boolean; manage: boolean }
@@ -13,6 +13,10 @@ export interface Ops {
   open(rec: Rec): void;
   /** Update or delete many records at once (not offered on public links). */
   bulk?(action: "update" | "delete", recs: Rec[], patch?: Record<string, any>): void;
+  /** Copies of records (their own values; calculated ones work themselves out). Not in files tables. */
+  duplicate?(recs: Rec[]): void;
+  /** Mark one date of a repeating record done (its current date moves it on; a later one is kept done and skipped). */
+  completeOccurrence?(rec: Rec, occurrence: string): void;
   paste?(items: { record_id: string | null; values: Record<string, string> }[]): void;  // grid: a block pasted from a spreadsheet
   /** Open the field editor; null = new field. */
   editField(field: Field | null): void;
@@ -34,3 +38,10 @@ export interface ViewProps {
   ops: Ops;
   setConfig: (patch: Partial<ViewConfig>) => void;
 }
+
+/** Row heights (px) for each density: keep in sync with the .density-* rules in styles.css. */
+export const GRID_ROW: Record<Density, number> = { compact: 30, comfortable: 36, roomy: 48 };
+export const LIST_ROW: Record<Density, number> = { compact: 34, comfortable: 42, roomy: 54 };
+/** How many fields a card shows. */
+export const CARD_FIELDS: Record<Density, number> = { compact: 3, comfortable: 5, roomy: 8 };
+export const densityOf = (c: ViewConfig): Density => c.density ?? "comfortable";

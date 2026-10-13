@@ -108,6 +108,20 @@ def update_record(record_id: str, body: RecordIn, field_key: Literal["id", "name
     return out
 
 
+class OccurrenceIn(BaseModel):
+    occurrence: str   # the date (record value form) of the repeat being done
+
+
+@router.post("/api/records/{record_id}/complete")
+def complete_occurrence(record_id: str, body: OccurrenceIn, user=User):
+    """Mark one date of a repeating task done: the current one moves it on; a later one is kept as a done copy and
+    skipped in the series."""
+    with connection() as conn:
+        store.complete_occurrence(conn, record_id, body.occurrence, user["id"])
+        row = conn.execute("SELECT table_id FROM records WHERE id = %s", (record_id,)).fetchone()
+        return store.computed_record(conn, record_id, row["table_id"])
+
+
 class BulkItem(BaseModel):
     id: str
     table_id: str

@@ -154,8 +154,9 @@ def create_field(conn, table_id, name, type, options=None, system_key=None, is_p
         "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",
         (table_id, name, type, Jsonb(options or {}), system_key, is_primary, pos),
     ).fetchone()
-    if type != "record_id":  # Record ID stays the last column
-        conn.execute("UPDATE fields SET position = %s WHERE table_id = %s AND type = 'record_id'", (pos + 1, table_id))
+    if system_key not in TAIL_KEYS:  # the built-in fields, then Record ID, stay the last columns
+        for n, key in enumerate(TAIL_KEYS):
+            conn.execute("UPDATE fields SET position = %s WHERE table_id = %s AND system_key = %s", (pos + 1 + n, table_id, key))
     return f
 
 
@@ -208,8 +209,27 @@ def _create_system_field(conn, tid, key, fname, ftype, opts, primary):
     return create_field(conn, tid, fname, ftype, opts, system_key=key, is_primary=primary)
 
 
+# Every table also says when and by whom each record was made and last changed. They can't be deleted or changed, and
+# views hide them until someone shows them (like Record ID). (system key, name, type)
+BUILTIN_FIELDS = [("created_time", "Created time", "created_time"), ("modified_time", "Last modified time", "last_modified_time"),
+                  ("created_by", "Created by", "created_by"), ("modified_by", "Last modified by", "last_modified_by")]
+
+
+TAIL_KEYS = [k for k, _, _ in BUILTIN_FIELDS] + ["record_id"]
+
+
+def add_builtin_fields(conn, tid):
+    """The built-in fields a table doesn't have yet (numbered names if the table has its own fields called that)."""
+    have = {r["system_key"] for r in conn.execute("SELECT system_key FROM fields WHERE table_id = %s AND system_key IS NOT NULL", (tid,)).fetchall()}
+    for key, name, ftype in BUILTIN_FIELDS:
+        if key not in have:
+            create_field(conn, tid, unique_field_name(conn, tid, name), ftype, {}, system_key=key)
+
+
 def _add_record_id_field(conn, tid):
-    """Every table has a Record ID column (the row's UUID). Views hide it until someone shows it."""
+    """Every table has a Record ID column (the row's UUID), and the built-in fields. Views hide them until someone
+    shows them."""
+    add_builtin_fields(conn, tid)
     return create_field(conn, tid, "Record ID", "record_id", {}, system_key="record_id")
 
 
@@ -355,6 +375,15 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
         bad("The primary field can't be that type")
     if table["kind"] == "remote":
         bad("A linked table's fields come from its source link")
+    if ftype == "recurrence":
+        # ordinary tables: the checkbox that completes it (False: none) and the dates it moves on to the next date
+        mine = {str(f["id"]): f for f in get_fields(conn, tid)}
+        if o.get("doneField") not in (None, False) and (mine.get(str(o["doneField"])) or {}).get("type") != "checkbox":
+            bad("Choose a checkbox field of this table to complete the repeat")
+        if o.get("dateFields") is not None:
+            if not isinstance(o["dateFields"], list) or any((mine.get(str(d)) or {}).get("type") != "date" for d in o["dateFields"]):
+                bad("Choose date fields of this table to move to the next date")
+            o["dateFields"] = [str(d) for d in o["dateFields"]] or None
     if ftype == "link":
         o["foreignTableId"] = _own_table_id(conn, o.get("foreignTableId"), table["user_id"])
         if is_remote_table(conn, o["foreignTableId"]):

@@ -29,7 +29,7 @@ from app.data.behaviors import (  # noqa: F401
 )
 from app.data.records import (  # noqa: F401
     _changed, _sync_links, clean_record, computed_record, create_record, delete_field_cleanup,
-    delete_record, insert_record, list_records, normalize_data, restore_record, update_record,
+    complete_occurrence, delete_record, insert_record, list_records, normalize_data, restore_record, update_record,
 )
 from app.data.combos import (  # noqa: F401
     NAME_MEANINGS, _project, build_combo_fields, combo_records, combo_refs, get_combo,
@@ -84,6 +84,7 @@ __all__ = [  # the record store's interface
     "computed_record",
     "create_record",
     "delete_field_cleanup",
+    "complete_occurrence",
     "delete_record",
     "insert_record",
     "list_records",

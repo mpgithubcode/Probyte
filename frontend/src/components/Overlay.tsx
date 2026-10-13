@@ -5,9 +5,12 @@ import { Icon } from "./Icon";
 // Open dialogs, newest last: Escape closes only the top one when dialogs are stacked.
 const modalStack: object[] = [];
 
-export function Modal({ title, onClose, children, footer, width = 520, drawer }: {
+export function Modal({ title, onClose, children, footer, width = 520, drawer, docked, actions, className = "" }: {
   title: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: number;
   drawer?: boolean;  // a panel on the right instead of a centred dialog
+  docked?: boolean;  // a panel on the right that leaves the page usable (no backdrop: click other rows, scroll, edit)
+  actions?: ReactNode;  // buttons in the header, before Close
+  className?: string;
 }) {
   const [token] = useState(() => ({}));
   useEffect(() => {
@@ -21,13 +24,27 @@ export function Modal({ title, onClose, children, footer, width = 520, drawer }:
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose, token]);
+  const head = (
+    <div className="modal-head">
+      <div className="modal-title">{title}</div>
+      {actions}
+      <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
+    </div>
+  );
+  if (docked) {
+    return createPortal(
+      <div className={`modal docked-panel ${className}`} style={{ width }} role="dialog" aria-modal="false">
+        {head}
+        <div className="modal-body">{children}</div>
+        {footer && <div className="modal-foot">{footer}</div>}
+      </div>,
+      document.body,
+    );
+  }
   return createPortal(
     <div className={`backdrop ${drawer ? "drawer-backdrop" : ""}`} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${drawer ? "drawer" : ""}`} style={{ width }} role="dialog">
-        <div className="modal-head">
-          <div className="modal-title">{title}</div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
-        </div>
+      <div className={`modal ${drawer ? "drawer" : ""} ${className}`} style={{ width }} role="dialog">
+        {head}
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>

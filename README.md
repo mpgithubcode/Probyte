@@ -79,7 +79,9 @@ Each user's work is organised as **bases → tables**. A base groups related tab
 
    Each user can connect as many CalDAV accounts as they like.
 
-   **Repeating tasks and events.** Tasks and events have a **Repeat** field (daily / weekly on chosen days / monthly on a date or the "2nd Tuesday" / yearly, every N, ending never / on a date / after N times). The calendar and timeline show every occurrence. Open one to **change that date only** (its title, start and end) or **skip it**, or drag it to another day on the calendar; edits in the rest of the panel apply to the whole series. Occurrences moved, renamed or cancelled on other devices show where they really are. Completing a repeating task moves it to its next date and keeps a completed copy of the finished one, like Apple Reminders. The Repeat field type can be added to any table too.
+   **Repeating tasks and events.** Tasks and events have a **Repeat** field (daily / weekly on chosen days / monthly on a date or the "2nd Tuesday" / yearly, every N, ending never / on a date / after N times). The calendar and timeline show every occurrence. Open one to **change that date only** (its title, start and end) or **skip it**, or drag it to another day on the calendar; edits in the rest of the panel apply to the whole series. Occurrences moved, renamed or cancelled on other devices show where they really are. Completing a repeating task (its box, or its status set to Completed) moves it to its next date and keeps a completed copy of the finished one, like Apple Reminders, so lists always show the one that's due next. A repeating task without a date gets the next date after today. Its record shows its **next dates**, each with **Done** (ahead of time: kept as done, and skipped in the series) and **Skip**; a date opened on the calendar has **Mark this date done**. List views mark repeating records with ↻.
+
+The Repeat field type can be added to any table too. There, ticking the table's checkbox moves the record to its next date the same way. With several checkboxes, choose which one in the Repeat field's settings, along with which dates move.
 
    **Importing contacts:** drop vCard files (`.vcf`, one contact or thousands, from a phone, Google Contacts, Outlook or iCloud; old vCard 2.1 files too) on a contacts table, or use Table settings → Import & export → **Import .vcf**. Each card is kept whole (photos, extra numbers…) and reaches phones with the next sync; contacts already in the table (same card, email, or name and phone) are skipped or updated, as you choose. **Download .vcf** saves every contact in one file.
 
@@ -118,7 +120,15 @@ Every database and combined database can have any number of Notion-style views, 
 
 **Touch screens.** Dragging is a mouse/trackpad feature; on phones and tablets a tap opens an item and a swipe scrolls. Board cards have a **Move to** button, and dates are changed in the record panel.
 
-**Pages.** Table, List and Gallery views can show their records in pages: pick **All rows** or 10, 25, 50, 100, 500 or 1000 per page in the view's toolbar.
+**The toolbar.** Every choice in a view's toolbar is a labeled button: **Columns: Status** on a board, **Starts / Ends** on a calendar or timeline, **Cover**, **Color**. The view-wide settings come first, then the choices that belong to that kind of view. A name on its own means the usual setting (no color, comfortable rows).
+
+**Layout: density and pages.** **Layout** sets how much room rows and cards take: **Compact**, **Comfortable** or **Roomy**. That applies to Table, List, Board and Gallery views (cards show 3, 5 or 8 fields). It also sets how many rows a page shows in Table, List and Gallery views: all, or 10, 25, 50, 100, 500 or 1000.
+
+**View tabs.** The open view's tab shows how many records it has, and a dot marks views that are filtered.
+
+**Cards.** Board and Gallery cards show their fields one per line, name then value, leaving out empty ones.
+
+**Empty views say why.** A view with nothing to show says whether that's the search or its filter, with **Clear search** or **Clear filter** (Undo puts the filter back). An empty table offers to add the first record.
 
 **Hiding tables.** A table's (or combined database's) **⋯ → Hide from sidebar** keeps it out of the sidebar; **Show N hidden** under a base lists them again, and **⋯ → Show in sidebar** brings one back.
 
@@ -134,15 +144,17 @@ Every database and combined database can have any number of Notion-style views, 
 
 **Bases** can be reordered by dragging them in the sidebar, or with **Move up** / **Move down** in a base's ⋯ menu.
 
-**Undo and the trash.** Deleting a record, deleting or editing several at once, or deleting a table shows **Undo** for a few seconds. Deleted records and tables also stay in the **Trash** (sidebar, bottom) for 30 days, where you can restore them or delete them for good. A deleted table's calendar on the server is only removed when the trash is emptied, so restoring a table brings back everything, phones included.
+**Undo and the trash.** Deleting a record, deleting, duplicating or editing several at once, deleting a view or a table, or clearing a view's filter shows **Undo** for a few seconds. Deleted records and tables also stay in the **Trash** (sidebar, bottom) for 30 days, where you can restore them or delete them for good. A deleted table's calendar on the server is only removed when the trash is emptied, so restoring a table brings back everything, phones included.
+
+**The record panel.** Opening a record shows it in a panel beside the view, which stays usable: scroll, edit, or open another record. **↑ / ↓** in its header (or **K / J**) go through the view's records in order. Its **⋯** menu has **Duplicate**, **Copy link** (a link that opens this record) and **Arrange into sections…**, which groups the view's fields under headings such as Schedule or Money; fields not in a section stay at the top. The footer shows the record's ID (click to copy) and when and by whom it was added and last changed. On a phone the panel fills the screen.
 
 **History.** The record panel's **History** lists who changed what and when: you, an API key (by name), a connected AI assistant, a public link, or your phone through calendar sync, with each field's old and new value. Kept for 180 days.
 
-**Selecting rows.** In a Table view, tick rows (shift-click selects a range, a group's box selects the group, the header box selects everything in the view), then **Edit** to set one field on all of them or **Delete** them.
+**Selecting records.** In a Table view, tick rows (shift-click selects a range, a group's box selects the group, the header box selects everything in the view). In List, Board and Gallery views, tick the box that appears on a row or card, or right-click it; on a phone, press and hold. A bar then offers **Select all**, **Edit** (set one field on all of them), **Duplicate**, **Export CSV** (the selected records, with the view's fields) and **Delete**.
 
 **Import and export.** A table's **⋯ → Import from file…** reads CSV, TSV, Excel (.xlsx, .xls), OpenDocument (.ods), Numbers and JSON. You pick which column goes into which field, into a new field (type guessed from the data), or nowhere; values are converted to the field's type and rows are added. **⋯ → Export…** saves the current view (its filters, sort and fields, optionally the hidden ones too) as .xlsx, .csv, .tsv, .ods, .xls or .json.
 
-**IDs.** Bases, tables, combined databases and records all have UUIDs. **Copy base ID** (base menu) and **Copy table ID** (table ⋯ menu) put them on the clipboard. Every table has a **Record ID** column with each row's UUID; it's hidden in every view by default — turn it on under **Fields**. The same IDs are used by the API (`/api/tables/{id}`, `/api/records/{id}`).
+**IDs.** Bases, tables, combined databases and records all have UUIDs. **Copy base ID** (base menu) and **Copy table ID** (table ⋯ menu) put them on the clipboard. Every table has a **Record ID** column with each row's UUID. Every table also has **Created time**, **Last modified time**, **Created by** and **Last modified by**, kept by Probyte. These are built in: they can't be changed or deleted, and they're hidden in every view until you turn them on under **Fields**. The same IDs are used by the API (`/api/tables/{id}`, `/api/records/{id}`).
 
 ## Public links, embeds and phone apps
 
@@ -178,7 +190,7 @@ A **Files** table (New table → **Files**) shows the files in an **S3 bucket** 
   - **Edit ▾** (when a Document Server is set up): **Edit in ONLYOFFICE**, right in the viewer; see [Editing documents in ONLYOFFICE](#editing-documents-in-onlyoffice).
   - **Markdown**: formatted, and edited as formatted text (**WYSIWYG**: headings, bold, lists, quotes, code, links), saved back as Markdown. **Text and code files**: shown and edited as text (Ctrl/⌘ S saves).
   - Images (click for actual size), including **SVG** drawings (shown as pictures, never run: any script inside is blocked; their code can be edited), video and audio play in place; anything else can be downloaded.
-- **Cover images**: images (iPhone HEIC photos too), PDFs, Word / PowerPoint / OpenDocument files and spreadsheets (their first page, without blank margins) and text, Markdown and code files (their first lines, as a page) get a small preview image, used in the grid, the Gallery and the viewer. Files that don't have one yet (for example added before the document converter was set up) get it at the next sync; each version is tried once. Text files (and .docx) put their first 20,000 characters in **Text**, so search finds words inside them.
+- **Cover images**: images (iPhone HEIC photos too), PDFs, Word / PowerPoint / OpenDocument files and spreadsheets (their first page, without blank margins) and text, Markdown and code files (their first lines, as a page) get a small preview image, used in the grid, the Gallery and the viewer. Files that don't have one yet (for example added before the document converter was set up, or while it couldn't be reached) get it at the next sync; a failure that's only temporary is tried again. A file with no preview says why: an amber dot (and "Preview pending…" in the Gallery) while it's being made or waiting for the converter, a red one with the reason when it couldn't be made. Text files (and .docx) put their first 20,000 characters in **Text**, so search finds words inside them.
 - **Link files to other tables**: a link field pointing at a files table gets **Upload files…** in its picker, which uploads into the files table and links the new records at once. A lookup of the **File** field shows the previews in the other table.
 - **Changes in the storage** (from other apps, phones, the Nextcloud client…) arrive with the next sync: every `SYNC_INTERVAL`, on **Sync**, and right after the table is created. Up to 100,000 files per table.
 - **Deleting**: a deleted record goes to the trash; its file is deleted from the storage when the trash is emptied (or after 30 days), and restoring the record keeps everything. Deleting the **table** never deletes the files.
@@ -276,6 +288,8 @@ Each person chooses how they see the views (base menu → **Sharing and your vie
 - **Keep my own copies**: the views, as they are at that moment, become theirs to change. Later changes to the base's views don't touch them.
 
 Either way, anyone can add views of their own, which only they see, and hide tables from their own sidebar.
+
+**With a link.** In the same window, **Share with a link** makes an invite link. Anyone with an account on this server who opens it joins the base with the link's role: viewer or editor, or admin when the owner makes the link. The link also says whether joiners' views **stay updated** from the base or become **their own copies**; each person can change that afterwards, as above. A link can last 1, 7 or 30 days, or until it's turned off. Turning it off or deleting it stops it working; people who joined stay until they're removed. Someone who isn't signed in signs in first and then sees what they're joining.
 
 ## Automations
 

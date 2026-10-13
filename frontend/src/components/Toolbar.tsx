@@ -19,7 +19,8 @@ export const VIEW_TYPES: { type: ViewType; label: string; icon: string; desc: st
 ];
 
 /** The view tabs: click to switch, drag to reorder, ⋯ (or double-click) on the open one for its settings. */
-export function ViewTabs({ views, active, onSelect, onCreate, onReorder, onSettings, onFromTemplate }: {
+export function ViewTabs({ views, active, count, onSelect, onCreate, onReorder, onSettings, onFromTemplate }: {
+  count?: number;   // how many records the open view shows
   views: View[]; active?: View; onSelect: (v: View) => void; onCreate: (t: ViewType) => void;
   onReorder: (ids: string[]) => void; onSettings: (v: View) => void;
   onFromTemplate?: (t: { template_id?: string; body?: Record<string, unknown> }) => Promise<void>;
@@ -71,6 +72,8 @@ export function ViewTabs({ views, active, onSelect, onCreate, onReorder, onSetti
             onDragOver={(e) => { if (drag) { e.preventDefault(); over(v.id); } }} onDrop={(e) => { e.preventDefault(); drop(); }} onDragEnd={drop}
             onClick={() => !on && onSelect(v)} onDoubleClick={() => onSettings(v)} title={on ? "Double-click or ⋯ for view settings; drag to reorder" : "Drag to reorder"}>
             <Icon name={icon} size={14} /> <span className="view-tab-name">{v.name}</span>
+            {countConditions(viewFilter(v.config)) > 0 && <span className="view-tab-filtered" title="This view is filtered" aria-label="filtered" />}
+            {on && count !== undefined && <span className="view-tab-count" aria-label={`${count} records`}>{count.toLocaleString()}</span>}
             {on && <button className="view-tab-more" aria-label="View settings" title="View settings"
               onClick={(e) => { e.stopPropagation(); onSettings(v); }}><Icon name="more" size={14} /></button>}
           </div>
@@ -103,6 +106,86 @@ export function ViewTabs({ views, active, onSelect, onCreate, onReorder, onSetti
         </Popover>
       )}
     </div>
+  );
+}
+
+/** Views whose rows or cards can be made smaller or larger. */
+export const DENSITY_VIEWS = new Set<ViewType>(["grid", "list", "kanban", "gallery"]);
+
+/** A toolbar choice shown as "Label: current value" that opens a short menu (instead of a bare dropdown, which doesn't say
+ * what it's for). */
+export function ChoiceMenu<T extends string | number | null>({ icon, label, title, value, options, onChange }: {
+  icon: string; label: string; title?: string; value: T;
+  options: { value: T; label: string; hidden?: boolean; plain?: boolean }[];   // hidden: shown as the current value only, not offered;
+                                                                               // plain: the default (the button shows just its name)
+  onChange: (v: T) => void;
+}) {
+  const pop = usePopover();
+  const current = options.find((o) => o.value === value);
+  return (
+    <>
+      <button className="tool-btn choice-btn" onClick={pop.open} title={title} aria-label={`${title ?? label}: ${current?.label ?? "none"}`} aria-haspopup="menu">
+        <Icon name={icon} size={14} />
+        {current?.plain ? <span>{label}</span> : <><span className="choice-label">{label}:</span> <b>{current?.label ?? "—"}</b></>}
+        <Icon name="down" size={12} className="choice-chev" />
+      </button>
+      {pop.anchor && (
+        <Popover anchor={pop.anchor} onClose={pop.close} width={220}>
+          <div className="menu-list" role="menu" aria-label={title ?? label}>
+            {title && <div className="menu-heading">{title}</div>}
+            {options.filter((o) => !o.hidden).map((o) => (
+              <button key={String(o.value)} role="menuitemradio" aria-checked={o.value === value}
+                className={`menu-item ${o.value === value ? "active" : ""}`} onClick={() => { onChange(o.value); pop.close(); }}>
+                {o.label}{o.value === value && <span className="tick">✓</span>}
+              </button>
+            ))}
+            {!options.some((o) => !o.hidden) && <div className="muted small pad">Nothing to choose from yet.</div>}
+          </div>
+        </Popover>
+      )}
+    </>
+  );
+}
+
+const DENSITIES = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "roomy", label: "Roomy" }] as const;
+
+/** How rows and cards are laid out: their density, and how many rows a page has (one menu, to keep the toolbar short). */
+function LayoutMenu({ config, setConfig, density, paged }: {
+  config: ViewConfig; setConfig: (p: Partial<ViewConfig>) => void; density: boolean; paged: boolean;
+}) {
+  const pop = usePopover();
+  const d = config.density ?? "comfortable";
+  const size = config.pageSize ?? 0;
+  // only what differs from the usual (comfortable, all rows)
+  const summary = [density && d !== "comfortable" && DENSITIES.find((x) => x.value === d)!.label, paged && size ? `${size} per page` : null]
+    .filter(Boolean).join(" · ");
+  const item = (on: boolean, label: string, run: () => void) => (
+    <button key={label} role="menuitemradio" aria-checked={on} className={`menu-item ${on ? "active" : ""}`} onClick={run}>
+      {label}{on && <span className="tick">✓</span>}
+    </button>
+  );
+  return (
+    <>
+      <button className={`tool-btn choice-btn ${d !== "comfortable" || size ? "on" : ""}`} onClick={pop.open} aria-label={`Layout: ${summary || "comfortable, all rows"}`}
+        aria-haspopup="menu" title="Row and card size, rows per page">
+        <Icon name="density" size={14} /> {summary ? <><span className="choice-label">Layout:</span> <b className="layout-summary">{summary}</b></> : <span>Layout</span>}<Icon name="down" size={12} className="choice-chev" />
+      </button>
+      {pop.anchor && (
+        <Popover anchor={pop.anchor} onClose={pop.close} width={220}>
+          <div className="menu-list" role="menu" aria-label="Layout">
+            {density && (<>
+              <div className="menu-heading">Row and card size</div>
+              {DENSITIES.map((x) => item(d === x.value, x.label, () => setConfig({ density: x.value === "comfortable" ? undefined : x.value })))}
+            </>)}
+            {paged && (<>
+              <div className="menu-heading">Rows per page</div>
+              {item(!size, "All rows", () => setConfig({ pageSize: undefined }))}
+              {PAGE_SIZES.map((n) => item(size === n, `${n} per page`, () => setConfig({ pageSize: n })))}
+            </>)}
+          </div>
+        </Popover>
+      )}
+    </>
   );
 }
 
@@ -204,10 +287,12 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
         </Popover>
       )}
 
+      {(view.type === "kanban" || view.type === "list" || view.type === "calendar" || view.type === "timeline" || view.type === "gallery"
+        || PAGED_VIEWS.has(view.type) || DENSITY_VIEWS.has(view.type)) && <span className="tool-sep" />}
       {view.type === "kanban" && (
-        <label className="tool-label"><Icon name="group" size={14} />
-          <FieldSelect fields={selectFields} value={config.groupBy} onChange={(id) => setConfig({ groupBy: id ?? undefined })} placeholder="Group by…" />
-        </label>
+        <ChoiceMenu icon="group" label="Columns" title="Group cards by" value={config.groupBy ?? null}
+          options={[{ value: null, label: "Choose…", hidden: true }, ...selectFields.map((f) => ({ value: f.id, label: f.name }))]}
+          onChange={(id) => setConfig({ groupBy: id ?? undefined })} />
       )}
       {view.type === "list" && (
         <>
@@ -235,32 +320,27 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
       )}
       {(view.type === "calendar" || view.type === "timeline") && (
         <>
-          <label className="tool-label"><Icon name="calendar" size={14} />
-            <FieldSelect fields={dateFields} value={config.dateField} onChange={(id) => setConfig({ dateField: id ?? undefined })} placeholder="Date field…" />
-          </label>
-          <label className="tool-label">→
-            <FieldSelect fields={dateFields} value={config.endField} onChange={(id) => setConfig({ endField: id })} placeholder="No end date" allowNone />
-          </label>
+          <ChoiceMenu icon="calendar" label="Starts" title="The date each item is placed on" value={config.dateField ?? null}
+            options={[{ value: null, label: "Choose…", hidden: true }, ...dateFields.map((f) => ({ value: f.id, label: f.name }))]}
+            onChange={(id) => setConfig({ dateField: id ?? undefined })} />
+          <ChoiceMenu icon="right" label="Ends" title="The date each item ends on" value={config.endField ?? null}
+            options={[{ value: null, label: "No end date" }, ...dateFields.map((f) => ({ value: f.id, label: f.name }))]}
+            onChange={(id) => setConfig({ endField: id })} />
         </>
       )}
       {view.type === "gallery" && (
-        <label className="tool-label" title="Cover image"><Icon name="gallery" size={14} />
-          <FieldSelect fields={fields.filter((f) => f.type === "attachment" || f.type === "url" || f.type === "text")} value={config.coverField}
-            onChange={(id) => setConfig({ coverField: id })} placeholder="No cover" allowNone />
-        </label>
-      )}
-      {PAGED_VIEWS.has(view.type) && (
-        <label className="tool-label" title="Rows per page"><Icon name="list" size={14} />
-          <select className="input sm" value={config.pageSize ?? 0} onChange={(e) => setConfig({ pageSize: Number(e.target.value) || undefined })}>
-            <option value={0}>All rows</option>
-            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} per page</option>)}
-          </select>
-        </label>
+        <ChoiceMenu icon="gallery" label="Cover" title="Cover image" value={config.coverField ?? null}
+          options={[{ value: null, label: "No cover", plain: true },
+            ...fields.filter((f) => f.type === "attachment" || f.type === "url" || f.type === "text").map((f) => ({ value: f.id, label: f.name }))]}
+          onChange={(id) => setConfig({ coverField: id })} />
       )}
       {(view.type === "calendar" || view.type === "timeline" || view.type === "kanban" || view.type === "gallery" || view.type === "list") && (
-        <label className="tool-label" title="Color by"><Icon name="palette" size={14} />
-          <FieldSelect fields={selectFields} value={config.colorField} onChange={(id) => setConfig({ colorField: id })} placeholder="No color" allowNone />
-        </label>
+        <ChoiceMenu icon="palette" label="Color" title="Color by" value={config.colorField ?? null}
+          options={[{ value: null, label: "None", plain: true }, ...selectFields.map((f) => ({ value: f.id, label: f.name }))]}
+          onChange={(id) => setConfig({ colorField: id })} />
+      )}
+      {(DENSITY_VIEWS.has(view.type) || PAGED_VIEWS.has(view.type)) && (
+        <LayoutMenu config={config} setConfig={setConfig} density={DENSITY_VIEWS.has(view.type)} paged={PAGED_VIEWS.has(view.type)} />
       )}
     </div>
   );

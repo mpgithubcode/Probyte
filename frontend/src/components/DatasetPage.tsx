@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Attachment, Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
-import { applyView, choiceColor, debounce, hiddenIds, linkCan, mergeRefs, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
+import { applyView, choiceColor, formatDate, countConditions, debounce, viewFilter, hiddenIds, isEditable, linkCan, mergeRefs, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
 import { FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
 import { FullViewer, type ViewerEntry } from "./FileViewer";
 import { fromDrop, fromPicker, useUploads } from "./Uploads";
@@ -33,6 +33,31 @@ const LinkSettings = lazy(() => import("./LinkSettings").then((m) => ({ default:
 const ImportModal = lazy(() => import("./ImportExport").then((m) => ({ default: m.ImportModal })));
 const FeedsModal = lazy(() => import("./FeedsModal").then((m) => ({ default: m.FeedsModal })));
 const ExportModal = lazy(() => import("./ImportExport").then((m) => ({ default: m.ExportModal })));
+
+/** Views that say why they're empty (calendar, timeline and chart show their own frame, which is still useful empty). */
+const EMPTY_VIEWS = new Set<ViewType>(["grid", "list", "gallery", "kanban"]);
+
+/** Why the view shows nothing, and the way out: clear the search or the filter, or add the first record. */
+function EmptyNotice({ total, search, filtered, addLabel, upload, onClearSearch, onClearFilter, onAdd }: {
+  total: number; search: string; filtered: boolean; addLabel?: string; upload: boolean;
+  onClearSearch: () => void; onClearFilter: () => void; onAdd: () => void;
+}) {
+  let body: JSX.Element;
+  if (search.trim()) {
+    body = <><p>No records match <b>“{search.trim()}”</b>{filtered ? " in this filtered view" : ""}.</p>
+      <div className="row"><button className="btn sm" onClick={onClearSearch}><Icon name="x" size={14} /> Clear search</button>
+        {filtered && <button className="btn sm" onClick={onClearFilter}><Icon name="filter" size={14} /> Clear filter</button>}</div></>;
+  } else if (filtered && total) {
+    body = <><p>No records match this view's filter.</p>
+      <p className="muted small">{total.toLocaleString()} record{total === 1 ? " is" : "s are"} hidden by it.</p>
+      <div className="row"><button className="btn sm" onClick={onClearFilter}><Icon name="filter" size={14} /> Clear filter</button></div></>;
+  } else {
+    body = <><p>{upload ? "No files here yet." : "No records yet."}</p>
+      {addLabel && <div className="row"><button className="btn sm primary" onClick={onAdd}><Icon name={upload ? "upload" : "plus"} size={14} /> {addLabel}</button></div>}
+      {upload && addLabel && <p className="muted small">Or drop files anywhere on this page.</p>}</>;
+  }
+  return <div className="empty-notice" role="status">{body}</div>;
+}
 
 // Changes arrive live (onTableChange); polling is the fallback. Linked tables have no live updates: poll them more often.
 const POLL_MS = 60000;
@@ -281,6 +306,33 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
         })
         .catch((e) => { onError(e.message); refresh(); });
     },
+    duplicate: nativeKind(ds?.table) === "files" || ds?.table?.kind === "remote" ? undefined : async (recs) => {
+      if (!ds || !recs.length) return;
+      const copyable = ds.fields.filter((f) => isEditable(f) && f.type !== "button" && f.id !== "__source" && !f.unique_values);
+      const made: Rec[] = [];
+      try {
+        for (const r of recs) {
+          const data = Object.fromEntries(copyable.filter((f) => r.data[f.id] !== undefined && r.data[f.id] !== null).map((f) => [f.id, r.data[f.id]]));
+          made.push(await track(ds.kind === "table" ? api.post<Rec>(`/tables/${ds.id}/records`, { data })
+            : api.post<Rec>(`/combos/${ds.id}/records`, { table_id: r.table_id, data })));
+        }
+      } catch (e) { onError((e as Error).message); }
+      if (!made.length) return;
+      setDs((d) => d && { ...d, records: [...d.records, ...made] });
+      if (recs.length === 1) { setOpenRec(made[0].id); setOpenOcc(null); }
+      refreshSoon();
+      showToast(`Duplicated ${made.length === 1 ? `“${recordTitle(ds.fields, made[0])}”` : `${made.length} records`}`, { label: "Undo", run: async () => {
+        await api.post("/records/bulk", { action: "delete", combo_id: ds.kind === "combo" ? ds.id : undefined,
+          items: made.map((m) => ({ id: m.id, table_id: m.table_id })) });
+        setOpenRec((o) => (made.some((m) => m.id === o) ? null : o));
+        refresh();
+      } });
+    },
+    completeOccurrence(rec, occurrence) {
+      track(api.post<Rec>(`/records/${rec.id}/complete`, { occurrence }))
+        .then(() => { refresh(); showToast(`Marked ${formatDate(occurrence, occurrence.length > 10)} done`); })
+        .catch((e) => onError(e.message));
+    },
     paste(items) {
       if (!ds || ds.kind !== "table") return;
       track(api.post<{ updated: number; created: string[]; errors: string[] }>(`/tables/${ds.id}/paste`, { items }))
@@ -385,8 +437,19 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const deleteView = (v: View) => {
     if (!ds) return;
     setViewSettings(null);
+    const at = ds.views.findIndex((x) => x.id === v.id);
     setDs({ ...ds, views: ds.views.filter((x) => x.id !== v.id) });
-    api.del(`/views/${v.id}`).catch((e) => onError(e.message));
+    api.del(`/views/${v.id}`)
+      .then(() => showToast(`Deleted the view “${v.name}”`, { label: "Undo", run: async () => {
+        // made again with its settings, in its place
+        const url = ds.kind === "table" ? `/tables/${ds.id}/views` : `/combos/${ds.id}/views`;
+        const back = await api.post<View>(url, { name: v.name, type: v.type, config: v.config });
+        const ids = ds.views.map((x) => (x.id === v.id ? back.id : x.id));
+        await api.post("/views/order", { ids }).catch(() => undefined);
+        setDs((d) => d && { ...d, views: [...d.views.slice(0, at), back, ...d.views.slice(at)].filter((x, i, all) => all.findIndex((y) => y.id === x.id) === i) });
+        onNavigate(back.id);
+      } }))
+      .catch((e) => onError(e.message));
     onNavigate(undefined);
   };
   const duplicateView = async (v: View) => {
@@ -568,7 +631,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             <button className="btn sm" onClick={() => setLinkEdit(true)}>Fix link</button>
           </div>
         )}
-        <ViewTabs views={ds.views} active={view} onSelect={(v) => onNavigate(v.id)} onCreate={createView}
+        <ViewTabs views={ds.views} active={view} count={view.type === "chart" ? undefined : allRecords.length} onSelect={(v) => onNavigate(v.id)} onCreate={createView}
           onReorder={reorderViews} onSettings={(v) => setViewSettings(v.id)}
           onFromTemplate={async (t) => {
             const v = await api.post<View>("/views/from-template", { ...t, ...(ds.kind === "table" ? { table_id: ds.id } : { combo_id: ds.id }) });
@@ -590,6 +653,17 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
         {view.type === "chart" && <ChartView {...props} />}
         </Suspense>
         {PAGED_VIEWS.has(view.type) && <Pager {...pg} />}
+        {!allRecords.length && EMPTY_VIEWS.has(view.type) && !(view.type === "kanban" && !view.config.groupBy) && (
+          <EmptyNotice total={ds.records.length} search={search} filtered={countConditions(viewFilter(view.config)) > 0}
+            addLabel={ops.can.add ? (ops.addLabel ?? "New record") : undefined} upload={!!ops.addLabel}
+            onClearSearch={() => setSearch("")}
+            onClearFilter={() => {
+              const before = view.config.filter;
+              setConfig({ filter: undefined });
+              showToast("Filter cleared", { label: "Undo", run: () => setConfig({ filter: before }) });
+            }}
+            onAdd={() => (isFiles ? uploadRef.current?.click() : ops.create({}, true))} />
+        )}
       </main>
 
       <Suspense fallback={null}>
@@ -659,11 +733,21 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             onCalendarLink={!isFiles && ds.fields.some((f) => f.type === "date") ? () => { setViewSettings(null); setFeedsOpen(true); } : undefined} />
         );
       })()}
-      {rec && (
-        <RecordModal ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc}
-          onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)}
-        />
-      )}
+      {rec && (() => {
+        // the view's records in its order: the panel goes through them (a record the view doesn't show: on its own)
+        const i = allRecords.findIndex((r) => r.id === rec.id);
+        const go = (r?: Rec) => r && (() => { setOpenRec(r.id); setOpenOcc(null); });
+        return (
+          <RecordModal ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc} docked
+            nav={i >= 0 ? { index: i, total: allRecords.length, prev: go(allRecords[i - 1]), next: go(allRecords[i + 1]) } : undefined}
+            sections={view.config.recordSections} onSections={(sections) => setConfig({ recordSections: sections.length ? sections : undefined })}
+            onDuplicate={ops.duplicate && can.add ? () => ops.duplicate!([rec]) : undefined}
+            link={`${location.origin}${location.pathname}#/${kind}/${ds.id}${view ? `/${view.id}` : ""}?record=${rec.id}`}
+            onCompleteOccurrence={ds.table?.kind === "remote" ? undefined : (occ) => ops.completeOccurrence!(rec, occ)}
+            onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)}
+          />
+        );
+      })()}
       {transfer === "import" && ds.kind === "table" && (
         <ImportModal ds={ds} onClose={() => setTransfer(null)} onDone={(msg) => { setTransfer(null); onError(msg); refresh(); onWorkspaceChanged(); }} />
       )}

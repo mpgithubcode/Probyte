@@ -337,17 +337,21 @@ export function timeAgo(iso: string | null) {
 
 /** Field types every view hides until it's turned on (config.shown). */
 export const HIDDEN_BY_DEFAULT = new Set<FieldType>(["record_id"]);
+/** The built-in fields every table has (when and by whom a record was made and last changed): also hidden until shown. */
+export const BUILTIN_KEYS = new Set(["created_time", "modified_time", "created_by", "modified_by"]);
+const hiddenByDefault = (f: Field) => HIDDEN_BY_DEFAULT.has(f.type) || BUILTIN_KEYS.has(f.system_key ?? "")
+  || BUILTIN_KEYS.has(String((f.options as Record<string, unknown>)?._source_key ?? ""));
 
 export function hiddenIds(fields: Field[], config: ViewConfig): Set<string> {
   const shown = new Set(config.shown ?? []);
   const out = new Set(config.hidden ?? []);
-  for (const f of fields) if (HIDDEN_BY_DEFAULT.has(f.type) && !shown.has(f.id)) out.add(f.id);
+  for (const f of fields) if (hiddenByDefault(f) && !shown.has(f.id)) out.add(f.id);
   return out;
 }
 
 /** Config change that shows or hides a field in a view. */
 export function setFieldShown(f: Field, show: boolean, config: ViewConfig): Partial<ViewConfig> {
-  if (HIDDEN_BY_DEFAULT.has(f.type)) {
+  if (hiddenByDefault(f)) {
     const shown = (config.shown ?? []).filter((x) => x !== f.id);
     return { shown: show ? [...shown, f.id] : shown, hidden: (config.hidden ?? []).filter((x) => x !== f.id) };
   }

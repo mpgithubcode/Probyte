@@ -28,6 +28,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.data import store
+from app.data.schema import BUILTIN_FIELDS
 
 from app.calc.compute import COMPUTED_TYPES, Engine, FIELD_TYPES
 from app.calc.viewfilter import normalize_config
@@ -41,6 +42,7 @@ VERSION = 1
 BUILTIN_DIR = Path(__file__).parent / "templates_builtin"
 MAX_BYTES = 5 * 1024 * 1024
 MAX_RECORDS = 2000
+BUILTIN_KEYS = {k for k, _, _ in BUILTIN_FIELDS}
 SKIP_TYPES = {"link", "lookup", "rollup", "conditional_lookup", "conditional_rollup", "record_id"}  # point at other tables / built in
 VIEW_TYPES = {"grid", "kanban", "timeline", "calendar", "list", "gallery", "chart"}
 TOKEN = re.compile(r"^\{\{field:(.+)\}\}$")
@@ -118,6 +120,8 @@ def table_template(conn, table_id, user_id, *, include_records=False, name=None,
     names = {str(f["id"]): f["name"] for f in fields}
     kept, skipped = [], []
     for f in fields:
+        if f.get("system_key") in BUILTIN_KEYS:   # every table has them
+            continue
         if f["type"] in SKIP_TYPES:
             if f["type"] != "record_id":
                 skipped.append(f["name"])
@@ -214,7 +218,7 @@ def create_table(conn, user_id, base_id, body: dict, name=None, include_records=
     defaults = store.get_fields(conn, tid)
     primary = next(f for f in defaults if f["is_primary"])
     for f in defaults:  # a blank table's starter fields and view make way for the template's
-        if not f["is_primary"] and f["type"] != "record_id":
+        if not f["is_primary"] and not f["system_key"]:   # (the built-in fields and Record ID stay)
             conn.execute("DELETE FROM fields WHERE id = %s", (f["id"],))
     conn.execute("DELETE FROM views WHERE table_id = %s", (tid,))
     if body.get("icon") or body.get("description"):
@@ -227,8 +231,15 @@ def create_table(conn, user_id, base_id, body: dict, name=None, include_records=
     # fields that refer to other fields (formulas, buttons) come after the ones they refer to
     order = [first] + [f for f in specs if f is not first and f["type"] not in ("formula", "button")] \
         + [f for f in specs if f is not first and f["type"] == "formula"] + [f for f in specs if f is not first and f["type"] == "button"]
+    builtin = {f["name"].lower(): f for f in store.get_fields(conn, tid) if f["system_key"] and f["system_key"] != "record_id"}
     for spec in order:
         ftype = spec["type"]
+        same = builtin.get(spec["name"].strip().lower())
+        if same is not None and spec is not first:
+            if same["type"] == ftype:   # the template's own "Created time" (made before every table had one): the built-in one
+                ids[spec["name"].strip().lower()] = str(same["id"])
+                continue
+            spec = {**spec, "name": store.unique_field_name(conn, tid, spec["name"].strip())}
         if spec is first and ftype not in store.PRIMARY_TYPES:
             ftype = "text"
         opts = detokenize(spec.get("options") or {}, ids) or {}

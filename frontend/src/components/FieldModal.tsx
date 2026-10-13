@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../api";
 import type { Choice, Field, FieldOptions, FieldType, FilterCond, TableInfo } from "../types";
-import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable } from "../util";
+import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable, BUILTIN_KEYS } from "../util";
 import { FormulaEditor } from "./FormulaEditor";
 import { FieldIcon, Icon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
@@ -325,6 +325,8 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
           <Icon name="lock" size={16} />
           <span>{field!.system_key === "record_id"
             ? "Built in: every table has its record IDs. It can be hidden in a view but not changed."
+            : BUILTIN_KEYS.has(field!.system_key ?? "")
+            ? "Built in: every table keeps when and by whom each record was made and last changed. Show it in a view (Fields), hide it again; it can't be changed or deleted."
             : "Locked: this field is part of the synced calendar / contact item, so it can't be renamed, changed or deleted. Hide it in a view if you don't need it, or add your own field."}</span>
         </div>
       )}
@@ -416,6 +418,34 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
         {type === "user" && (
           <label className="inline-check"><input type="checkbox" checked={!!o.multiple} onChange={(e) => set({ multiple: e.target.checked })} /> Allow several users</label>
         )}
+        {type === "recurrence" && !system && (() => {
+          const boxes = fields.filter((f) => f.type === "checkbox" && !f.system_key);
+          const dates = fields.filter((f) => f.type === "date");
+          const chosen = new Set(o.dateFields ?? dates.map((f) => f.id));
+          return (
+            <>
+              <label className="stack">When this checkbox is ticked, move on to the next date
+                <select className="input" value={o.doneField === false ? "__none" : o.doneField ?? ""}
+                  onChange={(e) => set({ doneField: e.target.value === "__none" ? false : e.target.value || null })}>
+                  <option value="">{boxes.length === 1 ? `Automatic (${boxes[0].name})` : "Automatic (when the table has one checkbox)"}</option>
+                  {boxes.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  <option value="__none">None: don't move on</option>
+                </select>
+              </label>
+              {dates.length > 1 && (
+                <div className="stack">Dates that move
+                  {dates.map((f) => (
+                    <label key={f.id} className="inline-check"><input type="checkbox" checked={chosen.has(f.id)}
+                      onChange={(e) => { const n = new Set(chosen); if (e.target.checked) n.add(f.id); else n.delete(f.id);
+                        set({ dateFields: n.size === dates.length ? null : [...n] }); }} /> {f.name}</label>
+                  ))}
+                </div>
+              )}
+              <p className="hint">Ticking a repeating record keeps a ticked copy, and moves the record on to its next date, unticked.
+                Later dates can be done ahead of time from the record.</p>
+            </>
+          );
+        })()}
         {type === "attachment" && <p className="hint">Upload files of up to 25 MB each. Images show as thumbnails and can be used as gallery covers.</p>}
 
         {/* ---------------- link */}

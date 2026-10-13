@@ -152,6 +152,7 @@ def files_shots(b, u):
     sign_in(pg, u)
     gallery = next(v for v in u.j("GET", f"/tables/{t['id']}")["views"] if v["type"] == "gallery")
     go(pg, "table", t["id"], gallery["id"])
+    pg.mouse.move(2, 700)
     pg.wait_for_timeout(1200)
     pg.screenshot(path=f"{OUT}/files.png")
     pg.goto(f"{BASE}/#/table/{t['id']}?record={rid['Quarterly report.docx']}")
@@ -200,9 +201,17 @@ def main():
                  ("combined", "combo", ids["combo"], "calendar")]
         for name, kind, id, view in shots:
             go(pg, kind, id, view)
+            pg.mouse.move(2, 700)   # (no card or row under the mouse)
             pg.screenshot(path=f"{OUT}/{name}.png")
-        # the record panel
+        # the record panel (beside the table), its fields in sections
+        P = u.fields(ids["projects"])
+        grid = next(v for v in u.j("GET", f"/tables/{ids['projects']}")["views"] if v["id"] == views["projects_grid"])
+        sections = [{"name": "Schedule", "fields": [P[n] for n in ("Start", "Due", "Progress") if n in P]},
+                    {"name": "Money", "fields": [P[n] for n in ("Budget", "Cost per day") if n in P]}]
+        u.j("PATCH", f"/views/{grid['id']}", json={"config": {**grid["config"], "recordSections": sections}})
         go(pg, "table", ids["projects"], views["projects_grid"])
+        pg.reload()   # (the page keeps the table it loaded: read the view again)
+        pg.wait_for_selector(".grid tbody tr")
         pg.locator(".grid tbody tr:not(.add-row):not(.spacer)").first.locator("td.rownum").click()
         pg.wait_for_timeout(400)
         pg.screenshot(path=f"{OUT}/record.png")

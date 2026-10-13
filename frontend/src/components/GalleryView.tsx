@@ -1,11 +1,13 @@
 import { useContext, useState } from "react";
 import type { Attachment, Rec } from "../types";
-import { buildGroups, viewGroups, type GroupNode } from "../util";
+import { buildGroups, recordTitle, viewGroups, type GroupNode } from "../util";
 import { Chip, RefsContext } from "./Cells";
-import { fileExt, thumbUrl } from "../files";
+import { fileExt, previewStatus, thumbUrl } from "../files";
 import { Icon } from "./Icon";
+import { isTouch } from "./useNarrow";
 import { CardBody } from "./KanbanView";
-import type { ViewProps } from "./viewTypes";
+import { CARD_FIELDS, densityOf, type ViewProps } from "./viewTypes";
+import { SelectBox, SelectionBar, useSelection } from "./BulkBar";
 
 const looksLikeImage = (v: unknown): v is string => typeof v === "string" && /^(https?:|data:image\/)/i.test(v.trim());
 
@@ -23,7 +25,7 @@ function coverSrc(v: unknown): string | null {
 
 const PAGE = 120; // cards rendered before "Show more"
 
-export function GalleryView({ fields, visible, records, view, ops }: ViewProps) {
+export function GalleryView({ ds, fields, visible, records, view, ops }: ViewProps) {
   const [limit, setLimit] = useState(PAGE);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { refs } = useContext(RefsContext);
@@ -31,20 +33,30 @@ export function GalleryView({ fields, visible, records, view, ops }: ViewProps) 
   // Only show cover areas when at least one card actually has an image.
   const cover = coverField && records.some((r) => coverSrc(r.data[coverField.id])) ? coverField : undefined;
   const specs = viewGroups(view.config);
+  const density = densityOf(view.config);
+  const selection = useSelection(records);
+  const selectable = !!ops.bulk && (ops.can.edit || ops.can.delete);
+  const bar = <SelectionBar selected={selection.selected} total={records.length} fields={fields} shown={visible} ops={ops} name={ds.name}
+    onAll={() => selection.setAll(true)} onClear={selection.clear} />;
 
   const card = (r: Rec) => {
     const src = cover ? coverSrc(r.data[cover.id]) : null;
     return (
-      <div key={r.id} className="card gallery-card" style={{ borderTopColor: ops.colorFor(r) ?? "transparent" }} onClick={() => ops.open(r)}>
+      <div key={r.id} className={`card gallery-card ${selection.sel.has(r.id) ? "selected" : ""}`} style={{ borderTopColor: ops.colorFor(r) ?? "transparent" }}
+        onClick={() => (selection.sel.size && isTouch ? selection.toggle(r.id) : ops.open(r))}
+        onContextMenu={selectable ? (e) => { e.preventDefault(); selection.toggle(r.id); } : undefined}>
+        {selectable && <SelectBox on={selection.sel.has(r.id)} label={recordTitle(fields, r)} onToggle={() => selection.toggle(r.id)} />}
         {cover && (
           <div className="gallery-cover">
             {src ? <img src={src} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = "none"; }}
                 className={Array.isArray(r.data[cover.id]) && !/^image\//.test(r.data[cover.id][0]?.mime ?? "image/") ? "doc" : undefined} />
               : Array.isArray(r.data[cover.id]) && r.data[cover.id][0]?.name
-                ? <span className="file-ext big">{fileExt(r.data[cover.id][0].name)}</span> : null}
+                ? <span className="cover-missing"><span className="file-ext big">{fileExt(r.data[cover.id][0].name)}</span>
+                    {previewStatus(r.data[cover.id][0]) && <span className={`cover-status ${previewStatus(r.data[cover.id][0])!.state}`}>
+                      {previewStatus(r.data[cover.id][0])!.text}</span>}</span> : null}
           </div>
         )}
-        <CardBody rec={r} fields={visible} skip={cover ? [cover.id] : undefined} />
+        <CardBody rec={r} fields={visible} skip={cover ? [cover.id] : undefined} max={CARD_FIELDS[density]} />
       </div>
     );
   };
@@ -75,7 +87,8 @@ export function GalleryView({ fields, visible, records, view, ops }: ViewProps) 
 
   if (specs.length) {
     return (
-      <div className="gallery-groups">
+      <div className={`gallery-groups density-${density} ${selection.sel.size ? "selecting" : ""}`}>
+        {bar}
         {buildGroups(records, specs, fields, refs).map(section)}
         {ops.can.add && (
           <button className="ghost-btn" onClick={() => ops.create({}, true)}><Icon name={ops.addLabel ? "upload" : "plus"} size={14} /> {ops.addLabel ?? "New record"}</button>
@@ -85,7 +98,8 @@ export function GalleryView({ fields, visible, records, view, ops }: ViewProps) 
   }
 
   return (
-    <div className="gallery">
+    <div className={`gallery density-${density} ${selection.sel.size ? "selecting" : ""}`}>
+      {bar}
       {records.slice(0, limit).map(card)}
       {more(records)}
       {ops.can.add && (

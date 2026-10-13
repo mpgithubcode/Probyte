@@ -27,7 +27,8 @@ def test_table_template_round_trip(user):
     new = user.j("POST", "/tables/from-template", json={"body": tpl, "base_id": user.base_id, "name": "Jobs 2"})
     N = user.fields(new["id"])
     info = user.j("GET", f"/tables/{new['id']}")
-    assert [f["name"] for f in info["fields"]] == ["Name", "Notes", "Status", "Hours", "Rate", "Total", "Record ID"]
+    assert [f["name"] for f in info["fields"]] == ["Name", "Notes", "Status", "Hours", "Rate", "Total",
+                                                     "Created time", "Last modified time", "Created by", "Last modified by", "Record ID"]
     assert next(f for f in info["fields"] if f["name"] == "Hours")["required"]
     b2 = next(v for v in info["views"] if v["name"] == "Board")
     assert b2["config"]["groupBy"] == N["Status"] and b2["config"]["hidden"] == [N["Notes"]]

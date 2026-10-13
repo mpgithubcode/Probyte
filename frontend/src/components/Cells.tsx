@@ -10,7 +10,7 @@ import { Icon } from "./Icon";
 import { Popover } from "./Overlay";
 import { RecurrenceEditor } from "./RecurrenceEditor";
 import { describe as describeRepeat } from "../recur";
-import { attachmentUrl, fileExt, thumbUrl, viewOf } from "../files";
+import { attachmentUrl, fileExt, thumbUrl, viewOf, previewStatus } from "../files";
 import { FilePreview } from "./FileViewer";
 
 /** Titles of linked records / usernames for the current dataset, plus who is logged in. */
@@ -37,6 +37,8 @@ export { attachmentUrl, setAttachmentBase } from "../files";
 export const FileOpenContext = createContext<((item: Attachment) => boolean) | null>(null);
 
 /** Small previews; a click opens the full-screen viewer (or downloads what can't be shown). */
+const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
 export function AttachmentThumbs({ items, size = 24 }: { items: Attachment[]; size?: number }) {
   const [open, setOpen] = useState<number | null>(null);
   const openFile = useContext(FileOpenContext);
@@ -45,7 +47,7 @@ export function AttachmentThumbs({ items, size = 24 }: { items: Attachment[]; si
       {items.map((a, i) => {
         const src = thumbUrl(a);
         return (
-          <a key={a.id} href={attachmentUrl(a, !viewOf(a))} target="_blank" rel="noreferrer" title={a.name}
+          <a key={a.id} href={attachmentUrl(a, !viewOf(a))} target="_blank" rel="noreferrer" title={src ? a.name : [a.name, previewStatus(a)?.text].filter(Boolean).join(" · ")}
             onClick={(e) => {
               e.stopPropagation();
               if (openFile?.(a)) { e.preventDefault(); return; }
@@ -53,10 +55,18 @@ export function AttachmentThumbs({ items, size = 24 }: { items: Attachment[]; si
             }}
             className="thumb" style={{ width: size, height: size }}>
             {src ? <img src={src} alt={a.name} loading="lazy" /> : <span className="file-ext">{fileExt(a.name)}</span>}
+            {!src && previewStatus(a) && <span className={`thumb-status ${previewStatus(a)!.state}`} />}
           </a>
         );
       })}
-      {open !== null && <FilePreview items={items} index={open} onClose={() => setOpen(null)} />}
+      {open !== null && (
+        // (React passes events from the viewer, drawn over the page, up to this cell: a click on Edit or an arrow
+        // there would select or edit the cell, which closes the viewer)
+        <span className="viewer-host" onClick={stop} onMouseDown={stop} onPointerDown={stop} onDoubleClick={stop} onKeyDown={stop}
+          onContextMenu={stop} onPaste={stop} onCopy={stop}>
+          <FilePreview items={items} index={open} onClose={() => setOpen(null)} />
+        </span>
+      )}
     </span>
   );
 }

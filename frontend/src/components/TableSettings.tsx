@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Base, Dataset, Field, Storage } from "../types";
-import { FIELD_TYPES, linkSummary, nativeKind, timeAgo } from "../util";
+import { FIELD_TYPES, linkSummary, nativeKind, timeAgo, BUILTIN_KEYS } from "../util";
 import { EmojiPicker } from "./EmojiPicker";
 import { FieldIcon, Icon, tableIcon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
@@ -47,7 +47,8 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
   const synced = ["tasks", "events", "mixed", "contacts"].includes(kind);
   const files = native === "files";
   const remote = kind === "remote";
-  const hasDates = ds.fields.some((f) => f.type === "date" || f.type === "created_time" || f.type === "last_modified_time");
+  // (the built-in Created time / Last modified time every table has don't count: dates someone added do)
+  const hasDates = ds.fields.some((f) => (f.type === "date" || f.type === "created_time" || f.type === "last_modified_time") && !BUILTIN_KEYS.has(f.system_key ?? ""));
   const sections: { id: Section; label: string }[] = [
     { id: "general", label: "General" },
     ...(ds.kind === "table" && !remote ? [{ id: "fields" as Section, label: "Fields" }] : []),

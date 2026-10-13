@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Base, Role } from "../types";
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
+import { showToast } from "../toast";
 
 /** Sharing a base with other users of this server (backend/app/data/access.py). Its owner and admins add people and
  * set their roles; someone it's shared with chooses whether their views follow the base's, or leaves it. */
@@ -49,6 +50,7 @@ export function BaseSharing({ base, me, onClose, onChanged }: { base: Base; me: 
           </div>
         )}
         {manage && <p className="hint">{ROLE_HELP[role]}. Only the owner can delete the base.</p>}
+        {manage && <InviteLinks baseId={base.id} owner={data?.you === "owner"} onJoinedChange={load} />}
         {err && <div className="error">{err}</div>}
         {data && (
           <table className="members-table">
@@ -92,5 +94,54 @@ export function BaseSharing({ base, me, onClose, onChanged }: { base: Base; me: 
         )}
       </div>
     </Modal>
+  );
+}
+
+interface Invite { id: string; token: string; role: Exclude<Role, "owner">; follow_views: boolean; enabled: boolean; expires_at: string | null; uses: number }
+
+/** Links that add whoever opens them (signed in on this server) to the base, with a role, and whether their views follow
+ * the base's (each person can change that afterwards, below). */
+function InviteLinks({ baseId, owner, onJoinedChange }: { baseId: string; owner: boolean; onJoinedChange: () => void }) {
+  const [list, setList] = useState<Invite[] | null>(null);
+  const [role, setRole] = useState<Exclude<Role, "owner">>("editor");
+  const [follow, setFollow] = useState(true);
+  const [days, setDays] = useState(0);
+  const [err, setErr] = useState("");
+  const load = () => api.get<Invite[]>(`/bases/${baseId}/invites`).then(setList).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, [baseId]);
+  const url = (i: Invite) => `${location.origin}${location.pathname}#/join/${i.token}`;
+  const run = (p: Promise<unknown>) => { setErr(""); p.then(load).then(onJoinedChange).catch((e) => setErr(e.message)); };
+  const copy = (i: Invite) => navigator.clipboard?.writeText(url(i)).then(() => showToast("Invite link copied"), () => showToast(url(i)));
+  return (
+    <div className="invite-links">
+      <h4>Share with a link</h4>
+      <p className="muted small">Anyone with an account on this server who opens the link joins the base. Turn a link off to stop it working;
+        people who joined stay until you remove them.</p>
+      <div className="row invite-new">
+        <select className="input sm" value={role} onChange={(e) => setRole(e.target.value as Exclude<Role, "owner">)} aria-label="Role for people who join">
+          <option value="viewer">Joins as viewer</option><option value="editor">Joins as editor</option>{owner && <option value="admin">Joins as admin</option>}
+        </select>
+        <select className="input sm" value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Link lasts">
+          <option value={0}>Until turned off</option><option value={1}>1 day</option><option value={7}>7 days</option><option value={30}>30 days</option>
+        </select>
+        <label className="inline-check small"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Views stay updated</label>
+        <button className="btn sm primary" onClick={() => run(api.post<Invite>(`/bases/${baseId}/invites`, { role, follow_views: follow, expires_days: days || null })
+          .then((i) => copy(i)))}><Icon name="link" size={14} /> Create link</button>
+      </div>
+      {err && <div className="error small">{err}</div>}
+      {list?.map((i) => (
+        <div key={i.id} className={`invite-row ${i.enabled ? "" : "off"}`}>
+          <code className="invite-url" title={url(i)}>…/join/{i.token.slice(0, 8)}…</code>
+          <span className="muted small">{i.role} · {i.follow_views ? "views stay updated" : "own copies of views"} · {i.uses} joined
+            {i.expires_at ? ` · until ${new Date(i.expires_at).toLocaleDateString()}` : ""}</span>
+          <span className="spacer" />
+          <button className="btn sm" onClick={() => copy(i)} disabled={!i.enabled}><Icon name="copy" size={13} /> Copy</button>
+          <label className="switch" title={i.enabled ? "On" : "Off"}>
+            <input type="checkbox" checked={i.enabled} aria-label="Link on" onChange={(e) => run(api.patch(`/bases/${baseId}/invites/${i.id}`, { enabled: e.target.checked }))} /><span />
+          </label>
+          <button className="icon-btn" title="Delete the link" aria-label="Delete the link" onClick={() => run(api.del(`/bases/${baseId}/invites/${i.id}`))}><Icon name="trash" size={14} /></button>
+        </div>
+      ))}
+    </div>
   );
 }

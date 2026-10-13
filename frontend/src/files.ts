@@ -77,3 +77,17 @@ export async function fetchBytes(url: string): Promise<ArrayBuffer> {
   if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText);
   return r.arrayBuffer();
 }
+
+// file types the server makes a cover for (images, PDFs, office files through the converter, text): keep in step with
+// previewable() in backend/app/files/kinds.py
+const COVER_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|heif|pdf|docx?|docm|dotx?|odt|ott|rtf|wpd|pptx?|pps|ppsx|pptm|odp|otp|odg|vsdx?|xlsx?|xlsm|ods|txt|md|markdown|log|csv|tsv|rst|srt|vtt|ics|vcf|json|xml|ya?ml|js|ts|py|sh|css|html?)$/i;
+
+/** Why a file of a files table shows no thumbnail: its cover is still being made, can't be made now (tried again), or
+ * couldn't be made. null: it has one, or its kind never has one. */
+export function previewStatus(a: Attachment): { state: "pending" | "retrying" | "failed"; text: string } | null {
+  if (!a.file || a.thumb || isSvg(a)) return null;
+  if (a.preview_error) return a.preview_retry ? { state: "retrying", text: `Preview pending: ${a.preview_error}` }
+    : { state: "failed", text: `Couldn't preview: ${a.preview_error}` };
+  if (!a.previewed && (COVER_EXT.test(a.name) || /^(image|text)\//.test(a.mime) || a.mime === "application/pdf")) return { state: "pending", text: "Preview pending…" };
+  return null;
+}

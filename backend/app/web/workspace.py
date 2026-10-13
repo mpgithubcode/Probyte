@@ -291,3 +291,113 @@ def account_addressbooks(account_id: str, user=User):
         return sync.list_addressbooks(a)
     except Exception as e:
         raise HTTPException(400, f"Could not list address books: {e}")
+
+
+# ======================================================================== sharing a base with a link
+
+class InviteIn(BaseModel):
+    role: str = "editor"
+    follow_views: bool = True
+    expires_days: int | None = None   # none: until it's turned off
+
+
+class InvitePatch(BaseModel):
+    role: str | None = None
+    follow_views: bool | None = None
+    enabled: bool | None = None
+
+
+def _invite_out(i) -> dict:
+    return {k: i[k] for k in ("id", "token", "role", "follow_views", "enabled", "expires_at", "uses", "created_at")}
+
+
+def _invite_role(b, role: str) -> str:
+    role = _role(role)
+    if role == "admin" and b["role"] != "owner":
+        raise HTTPException(403, "Only the base's owner can make a link that joins people as admins")
+    return role
+
+
+@router.get("/api/bases/{base_id}/invites")
+def list_invites(base_id: str, user=User):
+    """The base's invite links (its owner and admins)."""
+    with connection() as conn:
+        store.get_base(conn, base_id, user["id"], need="admin")
+        return [_invite_out(i) for i in conn.execute("SELECT * FROM base_invites WHERE base_id = %s ORDER BY created_at", (base_id,)).fetchall()]
+
+
+@router.post("/api/bases/{base_id}/invites")
+def create_invite(base_id: str, body: InviteIn, user=User):
+    """A link that adds whoever opens it (signed in on this server) to the base."""
+    import secrets
+    with connection() as conn:
+        b = store.get_base(conn, base_id, user["id"], need="admin")
+        if body.expires_days is not None and not 1 <= body.expires_days <= 365:
+            raise HTTPException(400, "A link lasts 1 to 365 days, or until it's turned off")
+        i = conn.execute(
+            "INSERT INTO base_invites (base_id, token, role, follow_views, expires_at, created_by) "
+            "VALUES (%s, %s, %s, %s, CASE WHEN %s::int IS NULL THEN NULL ELSE now() + make_interval(days => %s::int) END, %s) RETURNING *",
+            (base_id, secrets.token_urlsafe(16), _invite_role(b, body.role), body.follow_views, body.expires_days, body.expires_days, user["id"])).fetchone()
+    return _invite_out(i)
+
+
+@router.patch("/api/bases/{base_id}/invites/{invite_id}")
+def change_invite(base_id: str, invite_id: str, body: InvitePatch, user=User):
+    with connection() as conn:
+        b = store.get_base(conn, base_id, user["id"], need="admin")
+        i = conn.execute("SELECT * FROM base_invites WHERE id = %s AND base_id = %s", (invite_id, base_id)).fetchone() or store.not_found("Link not found")
+        i = conn.execute("UPDATE base_invites SET role = %s, follow_views = %s, enabled = %s WHERE id = %s RETURNING *",
+                         (_invite_role(b, body.role) if body.role else i["role"],
+                          i["follow_views"] if body.follow_views is None else body.follow_views,
+                          i["enabled"] if body.enabled is None else body.enabled, invite_id)).fetchone()
+    return _invite_out(i)
+
+
+@router.delete("/api/bases/{base_id}/invites/{invite_id}")
+def delete_invite(base_id: str, invite_id: str, user=User):
+    """The link stops working (people who joined with it stay members)."""
+    with connection() as conn:
+        store.get_base(conn, base_id, user["id"], need="admin")
+        conn.execute("DELETE FROM base_invites WHERE id = %s AND base_id = %s", (invite_id, base_id))
+    return {"ok": True}
+
+
+def _usable_invite(conn, token: str):
+    i = conn.execute("SELECT i.*, b.name AS base_name, b.user_id AS owner_id, u.username AS owner FROM base_invites i "
+                     "JOIN bases b ON b.id = i.base_id JOIN users u ON u.id = b.user_id WHERE i.token = %s", (token,)).fetchone()
+    if not i or not i["enabled"] or (i["expires_at"] and conn.execute("SELECT now() > %s AS x", (i["expires_at"],)).fetchone()["x"]):
+        raise HTTPException(404, "This invite link doesn't work any more: ask for a new one")
+    return i
+
+
+@router.get("/api/join/{token}")
+def invite_info(token: str, user=User):
+    """What an invite link joins (for the page that asks before joining)."""
+    with connection() as conn:
+        i = _usable_invite(conn, token)
+        mine = str(i["owner_id"]) == str(user["id"])
+        member = conn.execute("SELECT role FROM base_members WHERE base_id = %s AND user_id = %s", (i["base_id"], user["id"])).fetchone()
+    return {"base_id": i["base_id"], "base": i["base_name"], "owner": i["owner"], "role": i["role"], "follow_views": i["follow_views"],
+            "already": "owner" if mine else (member["role"] if member else None)}
+
+
+@router.post("/api/join/{token}")
+def join_with_invite(token: str, user=User):
+    """Join the base with the link's role (someone who's already in it keeps their role, unless the link's is higher)."""
+    if user.get("api_key"):
+        raise HTTPException(403, "Join a base in the app, not with an API key")
+    with connection() as conn:
+        i = _usable_invite(conn, token)
+        if str(i["owner_id"]) == str(user["id"]):
+            return {"base_id": i["base_id"], "role": "owner"}
+        rank = {"viewer": 1, "editor": 2, "admin": 3}
+        have = conn.execute("SELECT role FROM base_members WHERE base_id = %s AND user_id = %s", (i["base_id"], user["id"])).fetchone()
+        if have and rank[have["role"]] >= rank[i["role"]]:
+            return {"base_id": i["base_id"], "role": have["role"]}
+        conn.execute("INSERT INTO base_members (base_id, user_id, role, follow_views, added_by) VALUES (%s,%s,%s,%s,%s) "
+                     "ON CONFLICT (base_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+                     (i["base_id"], user["id"], i["role"], i["follow_views"], i["created_by"]))
+        conn.execute("UPDATE base_invites SET uses = uses + 1 WHERE id = %s", (i["id"],))
+    if not i["follow_views"] and not have:   # their own copies of the views, as they are now
+        my_membership(str(i["base_id"]), MyMembership(follow_views=False), user)
+    return {"base_id": i["base_id"], "role": i["role"]}

@@ -206,7 +206,7 @@ def _job_preview(payload):
         drv = _storage(conn, table)
     item = (rec["data"].get(keys["file"]) or [{}])[0]
     mime, path, size = item.get("mime") or "", rec["caldav_href"], item.get("size") or 0
-    thumb, text = False, None
+    thumb, text, error = False, None, None
     temporary = None   # the converter or the storage couldn't be reached: not tried yet (the job, and later syncs, try again)
     try:
         if _heic(mime, path):
@@ -251,12 +251,22 @@ def _job_preview(payload):
     except HTTPException as e:
         if e.status_code >= 500:
             temporary = e
+        error = str(e.detail)
         log.info("no preview for %s: %s", path, e.detail)
     except Exception as e:
+        error = "The file couldn't be read for a preview"
         log.info("no preview for %s: %s", path, e)
     if temporary is not None:
-        log.warning("no preview for %s yet (tried again later): %s", path, getattr(temporary, "detail", temporary))
-        raise RuntimeError(f"preview of {path} not made yet")
+        # said on the file (the app shows "Preview pending: …"), and not marked tried: the job and later syncs try again
+        why = str(getattr(temporary, "detail", "") or "The file's storage couldn't be reached")
+        log.warning("no preview for %s yet (tried again later): %s", path, why)
+        with connection() as conn:
+            cur = conn.execute("SELECT data FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
+            items = (cur["data"].get(keys["file"]) or []) if cur else []
+            if items:
+                conn.execute("UPDATE records SET data = data || %s WHERE id = %s",
+                             (Jsonb({keys["file"]: [{**items[0], "preview_error": why, "preview_retry": True}]}), rid))
+        raise RuntimeError(f"preview of {path} not made yet: {why}")
     with connection() as conn:
         cur = conn.execute("SELECT data, caldav_etag FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
         if not cur:
@@ -264,8 +274,9 @@ def _job_preview(payload):
         patch = {}
         items = cur["data"].get(keys["file"]) or []
         if items:  # tried for this version (so the next sync doesn't try again), and whether there's a cover now
-            patch[keys["file"]] = [{**items[0], "previewed": cur["caldav_etag"], **({"thumb": True} if thumb else {}),
-                                    **({"pv": PREVIEW_VERSION} if CONVERTER else {})}]
+            done = {k: v for k, v in items[0].items() if k not in ("preview_error", "preview_retry")}
+            patch[keys["file"]] = [{**done, "previewed": cur["caldav_etag"], **({"thumb": True} if thumb else {}),
+                                    **({"pv": PREVIEW_VERSION} if CONVERTER else {}), **({"preview_error": error} if error and not thumb else {})}]
         if text is not None:
             patch[keys["text"]] = text.replace("\x00", "")
         conn.execute("UPDATE records SET data = data || %s, updated_at = now() WHERE id = %s", (Jsonb(patch), rid))

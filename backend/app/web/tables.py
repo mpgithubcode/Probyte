@@ -9,11 +9,13 @@ from app.calc.compute import Engine
 from app.core.db import connection, Jsonb
 from app.core.secretbox import unseal
 from app.data import access, store, values
+from app.data.schema import BUILTIN_FIELDS
 from app.dav import sync
 from app.sharing import linked as remote
 from app.web.common import _own_account, access_info, _own_field, _table_out, COMPONENTS, FastJSON, FieldIn, FieldPatch, FormulaCheck, RelinkIn, TableIn, TablePatch, User
 
 router = APIRouter()
+BUILTIN_KEYS = {k for k, _, _ in BUILTIN_FIELDS}
 log = logging.getLogger("probyte.trash")
 
 
@@ -557,6 +559,8 @@ def delete_field(field_id: str, user=User):
         f = _own_field(conn, field_id, user)
         if f["system_key"] == "remote":
             raise HTTPException(400, "A linked table's fields come from its source link")
+        if f["system_key"] in BUILTIN_KEYS:
+            raise HTTPException(400, "Built-in fields can't be deleted (hide them in the view instead)")
         if f["system_key"]:
             raise HTTPException(400, "CalDAV fields can't be deleted (hide them in the view instead)")
         if f["is_primary"]:

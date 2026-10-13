@@ -4,7 +4,7 @@ from app.calc.compute import COMPUTED_TYPES, Engine
 from app.core import events
 from app.core.db import Jsonb
 from app.data import audit
-from app.data.behaviors import _is_task, advance_recurring, apply_done, apply_event_defaults, apply_task_auto, sync_done
+from app.data.behaviors import _is_task, advance_recurring, advance_repeating_record, apply_done, apply_event_defaults, apply_task_auto, sync_done
 from app.data.rules import apply_defaults, check_rules
 from app.data.schema import bad, DAV_KINDS, ensure_choices, get_fields, get_table, is_remote_table, is_served, not_found, SELECT_TYPES
 from app.formats import fieldformats, recur
@@ -173,7 +173,7 @@ def update_record(conn, record_id, patch: dict, user_id=None, source="app"):
     data = {**old, **patch}
     keys = {f["system_key"]: str(f["id"]) for f in fields if f["system_key"]}
     patch = apply_done(table, keys, old, data, patch)
-    history = advance_recurring(table, keys, old, data, patch)
+    history = advance_recurring(table, keys, old, data, patch) or advance_repeating_record(table, fields, old, data, patch)
     apply_task_auto(table, fields, old, data, patch)
     apply_event_defaults(table, fields, data, patch)
     sync_done(table, keys, data)
@@ -193,12 +193,59 @@ def update_record(conn, record_id, patch: dict, user_id=None, source="app"):
     if history is not None:
         # A repeating task moved on to its next date; keep the finished occurrence as a completed task.
         apply_task_auto(table, fields, old, history, patch)
-        h = insert_record(conn, r["table_id"], history, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
+        sync_done(table, keys, history)
+        h = (insert_record(conn, r["table_id"], history, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
+             if table["kind"] in DAV_KINDS else insert_record(conn, r["table_id"], history, user_id=user_id))
         _sync_links(conn, fields, h["id"], r["table_id"], {}, history)
         audit.note(conn, r["table_id"], h["id"], "created")
         _changed(conn, table, "record.created", h["id"], source)
     _changed(conn, table, "record.updated", record_id, source, old)
     return r, table
+
+
+def complete_occurrence(conn, record_id, occurrence: str, user_id=None, source="app"):
+    """Mark one date of a repeating task (or record) done ahead of the others: its current date completes it as usual
+    (it moves on to the next); a later date becomes a completed copy on that date and is skipped in the series."""
+    from app.data.behaviors import repeat_settings
+    r = conn.execute("SELECT * FROM records WHERE id = %s AND NOT deleted", (record_id,)).fetchone() or not_found("Record not found")
+    table = get_table(conn, r["table_id"], user_id)
+    fields = get_fields(conn, r["table_id"])
+    keys = {f["system_key"]: str(f["id"]) for f in fields if f["system_key"]}
+    data = dict(r["data"])
+    if table["kind"] in ("tasks", "mixed") and keys.get("rrule") and _is_task(table, keys, data):
+        rule_id, done = keys["rrule"], {keys["status"]: "Completed"}
+        dates = [keys.get("dtstart"), keys.get("due") or keys.get("dtend")]
+    else:
+        rep = next((x for x in repeat_settings(fields) if data.get(x[0])), None)
+        if not rep:
+            bad("This record doesn't repeat, or has no checkbox to complete it")
+        rule_id, done, dates = rep[0], {rep[1]: True}, rep[2]
+    rule = data.get(rule_id)
+    anchor = next((f for f in dates if f and data.get(f)), None)
+    if not rule or not anchor:
+        bad("This record doesn't repeat from a date")
+    target = recur.parse_value_dt(occurrence)
+    current = recur.parse_value_dt(data[anchor])
+    if target is None:
+        bad("Which date?")
+    if recur.rid_key(occurrence) == recur.rid_key(data[anchor]) or (target and current and recur.delta_between(data[anchor], target).total_seconds() <= 0):
+        return update_record(conn, record_id, done, user_id, source)   # the current one: moves on as usual
+    delta = recur.delta_between(data[anchor], target)
+    copy = {**data, rule_id: None, **done}
+    for f in dates:
+        if f and data.get(f):
+            copy[f] = recur.shift(data[f], delta)
+    if table["kind"] in ("tasks", "mixed"):
+        apply_task_auto(table, fields, {keys["status"]: data.get(keys["status"])}, copy, done)
+        sync_done(table, keys, copy)
+    h = (insert_record(conn, r["table_id"], copy, user_id=user_id, caldav_uid=new_uid(), sync_status="dirty")
+         if table["kind"] in DAV_KINDS else insert_record(conn, r["table_id"], copy, user_id=user_id))
+    _sync_links(conn, fields, h["id"], r["table_id"], {}, copy)
+    audit.note(conn, r["table_id"], h["id"], "created")
+    _changed(conn, table, "record.created", h["id"], source)
+    rule_v, ex = recur.parse(rule)
+    update_record(conn, record_id, {rule_id: recur.compose(rule_v, ex + [copy[anchor]], recur.overrides(rule))}, user_id, source)
+    return h, table
 
 
 def delete_record(conn, record_id, user_id=None, source="app"):

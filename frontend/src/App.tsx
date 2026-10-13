@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { DatasetPage } from "./components/DatasetPage";
 import { Icon } from "./components/Icon";
+import { Modal } from "./components/Overlay";
 import { LoginPage } from "./components/LoginPage";
 import type { Tab as SettingsTab } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
@@ -24,6 +25,9 @@ function parseExt(): ExtRoute | null {
   const m = location.hash.match(/^#\/x\/([^/?]+)\/?(.*)$/);
   return m ? { ext: m[1], path: m[2] } : null;
 }
+
+/** #/join/<token>: an invite link to a shared base. */
+const parseJoin = () => location.hash.match(/^#\/join\/([A-Za-z0-9_-]+)/)?.[1] ?? null;
 
 function parseHash(): Route | null {
   const m = location.hash.match(/^#\/(table|combo)\/([^/?]+)(?:\/([^/?]+))?(?:\?record=([^&]+))?/);
@@ -56,6 +60,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
   const [ws, setWs] = useState<Workspace | null>(null);
   const [route, setRoute] = useState<Route | null>(parseHash);
   const [extRoute, setExtRoute] = useState<ExtRoute | null>(parseExt);
+  const [joinToken, setJoinToken] = useState<string | null>(parseJoin);
   const extensions = useExtensions();
   const [modal, setModal] = useState<"table" | "combo" | "settings" | "trash" | "search" | null>(null);
   // Ctrl/⌘ K: search everything
@@ -79,7 +84,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
 
   useEffect(() => { loadWs(); }, [loadWs]);
   useEffect(() => {
-    const onHash = () => { setRoute(parseHash()); setExtRoute(parseExt()); };
+    const onHash = () => { setRoute(parseHash()); setExtRoute(parseExt()); setJoinToken(parseJoin()); };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -100,8 +105,8 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
 
   // Open the first database when nothing is selected.
   useEffect(() => {
-    if (ws && !route && !extRoute && ws.tables[0]) go({ kind: "table", id: ws.tables[0].id });
-  }, [ws, route, extRoute]);
+    if (ws && !route && !extRoute && !joinToken && ws.tables[0]) go({ kind: "table", id: ws.tables[0].id });
+  }, [ws, route, extRoute, joinToken]);
 
   const onError = useCallback((m: string) => setToast(m), []);
 
@@ -147,6 +152,13 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
           onSaved={(id) => { loadWs(); go({ kind: "combo", id }); }} />
       )}
       {modal === "settings" && <SettingsModal user={user} ws={ws} initialTab={settingsTab} onClose={() => setModal(null)} onAccountsChanged={loadWs} onUserChanged={onUserChanged} />}
+        {joinToken && <JoinBase token={joinToken} onClose={() => { location.hash = ""; }}
+          onJoined={async (baseId) => {
+            const w = await api.get<Workspace>("/workspace");
+            setWs(w);
+            const first = w.tables.find((t) => t.base_id === baseId);
+            location.hash = first ? `/table/${first.id}` : "";
+          }} />}
         {modal === "trash" && <TrashModal onClose={() => setModal(null)} onChanged={loadWs} />}
         {modal === "search" && <SearchModal onClose={() => setModal(null)} onOpen={(tableId, recordId) => go({ kind: "table", id: tableId, record: recordId })} />}
       </Suspense>
@@ -162,6 +174,35 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
         </div>
       )}
     </div>
+  );
+}
+
+/** An invite link to a base: who shares it and with what role, then join (or open it, if already in it). */
+function JoinBase({ token, onClose, onJoined }: { token: string; onClose: () => void; onJoined: (baseId: string) => void }) {
+  const [info, setInfo] = useState<{ base_id: string; base: string; owner: string; role: string; follow_views: boolean; already: string | null } | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.get<typeof info>(`/join/${token}`).then(setInfo).catch((e) => setErr(e.message)); }, [token]);
+  const join = async () => {
+    setBusy(true);
+    try { const r = await api.post<{ base_id: string }>(`/join/${token}`); onJoined(r.base_id); }
+    catch (e) { setErr((e as Error).message); setBusy(false); }
+  };
+  return (
+    <Modal title="Join a shared base" width={440} onClose={onClose}
+      footer={<><span className="spacer" /><button className="btn" onClick={onClose}>Cancel</button>
+        {info && (info.already ? <button className="btn primary" onClick={() => onJoined(info.base_id)}>Open it</button>
+          : <button className="btn primary" disabled={busy} onClick={join}>{busy ? "Joining…" : "Join"}</button>)}</>}>
+      {err && <div className="error">{err}</div>}
+      {!info && !err && <p className="muted">Checking the link…</p>}
+      {info && (
+        <div className="form">
+          <p><b>{info.owner}</b> shares the base <b>“{info.base}”</b> with you as {info.role === "admin" ? "an" : "a"} <b>{info.role}</b>.</p>
+          {info.already ? <p className="muted">You're already in it{info.already === "owner" ? " (it's yours)" : ` as ${info.already === "admin" ? "an" : "a"} ${info.already}`}.</p>
+            : <p className="muted small">{info.follow_views ? "Its views stay as the base's are, as they change." : "You get your own copies of its views."} You can change that, or leave the base, in its sharing settings.</p>}
+        </div>
+      )}
+    </Modal>
   );
 }
 

@@ -12,6 +12,9 @@ export interface Attachment {
   id: string; name: string; mime: string; size: number; url?: string;
   file?: boolean;   // a file of a files table (S3 / WebDAV): id is its record's id
   thumb?: boolean;  // it has a small preview image
+  previewed?: string;       // files tables: a preview was tried for this version
+  preview_error?: string;   // …and why there's none
+  preview_retry?: boolean;  // …and it's tried again (the converter or the storage couldn't be reached)
   view?: "image" | "pdf" | "video" | "audio" | "text" | null;  // how the browser can show it
 }
 
@@ -49,6 +52,8 @@ export interface FieldOptions {
   relationship?: "one" | "many";
   displayFieldId?: string | null;  // link: the field of the linked records shown in the cell (none: their title)
   displayFiles?: boolean;          // link / lookup: files shown as preview thumbnails (default) or by name
+  doneField?: string | false | null;   // Repeat (ordinary tables): the checkbox that completes it (false: none; unset: the only one)
+  dateFields?: string[] | null;        // Repeat: the dates that move to the next date (unset: all)
   symmetricFieldId?: string;
   symmetric?: boolean;
   // lookup / rollup / conditional
@@ -140,8 +145,13 @@ export interface ViewConfig {
   colorField?: string | null;
   scale?: "day" | "week" | "month";   // timeline
   coverField?: string | null;         // gallery: field holding an image URL
+  density?: Density;                  // table / list / board / gallery: how much room rows and cards take
+  recordSections?: RecordSection[];   // the record panel: fields grouped under headings (the rest at the top)
   chart?: ChartConfig;
 }
+
+export type Density = "compact" | "comfortable" | "roomy";
+export interface RecordSection { name: string; fields: string[] }
 
 export interface ChartConfig {
   type: "bar" | "line" | "donut";

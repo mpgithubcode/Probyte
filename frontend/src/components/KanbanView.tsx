@@ -5,35 +5,43 @@ import { CellValue, Chip } from "./Cells";
 import { Icon } from "./Icon";
 import { Popover } from "./Overlay";
 import { isTouch } from "./useNarrow";
-import type { ViewProps } from "./viewTypes";
+import { CARD_FIELDS, densityOf, type ViewProps } from "./viewTypes";
+import { SelectBox, SelectionBar, useSelection } from "./BulkBar";
 
-export function CardBody({ rec, fields, skip }: { rec: Rec; fields: Field[]; skip?: string[] }) {
+/** A card's title and its first few filled-in fields, one line each ("Folder  Photos"); how many follows the view's density. */
+export function CardBody({ rec, fields, skip, max = CARD_FIELDS.comfortable }: { rec: Rec; fields: Field[]; skip?: string[]; max?: number }) {
   const title = recordTitle(fields, rec);
-  const rest = fields.filter((f) => !f.is_primary && !skip?.includes(f.id) && f.id !== "__source" && f.type !== "button")
+  const rest = fields.filter((f) => !f.is_primary && !skip?.includes(f.id) && f.id !== "__source" && f.type !== "button" && f.type !== "record_id")
     .filter((f) => { const v = rec.data[f.id]; return v !== null && v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && !v.length); })
-    .slice(0, 4);
+    .slice(0, max);
   return (
     <>
       <div className="card-title">{title}</div>
-      {rest.map((f) => (
-        <div key={f.id} className="card-field">
-          <span className="card-label">{f.name}</span>
-          <CellValue field={f} value={rec.data[f.id]} />
-        </div>
-      ))}
+      {rest.length > 0 && (
+        <dl className="card-fields">
+          {rest.map((f) => (
+            <div key={f.id} className={`card-field ${f.type === "long_text" ? "wide" : ""}`}>
+              <dt className="card-label">{f.name}</dt>
+              <dd className="card-value"><CellValue field={f} value={rec.data[f.id]} /></dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </>
   );
 }
 
 const PAGE = 50; // cards rendered per column before "Show more"
 
-export function KanbanView({ fields, visible, records, view, ops, setConfig }: ViewProps) {
+export function KanbanView({ ds, fields, visible, records, view, ops, setConfig }: ViewProps) {
   const canEdit = (f: Field) => ops.can.edit && isEditable(f);
   const groupField = fields.find((f) => f.id === view.config.groupBy && f.type === "single_select");
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [moveMenu, setMoveMenu] = useState<{ rec: Rec; anchor: HTMLElement } | null>(null);
+  const selection = useSelection(records);
+  const selectable = !!ops.bulk && (ops.can.edit || ops.can.delete);
 
   if (!groupField) {
     const options = fields.filter((f) => f.type === "single_select");
@@ -64,7 +72,9 @@ export function KanbanView({ fields, visible, records, view, ops, setConfig }: V
   const shown = view.config.hideBlankCards ? records.filter((r) => !blank(r)) : records;
 
   return (
-    <div className="kanban">
+    <div className={`kanban density-${densityOf(view.config)} ${selection.sel.size ? "selecting" : ""}`}>
+      <SelectionBar selected={selection.selected} total={shown.length} fields={fields} shown={visible} ops={ops} name={ds.name}
+        onAll={() => selection.setAll(true)} onClear={selection.clear} />
       {columns.map((col) => {
         const items = shown.filter((r) => keyOf(r) === col.name);
         if (col.name === null && (!items.length || view.config.hideUnassigned)) return null;
@@ -86,18 +96,20 @@ export function KanbanView({ fields, visible, records, view, ops, setConfig }: V
             </div>
             <div className="kanban-cards">
               {items.slice(0, limits[colKey] ?? PAGE).map((r) => (
-                <div key={r.id} className={`card ${dragId === r.id ? "dragging" : ""}`} draggable={canDrag && !isTouch}
+                <div key={r.id} className={`card ${dragId === r.id ? "dragging" : ""} ${selection.sel.has(r.id) ? "selected" : ""}`} draggable={canDrag && !isTouch}
                   style={{ borderLeftColor: ops.colorFor(r) ?? "transparent" }}
                   onDragStart={(e) => { setDragId(r.id); e.dataTransfer.effectAllowed = "move"; }}
                   onDragEnd={() => { setDragId(null); setOver(null); }}
-                  onClick={() => ops.open(r)}>
+                  onClick={() => (selection.sel.size && isTouch ? selection.toggle(r.id) : ops.open(r))}
+                  onContextMenu={selectable ? (e) => { e.preventDefault(); selection.toggle(r.id); } : undefined}>
                   {isTouch && canDrag && (
                     <button className="card-move" title="Move to…" aria-label="Move to another column"
                       onClick={(e) => { e.stopPropagation(); setMoveMenu({ rec: r, anchor: e.currentTarget }); }}>
                       <Icon name="kanban" size={14} />
                     </button>
                   )}
-                  <CardBody rec={r} fields={visible} skip={[groupField.id]} />
+                  {selectable && <SelectBox on={selection.sel.has(r.id)} label={recordTitle(fields, r)} onToggle={() => selection.toggle(r.id)} />}
+                  <CardBody rec={r} fields={visible} skip={[groupField.id]} max={CARD_FIELDS[densityOf(view.config)]} />
                 </div>
               ))}
               {items.length > (limits[colKey] ?? PAGE) && (

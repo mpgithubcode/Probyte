@@ -3,8 +3,11 @@ import type { Field, ListAlign, Rec, ViewConfig } from "../types";
 import { buildGroups, isEditable, recordTitle, viewGroups, type GroupNode } from "../util";
 import { CellValue, Chip, RefsContext } from "./Cells";
 import { Icon } from "./Icon";
+import { isTouch } from "./useNarrow";
+import { describe as describeRepeat } from "../recur";
 import { useVirtualRows } from "./useVirtualRows";
-import type { ViewProps } from "./viewTypes";
+import { densityOf, LIST_ROW, type ViewProps } from "./viewTypes";
+import { SelectBox, SelectionBar, useSelection } from "./BulkBar";
 
 const isSet = (v: unknown) => v !== null && v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && !v.length);
 
@@ -58,7 +61,11 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
     walk(buildGroups(records, specs, fields, refs), 0);
     return out;
   }, [records, specKey, fields, refs, collapsed]);
-  const win = useVirtualRows(rows.length, 42, 12);  // 42px rows (.list-row, .list-group), 12px top padding
+  const density = densityOf(view.config);
+  const repeatF = fields.find((f) => f.type === "recurrence");
+  const selection = useSelection(records);
+  const selectable = !!ops.bulk && (ops.can.edit || ops.can.delete);
+  const win = useVirtualRows(rows.length, LIST_ROW[density], 12);  // rows (.list-row, .list-group) of the view's density, 12px top padding
   const width = win.width;
   const narrow = width > 0 && width < 760;
   const maxDepth = Math.max(0, ...rows.map((x) => ("r" in x ? x.depth : 0)));
@@ -109,7 +116,7 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
   };
 
   return (
-    <div className="list-view" ref={win.ref}>
+    <div className={`list-view density-${density} ${selection.sel.size ? "selecting" : ""}`} ref={win.ref}>
       <div className="list-grid" style={{ gridTemplateColumns: cols.join(" ") }}>
         {win.padTop > 0 && <div className="list-span" style={{ height: win.padTop }} />}
         {rows.slice(win.start, win.end).map((row) => {
@@ -129,13 +136,17 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
           const r = row.r;
           const color = ops.colorFor(r, view.config.colorField);
           return (
-            <div key={r.id} className="list-row" onClick={() => ops.open(r)}>
+            <div key={r.id} className={`list-row ${selection.sel.has(r.id) ? "selected" : ""}`}
+              onClick={() => (selection.sel.size && isTouch ? selection.toggle(r.id) : ops.open(r))}
+              onContextMenu={selectable ? (e) => { e.preventDefault(); selection.toggle(r.id); } : undefined}>
               <span className="list-start" style={{ paddingLeft: row.depth * 22 }}>
+                {selectable && <SelectBox on={selection.sel.has(r.id)} label={recordTitle(fields, r)} onToggle={() => selection.toggle(r.id)} />}
                 <span className="list-dot" style={{ background: color ?? "var(--border-strong)" }} />
               </span>
               {zone("start").map((p) => cell(p, r))}
               <span className="list-title">
                 <span className="list-title-text">{recordTitle(fields, r)}</span>
+                {repeatF && r.data[repeatF.id] && <span className="list-repeat" title={describeRepeat(r.data[repeatF.id])}><Icon name="repeat" size={13} /></span>}
                 {r.sync_status === "dirty" && !ds.dav?.builtin && <span className="dirty-dot static" title="Not yet synced to CalDAV" />}
               </span>
               {zone("left").map((p) => cell(p, r))}
@@ -147,7 +158,8 @@ export function ListView({ ds, fields, visible, records, view, ops }: ViewProps)
         })}
         {win.padBottom > 0 && <div className="list-span" style={{ height: win.padBottom }} />}
       </div>
-      {!records.length && <div className="muted pad">No records match this view.</div>}
+      <SelectionBar selected={selection.selected} total={records.length} fields={fields} shown={visible} ops={ops} name={ds.name}
+        onAll={() => selection.setAll(true)} onClear={selection.clear} />
       {ops.can.add && <button className="ghost-btn list-new" onClick={() => ops.create({}, true)}><Icon name={ops.addLabel ? "upload" : "plus"} size={14} /> {ops.addLabel ?? "New"}</button>}
     </div>
   );
