@@ -42,6 +42,4 @@ export interface ViewProps {
 /** Row heights (px) for each density: keep in sync with the .density-* rules in styles.css. */
 export const GRID_ROW: Record<Density, number> = { compact: 30, comfortable: 36, roomy: 48 };
 export const LIST_ROW: Record<Density, number> = { compact: 34, comfortable: 42, roomy: 54 };
-/** How many fields a card shows. */
-export const CARD_FIELDS: Record<Density, number> = { compact: 3, comfortable: 5, roomy: 8 };
 export const densityOf = (c: ViewConfig): Density => c.density ?? "comfortable";

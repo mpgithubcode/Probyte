@@ -6,7 +6,7 @@ import { fileExt, previewStatus, thumbUrl } from "../files";
 import { Icon } from "./Icon";
 import { isTouch } from "./useNarrow";
 import { CardBody } from "./KanbanView";
-import { CARD_FIELDS, densityOf, type ViewProps } from "./viewTypes";
+import { densityOf, type ViewProps } from "./viewTypes";
 import { SelectBox, SelectionBar, useSelection } from "./BulkBar";
 
 const looksLikeImage = (v: unknown): v is string => typeof v === "string" && /^(https?:|data:image\/)/i.test(v.trim());
@@ -56,7 +56,7 @@ export function GalleryView({ ds, fields, visible, records, view, ops }: ViewPro
                       {previewStatus(r.data[cover.id][0])!.text}</span>}</span> : null}
           </div>
         )}
-        <CardBody rec={r} fields={visible} skip={cover ? [cover.id] : undefined} max={CARD_FIELDS[density]} />
+        <CardBody rec={r} fields={visible} skip={cover ? [cover.id] : undefined} />
       </div>
     );
   };

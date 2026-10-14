@@ -5,15 +5,16 @@ import { CellValue, Chip } from "./Cells";
 import { Icon } from "./Icon";
 import { Popover } from "./Overlay";
 import { isTouch } from "./useNarrow";
-import { CARD_FIELDS, densityOf, type ViewProps } from "./viewTypes";
+import { densityOf, type ViewProps } from "./viewTypes";
 import { SelectBox, SelectionBar, useSelection } from "./BulkBar";
 
-/** A card's title and its first few filled-in fields, one line each ("Folder  Photos"); how many follows the view's density. */
-export function CardBody({ rec, fields, skip, max = CARD_FIELDS.comfortable }: { rec: Rec; fields: Field[]; skip?: string[]; max?: number }) {
+/** A card's title and every filled-in visible field, one row each ("Folder  Photos"); long values wrap, so the card grows
+ * downwards (max: a limit, for small previews). */
+export function CardBody({ rec, fields, skip, max }: { rec: Rec; fields: Field[]; skip?: string[]; max?: number }) {
   const title = recordTitle(fields, rec);
   const rest = fields.filter((f) => !f.is_primary && !skip?.includes(f.id) && f.id !== "__source" && f.type !== "button" && f.type !== "record_id")
     .filter((f) => { const v = rec.data[f.id]; return v !== null && v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && !v.length); })
-    .slice(0, max);
+    .slice(0, max ?? Infinity);
   return (
     <>
       <div className="card-title">{title}</div>
@@ -40,6 +41,8 @@ export function KanbanView({ ds, fields, visible, records, view, ops, setConfig 
   const [over, setOver] = useState<string | null>(null);
   const [limits, setLimits] = useState<Record<string, number>>({});
   const [moveMenu, setMoveMenu] = useState<{ rec: Rec; anchor: HTMLElement } | null>(null);
+  const [dragCol, setDragCol] = useState<string | null>(null);   // a column being dragged by its header
+  const [colMenu, setColMenu] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const selection = useSelection(records);
   const selectable = !!ops.bulk && (ops.can.edit || ops.can.delete);
 
@@ -57,10 +60,20 @@ export function KanbanView({ ds, fields, visible, records, view, ops, setConfig 
     );
   }
 
-  const columns: { name: string | null; color: string }[] = [
+  // the columns in the view's order (dragged by their headers), then any option added since
+  const all: { name: string | null; color: string }[] = [
     { name: null, color: "#94a3b8" },
     ...(groupField.options.choices ?? []).map((c) => ({ name: c.name, color: c.color })),
   ];
+  const keyOfCol = (c: { name: string | null }) => c.name ?? "__none";
+  const order = view.config.columnOrder ?? [];
+  const pos = (c: { name: string | null; color: string }) => { const i = order.indexOf(keyOfCol(c)); return i < 0 ? order.length + all.indexOf(c) : i; };
+  const columns = [...all].sort((a, b) => pos(a) - pos(b));
+  const moveColumn = (key: string, to: number) => {
+    const keys = columns.map(keyOfCol).filter((k) => k !== key);
+    keys.splice(Math.max(0, Math.min(to, keys.length)), 0, key);
+    setConfig({ columnOrder: keys });
+  };
   const known = new Set(columns.map((c) => c.name));
   const keyOf = (r: Rec) => { const v = r.data[groupField.id]; return v && known.has(v) ? v : null; };
   const canDrag = canEdit(groupField);
@@ -81,18 +94,26 @@ export function KanbanView({ ds, fields, visible, records, view, ops, setConfig 
         if (view.config.hideEmptyColumns && !items.length) return null;
         const colKey = col.name ?? "__none";
         return (
-          <div key={colKey} data-col={colKey} className={`kanban-col ${over === colKey ? "over" : ""}`}
-            onDragOver={(e) => { if (canDrag && dragId) { e.preventDefault(); setOver(colKey); } }}
+          <div key={colKey} data-col={colKey} className={`kanban-col ${over === colKey ? "over" : ""} ${dragCol === colKey ? "dragging" : ""}`}
+            onDragOver={(e) => {
+              if (dragCol) { e.preventDefault(); if (dragCol !== colKey) moveColumn(dragCol, columns.findIndex((c) => keyOfCol(c) === colKey)); return; }
+              if (canDrag && dragId) { e.preventDefault(); setOver(colKey); }
+            }}
             onDragLeave={() => setOver((o) => (o === colKey ? null : o))}
             onDrop={(e) => {
               e.preventDefault();
+              if (dragCol) { setDragCol(null); return; }
               const rec = records.find((r) => r.id === dragId);
               if (rec && keyOf(rec) !== col.name) ops.update(rec, { [groupField.id]: col.name });
               setDragId(null); setOver(null);
             }}>
-            <div className="kanban-head">
+            <div className="kanban-head" draggable={!isTouch} title={isTouch ? undefined : "Drag to move the column"}
+              onDragStart={(e) => { setDragCol(colKey); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", colKey); }}
+              onDragEnd={() => setDragCol(null)}>
               {col.name ? <Chip name={col.name} color={col.color} /> : <span className="muted">No {groupField.name}</span>}
               <span className="count">{items.length}</span>
+              <button className="icon-btn kanban-col-menu" aria-label={`Move the ${col.name ?? "No " + groupField.name} column`} title="Move column"
+                onClick={(e) => setColMenu({ key: colKey, anchor: e.currentTarget })}><Icon name="more" size={14} /></button>
             </div>
             <div className="kanban-cards">
               {items.slice(0, limits[colKey] ?? PAGE).map((r) => (
@@ -109,7 +130,7 @@ export function KanbanView({ ds, fields, visible, records, view, ops, setConfig 
                     </button>
                   )}
                   {selectable && <SelectBox on={selection.sel.has(r.id)} label={recordTitle(fields, r)} onToggle={() => selection.toggle(r.id)} />}
-                  <CardBody rec={r} fields={visible} skip={[groupField.id]} max={CARD_FIELDS[densityOf(view.config)]} />
+                  <CardBody rec={r} fields={visible} skip={[groupField.id]} />
                 </div>
               ))}
               {items.length > (limits[colKey] ?? PAGE) && (
@@ -126,6 +147,20 @@ export function KanbanView({ ds, fields, visible, records, view, ops, setConfig 
           </div>
         );
       })}
+      {colMenu && (() => {
+        const i = columns.findIndex((c) => keyOfCol(c) === colMenu.key);
+        return (
+          <Popover anchor={colMenu.anchor} onClose={() => setColMenu(null)} width={200}>
+            <div className="menu-list">
+              <button className="menu-item" disabled={i <= 0} onClick={() => { moveColumn(colMenu.key, i - 1); setColMenu(null); }}><Icon name="left" size={14} /> Move left</button>
+              <button className="menu-item" disabled={i >= columns.length - 1} onClick={() => { moveColumn(colMenu.key, i + 1); setColMenu(null); }}><Icon name="right" size={14} /> Move right</button>
+              <button className="menu-item" disabled={i <= 0} onClick={() => { moveColumn(colMenu.key, 0); setColMenu(null); }}>Move to the start</button>
+              <button className="menu-item" disabled={i >= columns.length - 1} onClick={() => { moveColumn(colMenu.key, columns.length); setColMenu(null); }}>Move to the end</button>
+              {view.config.columnOrder && <button className="menu-item" onClick={() => { setConfig({ columnOrder: undefined }); setColMenu(null); }}>Back to the options' order</button>}
+            </div>
+          </Popover>
+        );
+      })()}
       {moveMenu && (
         <Popover anchor={moveMenu.anchor} onClose={() => setMoveMenu(null)} width={220}>
           <div className="menu-heading">Move to</div>

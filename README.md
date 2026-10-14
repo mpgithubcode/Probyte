@@ -135,19 +135,21 @@ Every database and combined database can have any number of Notion-style views, 
 
 **The toolbar.** Every choice in a view's toolbar is a labeled button: **Columns: Status** on a board, **Starts / Ends** on a calendar or timeline, **Cover**, **Color**. The view-wide settings come first, then the choices that belong to that kind of view. A name on its own means the usual setting (no color, comfortable rows).
 
-**Layout: density and pages.** **Layout** sets how much room rows and cards take: **Compact**, **Comfortable** or **Roomy**. That applies to Table, List, Board and Gallery views (cards show 3, 5 or 8 fields). It also sets how many rows a page shows in Table, List and Gallery views: all, or 10, 25, 50, 100, 500 or 1000.
+**Layout: density and pages.** **Layout** sets how much room rows and cards take: **Compact**, **Comfortable** or **Roomy**. That applies to Table, List, Board and Gallery views. It also sets how many rows a page shows in Table, List and Gallery views: all, or 10, 25, 50, 100, 500 or 1000.
 
 **View tabs.** The open view's tab shows how many records it has, and a dot marks views that are filtered.
 
 **List rows.** On a desktop a list row shows every property. One that doesn't fit runs off the right edge, cut off, rather than being left out; each property is capped in width. On a phone, properties that don't fit are left out from the end. Long text fields can be added under **Properties**: they show on one line, cut off where the row ends.
 
-**Cards.** Board and Gallery cards show their fields one per line, name then value, leaving out empty ones.
+**Cards.** Board and Gallery cards show every visible field that has a value, one per line, name then value. Long values wrap, so a card grows downwards rather than sideways.
 
 **Empty views say why.** A view with nothing to show says whether that's the search or its filter, with **Clear search** or **Clear filter** (Undo puts the filter back). An empty table offers to add the first record.
 
 **Hiding tables.** A table's (or combined database's) **⋯ → Hide from sidebar** keeps it out of the sidebar; **Show N hidden** under a base lists them again, and **⋯ → Show in sidebar** brings one back.
 
 **First day of the week.** **Settings → Account → First day of the week** (Sunday, Monday…) is used by the calendar, timeline and weekly charts.
+
+**Board columns** can be put in any order: drag a column by its header, or use its **⋯** menu (Move left / right, to the start / end, or back to the options' order). The order belongs to the view.
 
 **Board options.** The **Board** button on a Board view shows or hides the "No *Status*" column (cards with no value), hides empty columns, and hides empty cards (no title and no other values).
 

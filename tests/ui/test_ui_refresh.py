@@ -266,3 +266,36 @@ def test_a_list_row_with_more_than_fits_and_long_text(browser):
     pg.click(".popover .list-opt-extra button:has-text('Notes')")
     expect(row.locator(".list-prop.long")).to_contain_text("Line one")
     assert not pg.errors, pg.errors
+
+
+def test_board_columns_move_and_cards_show_every_field(browser):
+    u = Client()
+    t = u.table(name="Pipeline")
+    F = u.fields(t["id"])
+    extra = [u.j("POST", f"/tables/{t['id']}/fields", json={"name": f"Field {i}", "type": "text"})["id"] for i in range(7)]
+    u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Deal", F["Status"]: "Todo", F["Notes"]: "A long note " * 12,
+                                                            **{fid: f"value {i}" for i, fid in enumerate(extra)}}})
+    board = u.j("POST", f"/tables/{t['id']}/views", json={"name": "Board", "type": "kanban"})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}/{board['id']}")
+    heads = lambda: [x.strip() for x in pg.locator(".kanban-col .kanban-head .chip").all_inner_texts()]
+    expect(pg.locator(".kanban-col")).to_have_count(3)
+    assert heads() == ["Todo", "Doing", "Done"]
+    # every visible field on the card (not just the first few), the card growing downwards
+    card = pg.locator(".kanban .card", has_text="Deal")
+    expect(card.locator(".card-field")).to_have_count(8)
+    box = card.bounding_box()
+    assert box["width"] <= pg.locator(".kanban-col").first.bounding_box()["width"]
+    # a column moved from its menu, then dragged by its header
+    pg.locator(".kanban-col[data-col='Done'] .kanban-col-menu").click()
+    pg.click(".popover .menu-item:has-text('Move to the start')")
+    expect(pg.locator(".kanban-col").first).to_have_attribute("data-col", "Done")
+    pg.locator(".kanban-col[data-col='Todo'] .kanban-head").drag_to(pg.locator(".kanban-col[data-col='Done'] .kanban-head"))
+    expect(pg.locator(".kanban-col").first).to_have_attribute("data-col", "Todo")
+    pg.wait_for_timeout(800)
+    pg.reload()
+    expect(pg.locator(".kanban-col").first).to_have_attribute("data-col", "Todo")   # kept with the view
+    order = u.j("GET", f"/tables/{t['id']}")["views"]
+    assert next(v for v in order if v["id"] == board["id"])["config"]["columnOrder"][:2] == ["Todo", "Done"]
+    assert not pg.errors, pg.errors

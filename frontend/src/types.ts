@@ -138,6 +138,7 @@ export interface ViewConfig {
   hideEmptyColumns?: boolean;                             // Board
   hideUnassigned?: boolean;                               // Board: hide the "No <field>" column
   hideBlankCards?: boolean;                               // Board: hide cards with no title and no values
+  columnOrder?: string[];                                 // Board: the columns' order (option names; "__none": the "No …" column)
   // List: property order, placement (start = right after the color dot, before the title) and whether its name shows
   listProps?: { field: string; align: ListAlign; label?: boolean }[];
   fieldOrder?: string[];
