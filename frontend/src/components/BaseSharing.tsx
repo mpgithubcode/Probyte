@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Base, Role } from "../types";
+import type { Base, LinkedBaseInfo, Role } from "../types";
 import { Icon } from "./Icon";
 import { Modal } from "./Overlay";
 import { showToast } from "../toast";
@@ -143,5 +143,54 @@ function InviteLinks({ baseId, owner, onJoinedChange }: { baseId: string; owner:
         </div>
       ))}
     </div>
+  );
+}
+
+/** A base made from someone's public link to a whole base: where it comes from, checking it for new tables, and whether
+ * its tables' views stay updated with the source's. */
+export function LinkedBaseSettings({ base, onClose, onChanged }: { base: Base; onClose: () => void; onChanged: () => void }) {
+  const [info, setInfo] = useState<LinkedBaseInfo>(base.linked!);
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const check = async () => {
+    setBusy(true); setErr(""); setNote("");
+    try {
+      const r = await api.post<{ added: string[]; gone: string[]; error: string | null; linked: LinkedBaseInfo }>(`/bases/${base.id}/link/sync`);
+      setInfo(r.linked);
+      setNote(r.error ? "" : [r.added.length ? `Added ${r.added.join(", ")}.` : "No new tables.",
+        r.gone.length ? ` No longer shared: ${r.gone.join(", ")} (delete them here if you don't need them).` : ""].join(""));
+      if (r.error) setErr(r.error);
+      onChanged();
+    } catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+  };
+  const follow = async (on: boolean) => {
+    setErr("");
+    try { setInfo(await api.patch<LinkedBaseInfo>(`/bases/${base.id}/link`, { follow_views: on })); onChanged(); } catch (e) { setErr((e as Error).message); }
+  };
+  return (
+    <Modal title={`Linked base “${base.name}”`} width={520} onClose={onClose}>
+      <div className="form">
+        <p className="muted small">This base comes from a public link to {info.name ? <b>{info.name}</b> : "a base"}
+          {info.local ? " on this server" : ""}. Its {info.tables} table{info.tables === 1 ? "" : "s"} read and write through the link, as it allows.
+          Tables shared there later are added here at the next check (every few minutes while you use Probyte).</p>
+        <code className="invite-url" title={info.url}>{info.url}</code>
+        {info.error && <div className="error">The link: {info.error}</div>}
+        <div className="row">
+          <button className="btn sm" disabled={busy} onClick={check}><Icon name="sync" size={14} className={busy ? "spin" : ""} /> Check now</button>
+          <span className="muted small">{info.checked_at ? `Checked ${new Date(info.checked_at * 1000).toLocaleString()}` : ""}</span>
+        </div>
+        {note && <p className="small">{note}</p>}
+        <div className="share-mine">
+          <h4>Views</h4>
+          <label className="inline-check"><input type="radio" checked={info.follow_views} onChange={() => follow(true)} />
+            <span><b>Stay updated</b>: each table's view follows the source's. What you change in a view lasts until the source's view changes.</span></label>
+          <label className="inline-check"><input type="radio" checked={!info.follow_views} onChange={() => follow(false)} />
+            <span><b>Keep my own</b>: the views stay as you set them; changes at the source don't touch them.</span></label>
+        </div>
+        {err && <div className="error">{err}</div>}
+      </div>
+    </Modal>
   );
 }

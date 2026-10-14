@@ -157,3 +157,75 @@ def test_a_linked_tables_view_stays_in_step_with_the_source_unless_turned_off(us
     user.j("PATCH", f"/views/{view['id']}", json={"config": {"rowHeight": "medium"}})
     other_user.post(API + f"/tables/{lt['id']}/refresh")
     assert mirror()["config"].get("rowHeight") == "short"      # kept as the linked table's owner set it
+
+
+def test_a_following_linked_tables_own_view_changes_last_until_the_source_changes(user, other_user):
+    """Stay updated: what the linked table's owner changes in its view (hides a field, sorts) isn't put back on the next
+    load; the next change to the source's view is followed again."""
+    t = user.table(name="Followed")
+    F = user.fields(t["id"])
+    s, view = share(user, t)
+    lt = link(other_user, s, view)
+    mirror = lambda: next(v for v in other_user.j("GET", f"/tables/{lt['id']}")["views"] if v["id"] == mid)  # noqa: E731
+    mid = other_user.j("GET", f"/tables/{lt['id']}")["views"][0]["id"]
+    L = {f["name"]: f["id"] for f in other_user.j("GET", f"/tables/{lt['id']}")["fields"]}
+    other_user.j("PATCH", f"/views/{mid}", json={"config": {**mirror()["config"], "hidden": [L["Notes"]], "sorts": [{"field": L["Name"], "dir": "desc"}]}})
+    for _ in range(2):                                   # reloads (and a refresh from the source) keep it
+        other_user.post(API + f"/tables/{lt['id']}/refresh")
+        cfg = mirror()["config"]
+        assert cfg.get("hidden") == [L["Notes"]] and cfg.get("sorts") == [{"field": L["Name"], "dir": "desc"}]
+    # the source's view changes: followed (the owner's change replaces the local one)
+    user.j("PATCH", f"/views/{view['id']}", json={"config": {"hidden": [F["Status"]]}})
+    other_user.post(API + f"/tables/{lt['id']}/refresh")
+    assert mirror()["config"].get("hidden") == [L["Status"]] and not mirror()["config"].get("sorts")
+
+
+def test_a_linked_table_when_its_link_changes(user, other_user):
+    """Turned off, a new address, a password, expired: the linked table says so and shows nothing; fixed: back."""
+    t = user.table(name="Lifecycle")
+    F = user.fields(t["id"])
+    user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Row"}})
+    s, view = share(user, t)
+    lt = link(other_user, s, view)
+    body = {"name": s["name"], "base_id": user.base_id, "items": [{"kind": "table", "id": t["id"], "views": [view["id"]]}]}
+
+    def state():
+        other_user.post(API + f"/tables/{lt['id']}/refresh")
+        d = other_user.j("GET", f"/tables/{lt['id']}")
+        return d["table"]["remote"]["error"], len(d["records"])
+    assert state() == (None, 1)
+    user.j("PATCH", f"/shares/{s['id']}", json={**body, "enabled": False})       # turned off
+    err, n = state()
+    assert err and n == 0
+    user.j("PATCH", f"/shares/{s['id']}", json={**body, "enabled": True})
+    assert state() == (None, 1)
+    new = user.j("POST", f"/shares/{s['id']}/regenerate")                       # a new address: the old one stops
+    err, n = state()
+    assert err and n == 0
+    other_user.j("POST", f"/tables/{lt['id']}/relink", json={"url": f"{BASE}/s/{new['token']}"})
+    assert state() == (None, 1)
+    user.j("PATCH", f"/shares/{s['id']}", json={**body, "password": "a-new-pass"})   # a password now
+    err, n = state()
+    assert "password" in err and n == 0
+    other_user.j("POST", f"/tables/{lt['id']}/relink", json={"password": "a-new-pass"})
+    assert state() == (None, 1)
+    user.j("PATCH", f"/shares/{s['id']}", json={**body, "password": None, "expires_at": "2020-01-01T00:00:00Z"})  # expired
+    err, n = state()
+    assert err and n == 0
+
+
+def test_one_table_from_a_whole_base_link_and_the_public_page(user, other_user):
+    a, b = user.table(name="Alpha"), user.table(name="Bravo")
+    s = user.j("POST", "/shares", json={"name": "All", "base_id": user.base_id, "whole_base": True})
+    pub = requests.get(f"{API}/public/{s['token']}").json()
+    assert sorted(i["name"] for i in pub["items"]) == ["Alpha", "Bravo"] and pub["whole_base"]
+    user.table(name="Charlie")                                                  # also ones added later
+    assert len(requests.get(f"{API}/public/{s['token']}").json()["items"]) == 3
+    # just one of its tables, into an existing base
+    bravo_view = user.j("GET", f"/tables/{b['id']}")["views"][0]
+    lt = other_user.j("POST", "/tables", json={"name": "Just Bravo", "kind": "remote", "base_id": other_user.base_id,
+                                               "remote": {"url": f"{BASE}/s/{s['token']}", "item_id": b["id"], "view_id": bravo_view["id"]}})
+    assert other_user.j("GET", f"/tables/{lt['id']}")["table"]["remote"]["error"] is None
+    # a trashed table drops out of the link
+    user.j("DELETE", f"/tables/{a['id']}")
+    assert "Alpha" not in [i["name"] for i in requests.get(f"{API}/public/{s['token']}").json()["items"]]

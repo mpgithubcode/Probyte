@@ -103,6 +103,13 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   };
   const inflight = useRef(0);
 
+  // a view change not saved yet (it's saved a moment after the last change) outlives a reload that lands meanwhile;
+  // without this a refresh (every 15 s for linked tables) put the old settings back on screen
+  const savingView = useRef<{ vid: string; config: ViewConfig } | null>(null);   // sent, not answered yet
+  const keepPendingView = (d: Dataset): Dataset => {
+    const p = pendingView.current ?? savingView.current;
+    return p && d.views.some((v) => v.id === p.vid) ? { ...d, views: d.views.map((v) => (v.id === p.vid ? { ...v, config: p.config } : v)) } : d;
+  };
   const dsRef = useRef(ds);
   dsRef.current = ds;
   const current = (d: Dataset | null): d is Dataset => !!d && d.kind === kind && d.id === id;
@@ -112,7 +119,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     try {
       const d = await loadDataset(kind, id);
       // Skip background refreshes that would race with an in-flight edit.
-      if (inflight.current === 0) setDs((prev) => (prev && !current(prev) ? prev : d));
+      if (inflight.current === 0) setDs((prev) => (prev && !current(prev) ? prev : keepPendingView(d)));
     } catch (e) { onError((e as Error).message); }
   }, [kind, id, onError]);
 
@@ -122,7 +129,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     if (!current(cur)) return reload();
     try {
       const update = await refreshDataset(cur);
-      if (inflight.current === 0) setDs((prev) => (current(prev) ? update(prev) : prev));
+      if (inflight.current === 0) setDs((prev) => (current(prev) ? keepPendingView(update(prev)) : prev));
     } catch (e) { onError((e as Error).message); }
   }, [kind, id, reload, onError]);
   const refreshSoon = useMemo(() => debounce(() => refresh(), 300), [refresh]);
@@ -184,10 +191,12 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     const p = pendingView.current;
     if (!p) return;
     pendingView.current = null;
+    savingView.current = p;
     // keepalive lets the request finish even when the page is being closed or reloaded.
     fetch(`/api/views/${p.vid}`, {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: p.config }), keepalive: true,
-    }).then((r) => { if (!r.ok) onError("Could not save view settings"); }).catch(() => undefined);
+    }).then((r) => { if (!r.ok) onError("Could not save view settings"); }).catch(() => undefined)
+      .finally(() => { if (savingView.current === p) savingView.current = null; });
   }, [onError]);
   const saveView = useMemo(() => debounce(flushView, 400), [flushView]);
   useEffect(() => {

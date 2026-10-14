@@ -1589,3 +1589,4 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
   .sidebar:not(.open) { box-shadow: none; }   /* (closed, just off screen: its shadow showed down the left edge) */
   .list-prop.check .list-prop-name { display: none; }   /* (a row's own box needs no name on a phone) */
 }
+.link-as { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); }

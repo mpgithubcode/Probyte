@@ -322,12 +322,20 @@ def _follow_view(conn, table, link, payload):
         conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"mirror_view": str(view["id"])}), table["id"]))
     cfg = map_view_config(table["id"], src.get("config") or {})
     vtype = src.get("type") or view["type"]
+    # Only a change at the source is followed: the version last applied is remembered, so what the linked table's
+    # owner changes here (a sort, a hidden field) stays until the source's view changes again (then it's replaced).
+    seen = hashlib.sha256(json.dumps([vtype, cfg], sort_keys=True, default=str).encode()).hexdigest()
+    if link.get("mirror_src") == seen:
+        return
     if cfg != view["config"] or vtype != view["type"]:
         conn.execute("UPDATE views SET config = %s, type = %s, updated_at = now() WHERE id = %s", (Jsonb(cfg), vtype, view["id"]))
+    link["mirror_src"] = seen
+    conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"mirror_src": seen}), table["id"]))
 
 
 def set_follow_views(conn, table, on: bool):
-    conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"follow_views": bool(on)}), table["id"]))
+    """Turned back on: the source's view is applied again at the next load (its own changes replaced)."""
+    conn.execute("UPDATE tables SET remote = (remote - 'mirror_src') || %s WHERE id = %s", (Jsonb({"follow_views": bool(on)}), table["id"]))
     invalidate(table["id"])
 
 
@@ -352,11 +360,13 @@ def public_info(table) -> dict | None:
 
 # ======================================================================== creating & writing
 
-def create_table(conn, store, user_id, base_id, name, url, password, item_id, view_id):
+def create_table(conn, store, user_id, base_id, name, url, password, item_id, view_id, cookie=None, follow_views=True):
     link = parse_link(url)
     link.update(url=url.strip(), local=is_local(conn, link["token"]))
     if password:
         link["cookie"] = unlock(conn, link, password)
+    elif cookie:   # (a linked base's tables: its password was entered once, for the base)
+        link["cookie"] = cookie
     meta = fetch_meta(conn, link)
     if meta.get("needs_password"):
         raise HTTPException(401, "password_required")
@@ -375,7 +385,7 @@ def create_table(conn, store, user_id, base_id, name, url, password, item_id, vi
     conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), t["id"]))
     cfg = map_view_config(t["id"], payload.get("view", {}).get("config") or {})
     mirror = store.create_view(conn, table_id=t["id"], name=view["name"], type=view["type"], config=cfg)
-    link.update(mirror_view=str(mirror["id"]), follow_views=True)
+    link.update(mirror_view=str(mirror["id"]), follow_views=bool(follow_views))
     conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), t["id"]))
     if view["type"] != "grid":
         store.create_view(conn, table_id=t["id"], name="Table", type="grid", config={"hidden": cfg.get("hidden", [])})

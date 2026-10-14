@@ -10,6 +10,7 @@ from app.core.db import connection
 from app.core.secretbox import seal, unseal
 from app.data import access, store
 from app.dav import devices, sync
+from app.sharing import linked_base
 from app.formats.ical import PALETTE
 from app.web.common import _account_public, _own_account, _table_out, AccountIn, AccountTest, BaseIn, BasePatch, User
 
@@ -29,11 +30,12 @@ def workspace(user=User):
             if not store.base_allowed(b["id"]):
                 continue
             bases.append({"id": b["id"], "name": b["name"], "color": b["color"], "position": i, "role": b["role"],
-                          "follow_views": b["follow_views"], "owner": b["owner_name"]})
+                          "follow_views": b["follow_views"], "owner": b["owner_name"], "linked": linked_base.public(b)})
             if b["role"] != "owner":
                 row = conn.execute("SELECT hidden FROM base_members WHERE base_id = %s AND user_id = %s", (b["id"], user["id"])).fetchone()
                 hidden[str(b["id"])] = row["hidden"] if row else {}
         ids = [str(b["id"]) for b in bases]
+        linked_base.check_soon(conn, [b for b in access.bases(conn, user["id"]) if b["role"] == "owner" and b.get("linked")])
 
         def own_sidebar(x):  # a member's own hide / show wins over the owner's
             h = hidden.get(str(x["base_id"]), {})
@@ -401,3 +403,52 @@ def join_with_invite(token: str, user=User):
     if not i["follow_views"] and not have:   # their own copies of the views, as they are now
         my_membership(str(i["base_id"]), MyMembership(follow_views=False), user)
     return {"base_id": i["base_id"], "role": i["role"]}
+
+
+# ======================================================================== a whole base from someone's public link
+
+class BaseFromLinkIn(BaseModel):
+    url: str
+    password: str | None = None
+    name: str | None = None
+    follow_views: bool = True
+
+
+class BaseLinkPatch(BaseModel):
+    follow_views: bool
+
+
+@router.post("/api/bases/from-link")
+def base_from_link(body: BaseFromLinkIn, user=User):
+    """A new base of linked tables from a public link to a whole base (or several tables): kept in step with it."""
+    if api_bases.get() is not None:
+        raise HTTPException(403, "This API key is limited to specific bases and can't create new ones")
+    with connection() as conn:
+        b = linked_base.add(conn, store, user["id"], body.url, body.password, body.name, body.follow_views)
+        tables = conn.execute("SELECT id, name FROM tables WHERE base_id = %s ORDER BY created_at", (b["id"],)).fetchall()
+    return {"id": b["id"], "name": b["name"], "linked": linked_base.public(b), "tables": tables}
+
+
+@router.post("/api/bases/{base_id}/link/sync")
+def base_link_sync(base_id: str, user=User):
+    """Check the link now: tables shared since are added."""
+    with connection() as conn:
+        b = store.get_base(conn, base_id, user["id"], need="admin")
+        row = conn.execute("SELECT * FROM bases WHERE id = %s", (base_id,)).fetchone()
+        if not row["linked"]:
+            raise HTTPException(400, "This base isn't made from a link")
+        r = linked_base.sync(conn, store, row)
+        r["linked"] = linked_base.public(conn.execute("SELECT * FROM bases WHERE id = %s", (base_id,)).fetchone())
+        return r
+
+
+@router.patch("/api/bases/{base_id}/link")
+def base_link_settings(base_id: str, body: BaseLinkPatch, user=User):
+    """Whether the views of this base's linked tables stay as the source's (its tables, now and later)."""
+    with connection() as conn:
+        store.get_base(conn, base_id, user["id"], need="admin")
+        row = conn.execute("SELECT * FROM bases WHERE id = %s", (base_id,)).fetchone()
+        if not row["linked"]:
+            raise HTTPException(400, "This base isn't made from a link")
+        linked_base.set_follow_views(conn, row, body.follow_views)
+        return linked_base.public(conn.execute("SELECT * FROM bases WHERE id = %s", (base_id,)).fetchone())

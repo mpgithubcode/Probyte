@@ -60,7 +60,7 @@ export function SharesPanel({ ws }: { ws: Workspace }) {
               <div className="list-card-title">
                 <b>{s.name}</b>
                 <span className="muted small">
-                  {base?.name ?? "?"} · {s.items.length} table{s.items.length === 1 ? "" : "s"}
+                  {base?.name ?? "?"} · {s.whole_base ? "the whole base" : `${s.items.length} table${s.items.length === 1 ? "" : "s"}`}
                   {" · "}{linkSummary(s.permissions, s.items.some((it) => it.kind === "table" && nativeKind(ws.tables.find((t) => t.id === it.id)) === "files"))}
                 </span>
               </div>
@@ -93,6 +93,7 @@ function ShareEditor({ ws, share, onClose, onSaved, onDeleted }: {
   const [name, setName] = useState(share?.name ?? "");
   const [baseId, setBaseId] = useState(share?.base_id ?? ws.bases[0]?.id ?? "");
   const [items, setItems] = useState<ShareItem[]>(share?.items ?? []);
+  const [wholeBase, setWholeBase] = useState(!!share?.whole_base);   // every table of the base, also ones added later
   const [perms, setPerms] = useState<SharePerms>(share?.permissions ?? { add: false, edit: false, delete: false });
   const [password, setPassword] = useState("");
   const [removePassword, setRemovePassword] = useState(false);
@@ -123,11 +124,11 @@ function ShareEditor({ ws, share, onClose, onSaved, onDeleted }: {
 
   const save = async () => {
     if (!name.trim()) return setError("Give the link a name");
-    if (!items.length) return setError("Choose at least one table to share");
+    if (!items.length && !wholeBase) return setError("Choose at least one table to share");
     setBusy(true);
     setError("");
     const body = {
-      name: name.trim(), base_id: baseId, items, permissions: perms, enabled, color,
+      name: name.trim(), base_id: baseId, items: wholeBase ? [] : items, whole_base: wholeBase, permissions: perms, enabled, color,
       expires_at: expires ? new Date(`${expires}T23:59:59`).toISOString() : null,
       password: removePassword ? "" : password || null,  // null keeps the current password
     };
@@ -188,6 +189,10 @@ function ShareEditor({ ws, share, onClose, onSaved, onDeleted }: {
         </div>
 
         <div className="stack">What visitors can see
+          <label className="inline-check whole-base"><input type="checkbox" checked={wholeBase} onChange={(e) => setWholeBase(e.target.checked)} />
+            <span><b>The whole base</b>: every table and combined database in it, with all their views, also ones added later.
+              Someone can add the link to their own Probyte as a base of their own, which stays in step.</span></label>
+          {wholeBase ? null : <>
           {available === null && <span className="muted">Loading…</span>}
           {available?.length === 0 && <span className="muted">This base has no tables yet.</span>}
           <div className="share-items">
@@ -214,6 +219,7 @@ function ShareEditor({ ws, share, onClose, onSaved, onDeleted }: {
               );
             })}
           </div>
+          </>}
           <span className="hint">Visitors see only the fields shown in the chosen views, and only records that match each view's filters.</span>
         </div>
 

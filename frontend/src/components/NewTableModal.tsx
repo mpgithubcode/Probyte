@@ -22,6 +22,7 @@ interface LinkMeta {
   name: string; needs_password: boolean; local: boolean; origin: string; view_hint: string | null;
   permissions: { add?: boolean; edit?: boolean; delete?: boolean };
   items: { id: string; name: string; kind: string; views: { id: string; name: string; type: string }[] }[];
+  whole_base?: boolean; base_name?: string | null;   // a link to a whole base: it can be added as a base of its own
 }
 
 const NEEDS: Record<string, string[]> = { tasks: ["VTODO"], events: ["VEVENT"], mixed: ["VTODO", "VEVENT"], contacts: ["VCARD"] };
@@ -40,6 +41,8 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
   accounts: Account[]; bases: Base[]; baseId?: string; onClose: () => void; onCreated: (t: TableInfo) => void; onManageAccounts: () => void;
 }) {
   const [base, setBase] = useState(baseId ?? bases[0]?.id ?? "");
+  const [asBase, setAsBase] = useState(false);          // a link's tables added as a base of their own (kept in step)
+  const [followViews, setFollowViews] = useState(true);
   const [choice, setChoice] = useState<NewKind>("generic");
   const kind = (choice === "template" ? "generic" : choice) as TableKind;
   const [tpl, setTpl] = useState<{ id?: string; uploaded?: UploadedTemplate; name: string; records: number } | null>(null);
@@ -89,6 +92,8 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
     try {
       const m = await api.post<LinkMeta>("/remote/inspect", { url, password: linkPw || undefined });
       setMeta(m);
+      setAsBase(!!m.whole_base);
+      if (m.whole_base && !m.needs_password) setName(m.base_name ?? m.name);
       if (!m.needs_password && m.items.length) {
         const item = m.items.find((i) => i.views.some((v) => v.id === m.view_hint)) ?? m.items[0];
         const view = item.views.find((v) => v.id === m.view_hint) ?? item.views[0];
@@ -129,6 +134,16 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
       return;
     }
     if (kind === "remote" && !pick) return checkLink();
+    if (kind === "remote" && asBase) {
+      setBusy(true); setError("");
+      try {
+        const r = await api.post<{ id: string; tables: { id: string }[] }>("/bases/from-link",
+          { url, password: linkPw || undefined, name: name.trim() || undefined, follow_views: followViews });
+        onCreated({ id: r.tables[0]?.id ?? "", base_id: r.id } as TableInfo);
+      } catch (e) { setError((e as Error).message); }
+      setBusy(false);
+      return;
+    }
     if (!name.trim()) return setError("Give the table a name");
     setBusy(true);
     setError("");
@@ -229,8 +244,22 @@ export function NewTableModal({ accounts, bases, baseId, onClose, onCreated, onM
                   <span className="spacer" />
                   <span className="badge">{linkSummary(meta.permissions)}</span>
                 </div>
-                <span className="muted small">Choose the table and view to show:</span>
-                {meta.items.map((it) => (
+                {(meta.whole_base || meta.items.length > 1) && (
+                  <div className="link-as">
+                    <label className="inline-check"><input type="radio" name="link-as" checked={asBase} onChange={() => { setAsBase(true); setName(meta.base_name ?? meta.name); }} />
+                      <span><b>Add it as a base</b> of its own: {meta.whole_base ? "the whole base" : `all ${meta.items.length} tables`}, kept in step
+                        {meta.whole_base ? " (tables added there later appear here too)" : ""}</span></label>
+                    <label className="inline-check"><input type="radio" name="link-as" checked={!asBase} onChange={() => setAsBase(false)} />
+                      <span><b>Add one table</b> to the base chosen above</span></label>
+                    {asBase && (
+                      <label className="inline-check"><input type="checkbox" checked={followViews} onChange={(e) => setFollowViews(e.target.checked)} />
+                        <span>Views stay updated with the source (changes you make to a view last until the source's view changes)</span></label>
+                    )}
+                  </div>
+                )}
+                {asBase && <span className="muted small">Tables: {meta.items.map((i) => i.name).join(", ")}</span>}
+                {!asBase && <span className="muted small">Choose the table and view to show:</span>}
+                {!asBase && meta.items.map((it) => (
                   <div key={it.id} className="share-item on">
                     <b>{it.name}</b>
                     <div className="share-views">

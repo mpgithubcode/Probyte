@@ -271,6 +271,13 @@ Works best with drawing sets exported from CAD (they have real text and lines). 
 
 ## Linked tables (from any Probyte server)
 
+**A whole base, by link.** A public link can share **the whole base**: every table and combined database in it, with all their views, including ones added later. Someone who adds the link (**New table → From a link**) on this or any other Probyte server can add it **as a base of their own**:
+- It's a base of linked tables, one for each shared table, and it stays in step: tables shared later appear there at the next check. That happens every few minutes while they use Probyte, or straight away with **Linked base… → Check now** in the base's menu. A table no longer shared says so.
+- **Linked base…** also sets whether all its tables' views **stay updated** with the source's.
+- A password-protected link asks for the password once, for the whole base.
+- They can also add just one of its tables to a base they already have.
+- Only the base's own views are ever shared, never the personal views of people it's shared with.
+
 **A linked table behaves like the table it links to.** A linked files table opens files in the full-screen viewer with their details, uploads files (with **Upload** instead of New), and replaces and edits them; a linked contacts table imports and downloads vCards; a linked tasks & events table knows which field is a task's status or an event's start (the record panel, calendars and task rules work as in the source), and fields keep their formats (currency, dates…), descriptions and rules. Everything goes through the link, so it can only do what the link's owner allowed (view, add, edit, delete). In the sidebar, a small link mark shows which tables are linked.
 
 Any Probyte public link, whether it's from this server or another Probyte server, can be added to one of your bases as a **linked table**. Choose **+ New table → From a link**, paste the link, enter its password if it has one, and pick which shared table and view to show.
@@ -279,7 +286,9 @@ Any Probyte public link, whether it's from this server or another Probyte server
 - In a **combined database**, a linked table's fields line up with your own tables' by their role in the source (a linked calendar's Start, End, Status with your calendar's), as your own tables' do.
 - The data is **live**. It's fetched through the link (cached for a few seconds), so you always see the owner's current records, including their formula and lookup results.
 - **The link owner's settings apply.** You see only the fields and records the link shares. You can add, edit or delete only what the owner allowed, and edits go straight into the owner's table. If the owner switches the link off, deletes it or changes its password, the linked table empties and shows why. **⋯ → Link settings** lets you re-enter a password or paste a new link.
-- **Its view stays updated with the source's view**: its sort, grouping, hidden fields and layout follow the view the owner shared (the owner's filters always apply, at the source). Turn **Stay updated with the source's view** off in the table's settings (Link) to arrange that view your own way and keep it that way.
+- **Its view stays updated with the source's view**: its sort, grouping, hidden fields and layout follow the view the owner shared. The owner's filters always apply, at the source.
+  - What you change in that view yourself (a sort, a hidden field) stays until the owner changes their view; then theirs is followed again.
+  - Turn **Stay updated with the source's view** off in the table's settings (Link) to keep the view your own way for good. Turning it back on brings the source's view back.
 - You can make **your own views** of a linked table (Table, Board, Calendar, Chart…). Its fields come from the source, so you can't add fields to it.
 - **Merge** linked tables with your own tables in a **combined database**. For example, show a supplier's shared stock table next to your own orders, or a colleague's calendar next to yours. Each table's title column lines up automatically.
 - **Link to them.** A *Link to record* field in your own table can point at a linked table's records, so you can pick them, and look up or roll up their values. The link is one-way, since the linked table's fields belong to its owner. If the owner deletes or stops sharing a record, it disappears from your links.

@@ -20,6 +20,7 @@ from app.data import audit
 from app.dav import radicale_import, sync
 from app.files import catalog as files  # noqa: F401
 from app.ops import backup
+from app.sharing import linked_base  # noqa: F401  (registers the linked bases' background check)
 from app.web.tables import purge_expired
 
 log = logging.getLogger("probyte.worker")

@@ -299,3 +299,49 @@ def test_board_columns_move_and_cards_show_every_field(browser):
     order = u.j("GET", f"/tables/{t['id']}")["views"]
     assert next(v for v in order if v["id"] == board["id"])["config"]["columnOrder"][:2] == ["Todo", "Done"]
     assert not pg.errors, pg.errors
+
+
+def test_a_whole_base_shared_by_link_and_added_as_a_base(browser):
+    owner, guest = Client(), Client()
+    jobs = owner.table(name="Jobs")
+    J = owner.fields(jobs["id"])
+    owner.j("POST", f"/tables/{jobs['id']}/records", json={"data": {J["Name"]: "Mill St"}})
+    owner.table(name="Clients")
+    pg = new_page(browser)
+    sign_in(pg, owner)
+    pg.click(".side-user .side-item")
+    pg.click(".settings-tabs button:has-text('Public links')")
+    pg.click("button:has-text('New public link')")
+    pg.fill(".modal input[placeholder='Team calendar']", "Everything")
+    pg.locator(".modal .whole-base input").check()
+    expect(pg.locator(".modal .share-items")).to_have_count(0)            # no tables to pick: all of them
+    pg.click(".modal-foot button:has-text('Create link')")
+    pg.wait_for_timeout(500)
+    s = next(x for x in owner.j("GET", "/shares") if x["name"] == "Everything")
+    assert s["whole_base"]
+    pg.close()
+    # someone else adds it to their Probyte as a base of its own
+    pg = new_page(browser)
+    sign_in(pg, guest)
+    pg.click(".side-add >> nth=0")
+    pg.click(".kind:has-text('From a link')")
+    pg.fill(".modal input[placeholder*='/s/']", f"{BASE}/s/{s['token']}")
+    pg.click(".modal-foot button:has-text('Check link')")
+    expect(pg.locator(".modal .link-as input").first).to_be_checked()   # a whole base: added as a base, by default
+    pg.click(".modal-foot button:has-text('Create')")
+    expect(pg.locator(".page-head h1")).to_have_text("Jobs", timeout=15000)
+    expect(pg.locator(".grid tbody")).to_contain_text("Mill St")
+    b = next(x for x in guest.j("GET", "/workspace")["bases"] if x.get("linked"))
+    expect(pg.locator(".sidebar")).to_contain_text("Clients")
+    # its settings, from the base's menu
+    row = pg.locator(".sidebar .base-row", has_text=b["name"]).first
+    row.hover()
+    row.locator(".base-more").click()
+    pg.click(".popover .menu-item:has-text('Linked base')")
+    modal = pg.locator(".modal", has_text="Linked base")
+    expect(modal).to_contain_text("2 tables")
+    owner.table(name="Invoices")
+    modal.locator("button:has-text('Check now')").click()
+    expect(modal).to_contain_text("Added Invoices")
+    expect(pg.locator(".sidebar")).to_contain_text("Invoices")
+    assert not pg.errors, pg.errors

@@ -63,7 +63,8 @@ def effective(perms: dict | None) -> dict:
 class ShareIn(BaseModel):
     name: str
     base_id: str
-    items: list[ShareItem]
+    items: list[ShareItem] = []
+    whole_base: bool = False         # every table and combined database of the base, also ones added later (items unused)
     permissions: SharePerms = SharePerms()
     password: str | None = None      # None = unchanged, "" = remove the password
     expires_at: datetime | None = None
@@ -79,7 +80,8 @@ def _validate_items(conn, user_id, base_id, items: list[ShareItem]) -> list[dict
         if not row:
             raise HTTPException(400, "Every shared table must belong to the chosen base")
         col = "table_id" if it.kind == "table" else "combo_id"
-        all_views = [str(v["id"]) for v in conn.execute(f"SELECT id FROM views WHERE {col} = %s ORDER BY position", (it.id,)).fetchall()]
+        # (the base's own views: never the personal views of people it's shared with)
+        all_views = [str(v["id"]) for v in conn.execute(f"SELECT id FROM views WHERE {col} = %s AND user_id IS NULL ORDER BY position", (it.id,)).fetchall()]
         views = all_views if it.views is None else [v for v in it.views if v in all_views]
         if not views:
             raise HTTPException(400, "Choose at least one view for every shared table")
@@ -90,7 +92,8 @@ def _validate_items(conn, user_id, base_id, items: list[ShareItem]) -> list[dict
 
 
 def _share_public(s):
-    return {k: s[k] for k in ("id", "base_id", "token", "name", "items", "permissions", "expires_at", "enabled", "color", "created_at", "updated_at")} \
+    return {k: s[k] for k in ("id", "base_id", "token", "name", "items", "whole_base", "permissions", "expires_at", "enabled", "color",
+                              "created_at", "updated_at")} \
         | {"has_password": bool(s["password_hash"])}
 
 
@@ -104,11 +107,11 @@ def list_shares(user=User):
 def create_share(body: ShareIn, user=User):
     with connection() as conn:
         store.get_base(conn, body.base_id, user["id"])
-        items = _validate_items(conn, user["id"], body.base_id, body.items)
+        items = [] if body.whole_base else _validate_items(conn, user["id"], body.base_id, body.items)
         s = conn.execute(
-            "INSERT INTO shares (user_id, base_id, token, name, items, permissions, password_hash, expires_at, enabled, color) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
-            (user["id"], body.base_id, secrets.token_urlsafe(12), body.name.strip() or "Shared view", Jsonb(items),
+            "INSERT INTO shares (user_id, base_id, token, name, items, whole_base, permissions, password_hash, expires_at, enabled, color) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+            (user["id"], body.base_id, secrets.token_urlsafe(12), body.name.strip() or "Shared view", Jsonb(items), body.whole_base,
              Jsonb(body.permissions.model_dump()), auth.hash_password(body.password) if body.password else None,
              body.expires_at, body.enabled, body.color or "#6366f1"),
         ).fetchone()
@@ -125,12 +128,12 @@ def update_share(share_id: str, body: ShareIn, user=User):
     with connection() as conn:
         s = _own_share(conn, share_id, user)
         store.get_base(conn, body.base_id, user["id"])
-        items = _validate_items(conn, user["id"], body.base_id, body.items)
+        items = [] if body.whole_base else _validate_items(conn, user["id"], body.base_id, body.items)
         pw = s["password_hash"] if body.password is None else (auth.hash_password(body.password) if body.password else None)
         s = conn.execute(
-            "UPDATE shares SET base_id=%s, name=%s, items=%s, permissions=%s, password_hash=%s, expires_at=%s, enabled=%s, "
+            "UPDATE shares SET base_id=%s, name=%s, items=%s, whole_base=%s, permissions=%s, password_hash=%s, expires_at=%s, enabled=%s, "
             "color=%s, updated_at=now() WHERE id=%s RETURNING *",
-            (body.base_id, body.name.strip() or s["name"], Jsonb(items), Jsonb(body.permissions.model_dump()), pw,
+            (body.base_id, body.name.strip() or s["name"], Jsonb(items), body.whole_base, Jsonb(body.permissions.model_dump()), pw,
              body.expires_at, body.enabled, body.color or s["color"], share_id),
         ).fetchone()
     return _share_public(s)
@@ -182,16 +185,23 @@ def _require(s, cookie):
 
 
 def _items(conn, s):
-    """Shared items with their allowed views (resolving 'all views')."""
+    """Shared items with their allowed views (resolving 'all views'; a whole base: what's in it now)."""
     out = []
-    for it in s["items"]:
+    items = s["items"]
+    if s.get("whole_base"):
+        items = [{"kind": "table", "id": str(r["id"]), "views": None} for r in conn.execute(
+            "SELECT id FROM tables WHERE base_id = %s AND user_id = %s AND trashed_at IS NULL ORDER BY created_at",
+            (s["base_id"], s["user_id"])).fetchall()] + \
+            [{"kind": "combo", "id": str(r["id"]), "views": None} for r in conn.execute(
+                "SELECT id FROM combos WHERE base_id = %s AND user_id = %s ORDER BY created_at", (s["base_id"], s["user_id"])).fetchall()]
+    for it in items:
         table = conn.execute(f"SELECT id, name{', kind' if it['kind'] == 'table' else ''} FROM {'tables' if it['kind'] == 'table' else 'combos'} "
                              f"WHERE id = %s AND user_id = %s AND base_id = %s{' AND trashed_at IS NULL' if it['kind'] == 'table' else ''}",
                              (it["id"], s["user_id"], s["base_id"])).fetchone()
         if not table:
             continue
         col = "table_id" if it["kind"] == "table" else "combo_id"
-        views = conn.execute(f"SELECT * FROM views WHERE {col} = %s ORDER BY position", (it["id"],)).fetchall()
+        views = conn.execute(f"SELECT * FROM views WHERE {col} = %s AND user_id IS NULL ORDER BY position", (it["id"],)).fetchall()
         if it.get("views") is not None:
             views = [v for v in views if str(v["id"]) in it["views"]]
         if views:
@@ -300,7 +310,9 @@ def core_meta(token: str, cookie: str | None) -> dict:
         s = _load(conn, token)
         unlocked = _ok(s, cookie)
         items = _items(conn, s) if unlocked else []
+    base = conn.execute("SELECT name FROM bases WHERE id = %s", (s["base_id"],)).fetchone() if s.get("whole_base") else None
     return {"name": s["name"], "color": s["color"], "permissions": effective(s["permissions"]), "needs_password": not unlocked,
+            "whole_base": bool(s.get("whole_base")), "base_name": base["name"] if base else None,
             "items": [{"kind": i["kind"], "id": i["id"], "name": i["name"], "table_kind": i["table_kind"],
                        "views": [{"id": str(v["id"]), "name": v["name"], "type": v["type"]} for v in i["views"]]} for i in items]}
 

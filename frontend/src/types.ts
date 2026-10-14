@@ -185,7 +185,9 @@ export interface RemoteInfo {
 
 export type Role = "owner" | "admin" | "editor" | "viewer";
 /** A base: the user's own (role owner) or one shared with them (owner: whose it is). */
-export interface Base { id: string; name: string; color: string; position: number; role?: Role; follow_views?: boolean; owner?: string | null }
+export interface Base { id: string; name: string; color: string; position: number; role?: Role; follow_views?: boolean; owner?: string | null;
+  linked?: LinkedBaseInfo | null }   // made from someone's public link to a whole base
+export interface LinkedBaseInfo { url: string; name: string | null; follow_views: boolean; error: string | null; checked_at: number | null; tables: number; local?: boolean }
 /** What the user may do in a table's / combined database's base. */
 export interface Access { role: Role; follow_views: boolean; owner: string | null }
 
@@ -243,7 +245,7 @@ export interface SharePerms { add: boolean; edit: boolean; delete: boolean; uplo
 export interface LinkPerms { add?: boolean; edit?: boolean; delete?: boolean; upload_files?: boolean; edit_files?: boolean }
 export interface ShareItem { kind: "table" | "combo"; id: string; views: string[] | null }
 export interface Share {
-  id: string; base_id: string; token: string; name: string; items: ShareItem[]; permissions: SharePerms;
+  id: string; base_id: string; token: string; name: string; items: ShareItem[]; permissions: SharePerms; whole_base?: boolean;
   expires_at: string | null; enabled: boolean; color: string; has_password: boolean; created_at: string;
 }
 export interface ApiKey {
