@@ -1026,11 +1026,12 @@ def test_files_table_new_upload_preview_and_edit(browser):
     pg.set_input_files(".page-head input[type=file]:not([webkitdirectory])", [
         {"name": "readme.md", "mimeType": "text/markdown", "buffer": b"# Hello\n\nfrom the **test**\n"},
         {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"plain words"},
+        {"name": "data.json", "mimeType": "application/json", "buffer": MINIFIED_JSON.encode()},
         {"name": "dot.png", "mimeType": "image/png", "buffer": base64.b64decode(PNG_B64)}])
-    expect(pg.locator(".upload-panel")).to_contain_text("3 uploads complete", timeout=15000)
-    expect(rows(pg)).to_have_count(3)
+    expect(pg.locator(".upload-panel")).to_contain_text("4 uploads complete", timeout=15000)
+    expect(rows(pg)).to_have_count(4)
     # the image: a preview; clicking it opens the full-screen viewer with the details on the right
-    expect(pg.locator(".grid tbody .thumb img")).to_have_count(3, timeout=15000)   # the text files get covers too
+    expect(pg.locator(".grid tbody .thumb img")).to_have_count(4, timeout=15000)   # the text and code files get covers too
     pg.locator(".grid tbody tr", has_text="dot.png").locator(".thumb img").click()
     expect(pg.locator(".viewer .viewer-image img")).to_be_visible()
     expect(pg.locator(".viewer-info")).to_contain_text("Kind")
@@ -1056,12 +1057,26 @@ def test_files_table_new_upload_preview_and_edit(browser):
     # going to the next file with the arrow keys; a text file is edited as text
     pg.keyboard.press("Escape")
     pg.goto(f"{BASE}/#/table/{t['id']}?record={rid('notes.txt')}")
-    expect(pg.locator(".viewer .viewer-code")).to_have_text("plain words")
+    expect(pg.locator(".viewer .code-text")).to_have_text("plain words")
     pg.click(".viewer-bar button:has-text('Edit')")
-    pg.fill(".viewer-code-edit", "edited in the viewer")
+    pg.fill(".viewer .code-input", "edited in the viewer")
     pg.keyboard.press("Control+s")
-    expect(pg.locator(".viewer .viewer-code")).to_have_text("edited in the viewer")
+    expect(pg.locator(".viewer .code-input")).to_have_count(0)   # saved: no longer editing
+    expect(pg.locator(".viewer .code-text")).to_have_text("edited in the viewer")
     assert u.get(API + f"/files/{rid('notes.txt')}/content").text == "edited in the viewer"
+    # code: line numbers and colors; JSON written on one line is laid out for reading, the file itself unchanged
+    pg.keyboard.press("Escape")
+    expect(pg.locator(".viewer")).to_have_count(0)
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rid('data.json')}")
+    expect(pg.locator(".viewer .code-lang")).to_have_text("JSON")
+    expect(pg.locator(".viewer .code-text .tok-key").first).to_have_text('"a"')
+    expect(pg.locator(".viewer .code-gutter")).to_contain_text("8")
+    pg.click(".viewer .code-btn:has-text('As saved')")
+    expect(pg.locator(".viewer .code-text")).to_have_text(MINIFIED_JSON)
+    pg.click(".viewer-bar button:has-text('Edit')")
+    pg.click(".viewer .code-btn:has-text('Format')")
+    pg.keyboard.press("Control+s")
+    eventually(lambda: u.get(API + f"/files/{rid('data.json')}/content").text.startswith('{\n  "a": [\n    1,'))
     # rename from the details panel
     name = pg.locator(".viewer-info .viewer-field", has_text="Name").locator("input")
     name.fill("renamed.txt")
@@ -1070,6 +1085,9 @@ def test_files_table_new_upload_preview_and_edit(browser):
     pg.keyboard.press("Escape") if pg.locator(".viewer").count() else None
     # the record panel no longer edits files (the viewer does)
     assert not pg.errors, pg.errors
+
+
+MINIFIED_JSON = '{"a":[1,2],"b":{"c":"' + "x" * 250 + '"}}'
 
 
 def test_viewer_documents_spreadsheets_and_folder_upload(browser, tmp_path):
@@ -1291,8 +1309,8 @@ def test_svg_files_show_as_pictures(browser):
     eventually(lambda: img.evaluate("i => i.naturalWidth") == 40 or None)
     # its code can still be edited
     pg.click(".viewer-bar button:has-text('Edit')")
-    expect(pg.locator(".viewer-code-edit")).to_have_value(re.compile("<rect"))
-    pg.fill(".viewer-code-edit", svg.decode().replace("#ef4444", "#22c55e"))
+    expect(pg.locator(".viewer .code-input")).to_have_value(re.compile("<rect"))
+    pg.fill(".viewer .code-input", svg.decode().replace("#ef4444", "#22c55e"))
     pg.click(".viewer-bar button:has-text('Save')")
     expect(img).to_be_visible()
     assert "#22c55e" in u.get(API + f"/files/{rec['id']}/content").text

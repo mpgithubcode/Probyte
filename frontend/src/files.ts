@@ -85,6 +85,7 @@ const COVER_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|heic|heif|pdf|docx?|docm
 /** Why a file of a files table shows no thumbnail: its cover is still being made, can't be made now (tried again), or
  * couldn't be made. null: it has one, or its kind never has one. */
 export function previewStatus(a: Attachment): { state: "pending" | "retrying" | "failed"; text: string } | null {
+  if (a.file && a.missing) return { state: "failed", text: "Missing from the storage" };
   if (!a.file || a.thumb || isSvg(a)) return null;
   if (a.preview_error) return a.preview_retry ? { state: "retrying", text: `Preview pending: ${a.preview_error}` }
     : { state: "failed", text: `Couldn't preview: ${a.preview_error}` };

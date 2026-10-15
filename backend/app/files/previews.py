@@ -1,13 +1,20 @@
 """Covers and previews of files, made by the worker (job "file_preview"): a small image for images, PDFs, office
 documents and text, the first part of a text file in the Text field (for search), PDFs of Word / PowerPoint files
-(the document converter) and JPEGs of iPhone photos (HEIC). Kept on the attachments volume (thumbs/, previews/)."""
+(the document converter) and JPEGs of iPhone photos (HEIC). Kept on the attachments volume (thumbs/, previews/).
+
+Covers are drawn in a process of their own with a time limit (render.py), at most PREVIEW_CONCURRENCY at once, so a
+file that's slow to draw never holds up the web app, syncs or webhooks. Each version of a file is tried once (a
+temporary failure, such as the storage or the converter not answering, up to PREVIEW_TRIES times); a file the storage
+lists but can't find is marked "missing" rather than asked for again."""
 import io
+import json
 import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
-import zipfile
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -30,6 +37,10 @@ THUMB_PX = 480
 # again once: 2 = a converter that couldn't be reached no longer counts as tried
 PREVIEW_VERSION = 2
 TEXT_CHARS = 20_000           # how much of a text file goes into the Text field (for search)
+PREVIEW_TIMEOUT = int(os.environ.get("PREVIEW_TIMEOUT", "60"))          # seconds a cover may take to draw
+PREVIEW_CONCURRENCY = int(os.environ.get("PREVIEW_CONCURRENCY", "2"))  # covers made at once (the rest of the worker stays free)
+PREVIEW_TRIES = 5             # a cover that fails for a temporary reason (storage, converter) is tried this often per version
+_APP_ROOT = Path(__file__).resolve().parents[2]   # where `python -m app.files.render` runs
 
 
 def _drop_cache(rid):
@@ -114,55 +125,6 @@ def _pdf_thumb(pdf_path, rid):
         return True
 
 
-FONT_DIR = "/usr/share/fonts/truetype/dejavu"
-
-
-def _font(size: int, bold=False, mono=False):
-    from PIL import ImageFont
-    name = "DejaVuSansMono" if mono else "DejaVuSans"
-    try:
-        return ImageFont.truetype(f"{FONT_DIR}/{name}{'-Bold' if bold else ''}.ttf", size)
-    except OSError:
-        return ImageFont.load_default()
-
-
-def _text_thumb(text: str, rid, name: str):
-    """A text file's cover: its first lines on a page (Markdown headings larger), like a document preview."""
-    from PIL import Image, ImageDraw
-    w, h, pad = THUMB_PX, int(THUMB_PX * 1.3), 28
-    img = Image.new("RGB", (w, h), (255, 255, 255))
-    d = ImageDraw.Draw(img)
-    md = _ext(name) in ("md", "markdown")
-    mono = not md and _ext(name) not in ("txt", "log", "rst")
-    y = pad
-    for raw in text.replace("\t", "    ").splitlines()[:80]:
-        line = raw.rstrip()
-        size, bold, color = (15, False, (32, 33, 36)) if not mono else (13, False, (55, 65, 81))
-        if md and line.startswith("#"):
-            level = len(line) - len(line.lstrip("#"))
-            line = line.lstrip("#").strip()
-            size, bold, color = {1: (26, True, (17, 24, 39)), 2: (21, True, (17, 24, 39))}.get(level, (17, True, (31, 41, 55)))
-        elif md:
-            line = re.sub(r"[*_`]", "", line)
-            if line.lstrip().startswith(("- ", "* ", "+ ")):
-                line = "•  " + line.lstrip()[2:]
-        f = _font(size, bold, mono)
-        # wrap long lines to the page width
-        while True:
-            cut = len(line)
-            while cut > 0 and d.textlength(line[:cut], font=f) > w - 2 * pad:
-                cut -= 1
-            d.text((pad, y), line[:cut], font=f, fill=color)
-            y += int(size * 1.45)
-            line = line[cut:]
-            if not line or y > h - pad:
-                break
-        if y > h - pad:
-            break
-    _save_thumb(img, rid)
-    return True
-
-
 def heic_jpeg(drv, rec, item) -> "os.PathLike":
     """An iPhone photo (HEIC) as JPEG, up to 2400 px, made once per version."""
     from PIL import Image, ImageOps
@@ -186,14 +148,45 @@ def heic_jpeg(drv, rec, item) -> "os.PathLike":
     return out
 
 
-def _docx_text(data: bytes) -> str:
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        xml = z.read("word/document.xml").decode("utf-8", "replace")
-    xml = re.sub(r"</w:p>", "\n", xml)
-    return re.sub(r"<[^>]+>", "", xml)
+def _render(job: dict) -> dict:
+    """Draw a cover in a process of its own (render.py), stopped after PREVIEW_TIMEOUT: whatever a file does to the
+    drawing code, it can't hold up the web app or the worker's other jobs (they share this process's CPU)."""
+    try:
+        r = subprocess.run([sys.executable, "-m", "app.files.render", json.dumps(job)], cwd=_APP_ROOT, capture_output=True,
+                           timeout=PREVIEW_TIMEOUT)
+    except subprocess.TimeoutExpired:   # (the process is killed)
+        raise HTTPException(422, f"The file took too long to preview (over {PREVIEW_TIMEOUT} s)")
+    if r.returncode != 0:
+        why = (r.stderr.decode("utf-8", "replace").strip().splitlines() or ["?"])[-1]
+        raise ValueError(why)
+    return json.loads(r.stdout)
 
 
-@jobs.handler("file_preview")
+def _render_bytes(what: str, data: bytes, rid, name: str, **extra) -> dict:
+    with tempfile.TemporaryDirectory() as d:
+        src = os.path.join(d, "src")
+        with open(src, "wb") as f:
+            f.write(data)
+        return _render({"what": what, "src": src, "out": str(THUMB_DIR / f"{rid}.webp"), "name": name, **extra})
+
+
+def mark_missing(rid, path: str):
+    """The storage says the file isn't there (though it was listed): say so on the record ("missing"), once per version,
+    instead of trying to read it again at every sync or view. The next sync removes the record if it's really gone; a new
+    version of the file clears it."""
+    with connection() as conn:
+        cur = conn.execute("SELECT r.data, r.caldav_etag, r.table_id FROM records r WHERE r.id = %s AND r.caldav_href = %s", (rid, path)).fetchone()
+        if not cur:
+            return
+        keys = _keys(store.get_fields(conn, cur["table_id"]))
+        items = cur["data"].get(keys["file"]) or []
+        if items and not (items[0].get("missing") and items[0].get("previewed") == cur["caldav_etag"]):
+            done = {k: v for k, v in items[0].items() if k not in ("preview_retry", "preview_tries")}
+            conn.execute("UPDATE records SET data = data || %s WHERE id = %s", (Jsonb({keys["file"]: [{
+                **done, "missing": True, "previewed": cur["caldav_etag"], "preview_error": "The file isn't in the storage any more"}]}), rid))
+
+
+@jobs.handler("file_preview", limit=PREVIEW_CONCURRENCY)
 def _job_preview(payload):
     from PIL import Image
     rid = payload["record_id"]
@@ -214,10 +207,7 @@ def _job_preview(payload):
                 _save_thumb(img.copy(), rid)
             thumb = True
         elif (mime in _RASTER or mime == "image/tiff") and size <= 40 * 1024 * 1024:
-            with Image.open(io.BytesIO(drv.read(path, size + 1))) as img:
-                img.seek(0)
-                _save_thumb(img.copy(), rid)
-            thumb = True
+            thumb = _render_bytes("image", drv.read(path, size + 1), rid, path)["thumb"]
         elif mime == "application/pdf" and size <= 100 * 1024 * 1024:
             with tempfile.TemporaryDirectory() as d:
                 src = os.path.join(d, "in.pdf")
@@ -228,27 +218,21 @@ def _job_preview(payload):
             # the first page of the converted PDF (also kept, so opening the preview is instant)
             thumb = _pdf_thumb(preview_pdf(drv, rec, item), rid)
             if _ext(path) == "docx":
-                text = _docx_text(drv.read(path, size + 1))[:TEXT_CHARS]
+                text = _render_bytes("docx_text", drv.read(path, size + 1), rid, path)["text"]
         elif _ext(path) in ("odt", "ods", "odp", "docx", "xlsx", "pptx") and size <= 60 * 1024 * 1024:
-            data = drv.read(path, size + 1)
-            with zipfile.ZipFile(io.BytesIO(data)) as z:
-                name = next((n for n in ("Thumbnails/thumbnail.png", "docProps/thumbnail.jpeg", "docProps/thumbnail.png") if n in z.namelist()), None)
-                if name:
-                    with Image.open(io.BytesIO(z.read(name))) as img:
-                        _save_thumb(img.copy(), rid)
-                    thumb = True
-            if _ext(path) == "docx":
-                text = _docx_text(data)[:TEXT_CHARS]
+            out = _render_bytes("zip", drv.read(path, size + 1), rid, path)
+            thumb, text = out["thumb"], out["text"]
         elif is_text(mime, path):
-            raw = drv.read(path, TEXT_CHARS * 4)
-            text = raw.decode("utf-8", "replace")[:TEXT_CHARS]
-            if text.strip() and "\x00" not in text[:2000] and not is_svg(mime, path):
-                thumb = _text_thumb(text, rid, path)
+            out = _render_bytes("text", drv.read(path, TEXT_CHARS * 4), rid, path, svg=is_svg(mime, path))
+            thumb, text = out["thumb"], out["text"]
     except FileNotFoundError:
-        return
+        log.info("no preview for %s: not in the storage", path)
+        return mark_missing(rid, path)
     except StorageError as e:
         temporary = e
     except HTTPException as e:
+        if e.status_code == 404:   # (the converter's "not in the storage")
+            return mark_missing(rid, path)
         if e.status_code >= 500:
             temporary = e
         error = str(e.detail)
@@ -257,16 +241,20 @@ def _job_preview(payload):
         error = "The file couldn't be read for a preview"
         log.info("no preview for %s: %s", path, e)
     if temporary is not None:
-        # said on the file (the app shows "Preview pending: …"), and not marked tried: the job and later syncs try again
         why = str(getattr(temporary, "detail", "") or "The file's storage couldn't be reached")
-        log.warning("no preview for %s yet (tried again later): %s", path, why)
-        with connection() as conn:
-            cur = conn.execute("SELECT data FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
-            items = (cur["data"].get(keys["file"]) or []) if cur else []
-            if items:
-                conn.execute("UPDATE records SET data = data || %s WHERE id = %s",
-                             (Jsonb({keys["file"]: [{**items[0], "preview_error": why, "preview_retry": True}]}), rid))
-        raise RuntimeError(f"preview of {path} not made yet: {why}")
+        tries = (item.get("preview_tries") or 0) + 1
+        if tries < PREVIEW_TRIES:
+            # said on the file (the app shows "Preview pending: …"), and not marked tried: the job and later syncs try again
+            log.warning("no preview for %s yet (try %d of %d): %s", path, tries, PREVIEW_TRIES, why)
+            with connection() as conn:
+                cur = conn.execute("SELECT data FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
+                items = (cur["data"].get(keys["file"]) or []) if cur else []
+                if items:
+                    conn.execute("UPDATE records SET data = data || %s WHERE id = %s", (Jsonb({keys["file"]: [
+                        {**items[0], "preview_error": why, "preview_retry": True, "preview_tries": tries}]}), rid))
+            raise RuntimeError(f"preview of {path} not made yet: {why}")
+        error = why   # tried often enough for this version: given up on (a new version of the file is tried again)
+        log.warning("no preview for %s: gave up after %d tries: %s", path, tries, why)
     with connection() as conn:
         cur = conn.execute("SELECT data, caldav_etag FROM records WHERE id = %s AND caldav_href = %s", (rid, path)).fetchone()
         if not cur:
@@ -274,7 +262,7 @@ def _job_preview(payload):
         patch = {}
         items = cur["data"].get(keys["file"]) or []
         if items:  # tried for this version (so the next sync doesn't try again), and whether there's a cover now
-            done = {k: v for k, v in items[0].items() if k not in ("preview_error", "preview_retry")}
+            done = {k: v for k, v in items[0].items() if k not in ("preview_error", "preview_retry", "preview_tries", "missing")}
             patch[keys["file"]] = [{**done, "previewed": cur["caldav_etag"], **({"thumb": True} if thumb else {}),
                                     **({"pv": PREVIEW_VERSION} if CONVERTER else {}), **({"preview_error": error} if error and not thumb else {})}]
         if text is not None:

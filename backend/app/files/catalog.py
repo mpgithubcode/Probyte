@@ -17,6 +17,7 @@ days). Deleting a whole files table never deletes the files.
     kinds.py     what a file is and how a browser shows it (pure)
     catalog.py   files <-> records: writes, the sync with the storage, uploads, new contents, streaming
     previews.py  covers, searchable text and viewable copies, made by the worker
+    render.py    drawing covers (in a process of its own, with a time limit)
     storages.py  the S3 / WebDAV connections
     api.py       the HTTP routes
 """
@@ -37,7 +38,7 @@ from app.core import events
 from app.core.db import connection, Jsonb
 from app.data import audit, store
 from app.files.kinds import _ext, _keys, _heic, convertible, is_svg, is_text, kind_of, previewable, SVG_CSP, view_of
-from app.files.previews import _drop_cache, _queue_preview, CONVERTER, heic_jpeg, preview_pdf, PREVIEW_VERSION, THUMB_DIR
+from app.files.previews import _drop_cache, _queue_preview, CONVERTER, heic_jpeg, mark_missing, preview_pdf, PREVIEW_VERSION, THUMB_DIR
 from app.files.storages import _storage, own_storage, save_storage, StorageIn, test_storage
 
 log = logging.getLogger("probyte.files")
@@ -262,6 +263,7 @@ def stream(table, rec, keys, *, download=False, as_text=False, rng: str | None =
     try:
         status, headers, chunks = drv.get(rec["caldav_href"], rng)
     except FileNotFoundError:
+        mark_missing(rec["id"], rec["caldav_href"])
         raise HTTPException(404, "The file isn't in the storage any more")
     except StorageError as e:
         raise HTTPException(502, str(e))
@@ -301,10 +303,18 @@ def preview_response(table, rec, keys):
     with connection() as conn:
         drv = _storage(conn, table)
     item = (rec["data"].get(keys["file"]) or [{}])[0]
-    if _heic(item.get("mime") or "", item.get("name") or ""):
-        return FileResponse(heic_jpeg(drv, rec, item), media_type="image/jpeg", content_disposition_type="inline",
-                            headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
-    pdf = preview_pdf(drv, rec, item)
+    try:
+        if _heic(item.get("mime") or "", item.get("name") or ""):
+            return FileResponse(heic_jpeg(drv, rec, item), media_type="image/jpeg", content_disposition_type="inline",
+                                headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
+        pdf = preview_pdf(drv, rec, item)
+    except FileNotFoundError:
+        mark_missing(rec["id"], rec["caldav_href"])
+        raise HTTPException(404, "The file isn't in the storage any more")
+    except HTTPException as e:
+        if e.status_code == 404:
+            mark_missing(rec["id"], rec["caldav_href"])
+        raise
     return FileResponse(pdf, media_type="application/pdf", content_disposition_type="inline",
                         headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
 

@@ -250,7 +250,7 @@ def test_edit_save_and_discard_in_the_viewer(doc):
         pg.click("button:has-text('Sign in')")
         pg.wait_for_selector(".page, .welcome")
         pg.goto(f"{BASE}/#/table/{t['id']}?record={rec['id']}")
-        expect(pg.locator(".viewer .viewer-code")).to_have_text("first draft")
+        expect(pg.locator(".viewer .code-text")).to_have_text("first draft")
         pg.click(".viewer-bar button:has-text('Edit')")
         menu = pg.locator(".popover .menu-item")
         expect(menu).to_have_text(["Edit here", "Edit in ONLYOFFICE", "Open in ONLYOFFICE (read-only)"])
@@ -277,7 +277,7 @@ def test_edit_save_and_discard_in_the_viewer(doc):
         pg.click(".viewer-bar button:has-text('Close editor')")
         dialog.locator("button:has-text('Discard')").click()
         expect(pg.locator(".office-badge")).to_have_count(0)
-        expect(pg.locator(".viewer .viewer-code")).to_have_text("saved from the viewer")
+        expect(pg.locator(".viewer .code-text")).to_have_text("saved from the viewer")
         time.sleep(3)  # the Document Server's final save (ignored)
         assert content(u, rec) == "saved from the viewer"
         # once more, and Save from the question: saved and closed (Escape asks too)
@@ -289,7 +289,7 @@ def test_edit_save_and_discard_in_the_viewer(doc):
         pg.keyboard.press("Escape")
         dialog.locator("button:has-text('Save')").click()
         expect(pg.locator(".office-badge")).to_have_count(0, timeout=20000)
-        expect(pg.locator(".viewer .viewer-code")).to_have_text("saved on the way out")
+        expect(pg.locator(".viewer .code-text")).to_have_text("saved on the way out")
         assert content(u, rec) == "saved on the way out"
         # read-only: no Save button, the text can't be changed
         pg.click(".viewer-bar button:has-text('Edit')")

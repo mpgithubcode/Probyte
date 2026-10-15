@@ -299,9 +299,11 @@ def ensure_choices(conn, field, values):
     if field["type"] not in SELECT_TYPES:
         return
     vals = values if isinstance(values, list) else [values]
-    choices = list(field["options"].get("choices", []))
+    # (choices written as plain names, as the API accepts them, are kept as {name, color} from here on)
+    choices = [c if isinstance(c, dict) else {"name": str(c), "color": PALETTE[i % len(PALETTE)]}
+               for i, c in enumerate(field["options"].get("choices") or [])]
     names = {c["name"] for c in choices}
-    added = False
+    added = any(not isinstance(c, dict) for c in field["options"].get("choices") or [])
     for v in vals:
         if v not in (None, "") and str(v) not in names:
             choices.append({"name": str(v), "color": PALETTE[len(choices) % len(PALETTE)]})

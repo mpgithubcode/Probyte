@@ -15,6 +15,7 @@ export interface Attachment {
   previewed?: string;       // files tables: a preview was tried for this version
   preview_error?: string;   // …and why there's none
   preview_retry?: boolean;  // …and it's tried again (the converter or the storage couldn't be reached)
+  missing?: boolean;        // files tables: listed by the storage, but not there when read
   view?: "image" | "pdf" | "video" | "audio" | "text" | null;  // how the browser can show it
 }
 

@@ -5,6 +5,9 @@ exists if that change was committed. A `key` makes a job unique while it's waiti
 its start back (debouncing), but never more than DEBOUNCE_CAP seconds past the first request. Workers claim
 due jobs with FOR UPDATE SKIP LOCKED, so several worker threads or processes can share the queue.
 Failed jobs are retried with exponential backoff, then kept as failed for a while for inspection.
+A job never starts while another one with the same key is still running (two previews of one file, two syncs of one
+table), and a kind can be given a limit of how many of it run at once (handler(kind, limit=n)), so slow jobs of one
+kind never take every worker thread.
 """
 import logging
 import threading
@@ -24,6 +27,9 @@ LOCK_SECONDS = 600         # a claimed job is retried if its worker hasn't finis
 KEEP_FAILED_DAYS = 7
 
 _handlers: dict = {}
+_limits: dict[str, int] = {}      # kind -> at most this many running at once (in this process)
+_running: dict[str, int] = {}
+_claiming = threading.Lock()
 
 
 class Retry(Exception):
@@ -34,9 +40,11 @@ class Retry(Exception):
         self.seconds = seconds
 
 
-def handler(kind: str):
+def handler(kind: str, limit: int | None = None):
     def wrap(fn):
         _handlers[kind] = fn
+        if limit:
+            _limits[kind] = max(1, limit)
         return fn
     return wrap
 
@@ -61,14 +69,24 @@ SLOW_KINDS = ["sync_table", "radicale_import"]  # jobs that take a while (other 
 
 
 def _claim(fast_only=False):
-    """The next due job. Quick jobs (webhooks) go first, so a slow calendar server doesn't hold them up."""
-    with connection() as conn:
-        return conn.execute(
-            "UPDATE jobs SET locked_until = now() + make_interval(secs => %s), attempts = attempts + 1 WHERE id = ("
-            "  SELECT id FROM jobs WHERE NOT failed AND run_at <= now() AND (locked_until IS NULL OR locked_until < now())"
-            "  AND NOT (%s AND kind = ANY(%s))"
-            "  ORDER BY kind = ANY(%s), run_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *",
-            (LOCK_SECONDS, fast_only, SLOW_KINDS, SLOW_KINDS)).fetchone()
+    """The next due job. Quick jobs (webhooks) go first, so a slow calendar server doesn't hold them up. Skipped: kinds
+    already running as often as their limit allows, and jobs whose key a running job has (they wait for it)."""
+    with _claiming:
+        full = [k for k, n in _limits.items() if _running.get(k, 0) >= n]
+        with connection() as conn:
+            job = conn.execute(
+                "UPDATE jobs SET locked_until = now() + make_interval(secs => %s), attempts = attempts + 1 WHERE id = ("
+                "  SELECT id FROM jobs j WHERE NOT failed AND run_at <= now() AND (locked_until IS NULL OR locked_until < now())"
+                "  AND NOT (%s AND kind = ANY(%s)) AND NOT kind = ANY(%s)"
+                # the keys of running jobs, gathered once (hashed): checking each waiting job against the whole table
+                # took most of a second with a few thousand webhook events queued
+                "  AND (dedupe_key IS NULL OR dedupe_key NOT IN (SELECT r.dedupe_key FROM jobs r WHERE r.locked_until >= now()"
+                "       AND r.dedupe_key IS NOT NULL AND NOT r.failed))"
+                "  ORDER BY kind = ANY(%s), run_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *",
+                (LOCK_SECONDS, fast_only, SLOW_KINDS, full, SLOW_KINDS)).fetchone()
+        if job:
+            _running[job["kind"]] = _running.get(job["kind"], 0) + 1
+        return job
 
 
 def _finish(job, error: str | None = None, retry_in: float | None = None):
@@ -102,6 +120,9 @@ def run_one(fast_only=False) -> bool:
         _finish(job, retry_in=r.seconds)
     except Exception:
         _finish(job, error=traceback.format_exc())
+    finally:
+        with _claiming:
+            _running[job["kind"]] -= 1
     return True
 
 

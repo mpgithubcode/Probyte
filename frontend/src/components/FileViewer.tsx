@@ -8,6 +8,7 @@ import { attachmentUrl, editableKind, fetchBytes, fileExt, fileWriteUrl, imageUr
 import type { Attachment, Field, Rec } from "../types";
 import { formatBytes, isEditable } from "../util";
 import { CellValue, FieldInput } from "./Cells";
+import { CodeEditor, CodeView } from "./CodeView";
 import { FieldIcon, Icon } from "./Icon";
 
 const RichText = lazy(() => import("./RichText"));
@@ -386,7 +387,7 @@ function SvgView({ item, editing, draft, onDraft, onText }: {
   if (editing) {
     return (
       <div className="viewer-doc code">
-        <textarea className="viewer-code-edit" autoFocus spellCheck={false} value={draft ?? ""} onChange={(e) => onDraft(e.target.value)} />
+        <CodeEditor name={item.name} value={draft ?? ""} onChange={onDraft} />
       </div>
     );
   }
@@ -432,8 +433,8 @@ function TextView({ item, markdown, editing, draft, onDraft, onText }: {
   return (
     <div className="viewer-doc code">
       {editing
-        ? <textarea className="viewer-code-edit" autoFocus spellCheck={false} value={draft ?? ""} onChange={(e) => onDraft(e.target.value)} />
-        : <pre className="viewer-code">{text || <span className="muted">(empty file)</span>}</pre>}
+        ? <CodeEditor name={item.name} value={draft ?? ""} onChange={onDraft} />
+        : <CodeView name={item.name} text={text} />}
     </div>
   );
 }

@@ -324,3 +324,55 @@ def test_files_through_a_linked_table(user, other_user):
     with conn:
         conn.execute("UPDATE tables SET remote = remote || '{\"local\": false}' WHERE id = %s", (lt["id"],))
     check()
+
+
+def test_minified_json_gets_a_code_cover_without_holding_up_the_worker(user):
+    """A JSON file written on one line (a minified export) used to send the cover's line wrapping into a loop that never
+    ended, taking every worker thread (and the web app's CPU) with it. Now it gets a code-style cover in a moment, and the
+    files after it get theirs too."""
+    import json
+    t = user.table("files", "Minified", storage=S3, storage_prefix=f"p{uuid.uuid4().hex[:8]}")
+    F = user.fields(t["id"])
+    data = json.dumps({"items": [{"name": f"Panel {i}", "qty": i, "ok": True} for i in range(3000)]}, separators=(",", ":")).encode()
+    assert len(data) > 80_000 and b"\n" not in data
+    recs = upload(user, t, *[(f"export{i}.json", data, "application/json") for i in range(4)], ("after.txt", b"still going", "text/plain"))
+    for r in recs:
+        wait(lambda: user.get(API + f"/files/{r['id']}/thumb").status_code == 200, timeout=30)
+    rec = by_name(user, t, F, "export0.json")
+    assert rec["data"][F["kind"]] == "Code" and rec["data"][F["text"]].startswith('{"items":[{"name":"Panel 0"')
+    assert rec["data"][F["file"]][0]["thumb"] and not rec["data"][F["file"]][0].get("preview_error")
+    assert user.sync(t["id"])["files"] == 5
+
+
+def test_a_file_missing_from_the_storage_is_marked_and_not_asked_for_again(user):
+    """Listed once, gone when read: the record says "missing" (once), instead of the file being asked for again at every
+    sync or view; the next sync removes the record."""
+    s = user.j("POST", "/storages", json={**DAV, "name": f"NAS {uuid.uuid4().hex[:6]}"})
+    prefix = f"p{uuid.uuid4().hex[:8]}"
+    t = user.table("files", "Gone", storage_id=s["id"], storage_prefix=prefix)
+    F = user.fields(t["id"])
+    rec = upload(user, t, ("gone.txt", b"here today", "text/plain"))[0]
+    wait(lambda: user.record(t["id"], rec["id"])["data"][F["file"]][0].get("previewed"))
+    requests.delete(f"{WEBDAV_URL}shared/{prefix}/gone.txt", auth=DAV_AUTH)
+    assert user.get(API + f"/files/{rec['id']}/content").status_code == 404
+    item = user.record(t["id"], rec["id"])["data"][F["file"]][0]
+    assert item["missing"] and item["preview_error"] and not item.get("preview_retry")
+    assert user.sync(t["id"])["removed"] == 1
+
+
+def test_select_choices_saved_as_plain_names_still_take_new_values(user):
+    """Choices stored as plain names (["A", "B"]) broke every edit of that field ("string indices must be integers")."""
+    import os
+    import psycopg
+    t = user.table("generic", "Plain choices")
+    f = user.j("POST", f"/tables/{t['id']}/fields", json={"name": "Stage", "type": "single_select", "options": {"choices": []}})
+    try:
+        conn = psycopg.connect(os.environ.get("BENCH_DB", "postgresql://probyte:probyte-test@db:5432/probyte"))
+    except Exception:
+        pytest.skip("no database access")
+    with conn:
+        conn.execute("""UPDATE fields SET options = jsonb_set(options, '{choices}', '["A", "B"]') WHERE id = %s""", (f["id"],))
+    rec = user.j("POST", f"/tables/{t['id']}/records", json={"data": {f["id"]: "C"}})
+    assert rec["data"][f["id"]] == "C"
+    choices = next(x for x in user.j("GET", f"/tables/{t['id']}")["fields"] if x["id"] == f["id"])["options"]["choices"]
+    assert [c["name"] for c in choices] == ["A", "B", "C"] and all(c["color"] for c in choices)
