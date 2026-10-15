@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../api";
-import type { Choice, Field, FieldOptions, FieldType, FilterCond, FilterGroup, TableInfo, View } from "../types";
+import type { Choice, Field, FieldOptions, FieldType, FieldView, FieldViews, FilterCond, FilterGroup, TableInfo, View } from "../types";
 import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable, BUILTIN_KEYS, valueType } from "../util";
 import { FormulaEditor } from "./FormulaEditor";
+import { VIEW_LABEL, viewsFor } from "./LinkedView";
 import { DateValue, FilterEditor } from "./ViewControls";
 import { FieldIcon, Icon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
@@ -653,6 +654,57 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
             </Select>
           </label>
         )}
+
+        {/* ---------------- how a field holding several records / values is shown, in the cells and on records */}
+        {viewsFor({ type, options: o } as Field, "record").length > 0 && (() => {
+          const v = o.views ?? {};
+          const setV = (p: Partial<FieldViews>) => {
+            const n = { ...v, ...p };
+            (Object.keys(n) as (keyof FieldViews)[]).forEach((k) => n[k] === undefined && delete n[k]);
+            set({ views: Object.keys(n).length ? n : undefined });
+          };
+          const pick = (where: "cell" | "record", label: string) => {
+            const opts = viewsFor({ type, options: o } as Field, where);
+            return (
+              <label className="stack">{label}
+                <select className="input" value={v[where] && opts.includes(v[where]!) ? v[where] : opts[0]}
+                  onChange={(e) => setV({ [where]: e.target.value === opts[0] ? undefined : e.target.value as FieldView })}>
+                  {opts.map((x) => <option key={x} value={x}>{VIEW_LABEL[x]}</option>)}
+                </select>
+              </label>
+            );
+          };
+          const recordView = v.record ?? viewsFor({ type, options: o } as Field, "record")[0];
+          const listed = type === "link" && ["list", "table", "cards"].includes(recordView) && foreignFields;
+          const chosen = new Set(v.fields ?? []);
+          return (
+            <Section title="How it's shown">
+              <div className="row-2">
+                {pick("cell", "In the table")}
+                {pick("record", "On the record and its page")}
+              </div>
+              {listed && (
+                <div className="stack">Fields of the linked records to show
+                  <div className="view-fields-pick">
+                    {foreignFields!.filter((f) => f.type !== "button" && f.type !== "record_id").map((f) => (
+                      <label key={f.id} className="inline-check"><input type="checkbox" checked={chosen.has(f.id)}
+                        onChange={(e) => { const n = (v.fields ?? []).filter((x) => x !== f.id); if (e.target.checked) n.push(f.id); setV({ fields: n.length ? n : undefined }); }} />
+                        <FieldIcon type={f.type} /> {f.name}</label>
+                    ))}
+                  </div>
+                  <span className="hint">{chosen.size ? "In this order: untick and tick again to move one to the end." : "None chosen: the title and the next few fields."}</span>
+                </div>
+              )}
+              {(v.cell === "bar" || v.record === "bar") && (
+                <label className="stack">A full bar is
+                  <input className="input" type="number" min={0} step="any" placeholder="1 for fractions, else 100" value={v.max ?? ""}
+                    onChange={(e) => setV({ max: e.target.value && Number(e.target.value) > 0 ? Number(e.target.value) : undefined })} />
+                </label>
+              )}
+              <span className="hint">Each page can show it its own way too.</span>
+            </Section>
+          );
+        })()}
 
         {/* ---------------- formula */}
         {type === "formula" && (

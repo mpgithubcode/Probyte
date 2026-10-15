@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.calc import formula as F
 from app.calc.compute import COMPUTED_TYPES, Engine, FIELD_TYPES, FILTER_OPS
 from app.core.context import api_bases
-from app.data import access
+from app.data import access, pages
 from app.core.db import Jsonb
 from app.formats.ical import component_kind, ical_to_values, PALETTE, SYSTEM_FIELDS
 
@@ -384,6 +384,10 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
     if ftype != "date" or not (o.get("stampWhen") or "").strip():
         for k in ("stampWhen", "stampClear", "stampKind"):
             o.pop(k, None)
+    if "views" in o:   # how it's shown in the table's cells and on the record (data/pages.py)
+        o["views"] = pages.clean_views(o["views"])
+        if o["views"] is None:
+            o.pop("views")
     if ftype == "recurrence":
         # ordinary tables: the checkbox that completes it (False: none) and the dates it moves on to the next date
         mine = {str(f["id"]): f for f in get_fields(conn, tid)}

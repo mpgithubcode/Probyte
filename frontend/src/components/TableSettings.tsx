@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Base, Dataset, Field, Storage } from "../types";
+import type { Base, Dataset, Field, PageLayout, Storage } from "../types";
 import { FIELD_TYPES, linkSummary, nativeKind, timeAgo, BUILTIN_KEYS } from "../util";
 import { EmojiPicker } from "./EmojiPicker";
 import { FieldIcon, Icon, tableIcon } from "./Icon";
@@ -8,7 +8,7 @@ import { Modal, Popover, usePopover } from "./Overlay";
 import { StorageEditor } from "./StorageForm";
 import { TemplateActions } from "./Templates";
 
-type Section = "general" | "fields" | "sync" | "sharing" | "data" | "template" | "delete";
+type Section = "general" | "fields" | "page" | "sync" | "sharing" | "data" | "template" | "delete";
 
 const KIND_LABEL: Record<string, string> = {
   generic: "Table", tasks: "Tasks (synced calendar)", events: "Events (synced calendar)", mixed: "Tasks & events (synced calendar)",
@@ -31,6 +31,7 @@ export interface TableSettingsActions {
   sources?: () => void;
   linkSettings?: () => void;
   feeds?: () => void;
+  setPage?: (page: PageLayout | null) => void;   // records as pages (null: no page)
   remove: (deleteOnServer: boolean | null) => void;
 }
 
@@ -52,6 +53,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
   const sections: { id: Section; label: string }[] = [
     { id: "general", label: "General" },
     ...(ds.kind === "table" && !remote ? [{ id: "fields" as Section, label: "Fields" }] : []),
+    ...(ds.kind === "table" && actions.setPage ? [{ id: "page" as Section, label: "Page" }] : []),
     ...(synced ? [{ id: "sync" as Section, label: ds.dav?.builtin ? "Phones" : "Sync" }] : files ? [{ id: "sync" as Section, label: "Storage" }]
       : remote ? [{ id: "sync" as Section, label: "Link" }] : ds.kind === "combo" ? [{ id: "sync" as Section, label: "Sources" }] : []),
     ...(actions.feeds && hasDates && !files ? [{ id: "sharing" as Section, label: "Calendar links" }] : []),
@@ -72,6 +74,21 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
         <div className="settings-pane">
           {section === "general" && <General ds={ds} kind={kind} bases={bases} currentBase={currentBase} hiddenInSidebar={hiddenInSidebar} actions={actions} word={word} />}
           {section === "fields" && <Fields ds={ds} canManage={canManage} actions={actions} />}
+          {section === "page" && actions.setPage && (
+            <div className="form">
+              <label className="inline-check"><input type="checkbox" checked={!!t?.page?.enabled}
+                onChange={(e) => actions.setPage!({ enabled: e.target.checked, blocks: t?.page?.blocks ?? [] })} /> Open records as pages</label>
+              <p className="hint">A page shows a record like a document: its title large, then its fields in blocks you arrange (a link as a
+                table, a list or cards…), headings and dividers, and a long text field as the page's body, where other fields can be placed in
+                the text. The record panel is still a click away (Page | Record). To lay the page out, open a record as a page and choose
+                <b> Edit page</b>; it's the same for every record of this table.</p>
+              {!!t?.page?.blocks.length && (
+                <div className="settings-actions">
+                  <button className="btn sm" onClick={() => actions.setPage!(t?.page?.enabled ? { enabled: true, blocks: [] } : null)}>Reset the layout</button>
+                </div>
+              )}
+            </div>
+          )}
           {section === "sync" && synced && t && ds.dav?.builtin && (
             <div className="form">
               <dl className="settings-facts">

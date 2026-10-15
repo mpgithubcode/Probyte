@@ -1,7 +1,7 @@
 import Link from "@tiptap/extension-link";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Markdown } from "tiptap-markdown";
 
 /** A Markdown file as formatted text; editable (WYSIWYG) with a toolbar. Saves back to Markdown. Raw HTML in the file is
@@ -37,7 +37,7 @@ export default function RichText({ markdown, editable, onChange }: {
 
 const markdownOf = (e: Editor): string => (e.storage as { markdown: { getMarkdown: () => string } }).markdown.getMarkdown();
 
-function Toolbar({ editor }: { editor: Editor }) {
+export function Toolbar({ editor, extra }: { editor: Editor; extra?: ReactNode }) {
   const b = (label: string, title: string, active: boolean, run: () => void) => (
     <button type="button" title={title} className={`rt-btn ${active ? "on" : ""}`} onMouseDown={(e) => { e.preventDefault(); run(); }}>{label}</button>
   );
@@ -70,6 +70,7 @@ function Toolbar({ editor }: { editor: Editor }) {
       <span className="rt-sep" />
       {b("↶", "Undo (Ctrl/⌘ Z)", false, () => c().undo().run())}
       {b("↷", "Redo", false, () => c().redo().run())}
+      {extra}
     </div>
   );
 }

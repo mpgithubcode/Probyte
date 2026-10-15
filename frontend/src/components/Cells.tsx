@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { Attachment, Field, Refs, User } from "../types";
+import type { Attachment, Field, FieldView, Refs, User } from "../types";
 import {
   choiceColor, cleanFormatted, displayText, formatDate, formatNumber, fromInputValue, innerField, isDateOnly, isEditable, isErrorValue,
   FORMAT_TYPES, formatPhone, shortUrl, telHref,
@@ -97,12 +97,45 @@ function LinkedValues({ ids, shown, files }: { ids: string[]; shown: { field: Fi
   );
 }
 
-/** Read-only rendering of a value. */
-export function CellValue({ field, value }: { field: Field; value: any }) {
+/** A rollup's value as a bar: how full against `max` (its views.max; else 1 for fractions, 100 for the rest). */
+export function ValueBar({ value, field }: { value: unknown; field: Field }) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return <span>{String(value)}</span>;
+  const max = field.options.views?.max ?? (Math.abs(n) <= 1 ? 1 : 100);
+  const pct = Math.max(0, Math.min(100, (n / max) * 100));
+  return (
+    <span className="value-bar" title={`${formatNumber(n, field.options)} of ${formatNumber(max, field.options)}`}>
+      <span className="value-bar-track"><span className="value-bar-fill" style={{ width: `${pct}%` }} /></span>
+      <span className="value-bar-label">{max === 1 || max === 100 ? `${Math.round(pct)}%` : formatNumber(n, field.options)}</span>
+    </span>
+  );
+}
+
+/** "3 records" / "2 values": a field holding several, shown as how many. */
+export function CountValue({ field, n }: { field: Field; n: number }) {
+  const what = field.type === "link" ? (n === 1 ? "record" : "records") : n === 1 ? "value" : "values";
+  return <span className="count-value">{n} {what}</span>;
+}
+
+/** Long text with fields placed in it as a page's body ({{field:<id>}} lines): those lines read as the fields' names. */
+export const embedLabel = (text: string, fields?: Field[]) =>
+  text.replace(/^\{\{field:([\w-]+)\}\}$/gm, (_, id) => `[${fields?.find((f) => f.id === id)?.name ?? "field"}]`);
+export const FieldsContext = createContext<Field[] | undefined>(undefined);
+
+/** Read-only rendering of a value. `view`: how (see FieldViews); unset = the field's own choice for the table's cells. */
+export function CellValue({ field, value, view }: { field: Field; value: any; view?: FieldView }) {
   const { refs } = useContext(RefsContext);
+  const siblings = useContext(FieldsContext);
   if (isErrorValue(value)) return <span className="cell-error" title={value.__error}>#ERROR</span>;
   if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) return null;
+  const shownAs = view ?? field.options.views?.cell;
+  if (shownAs === "count" && ["link", "lookup", "conditional_lookup"].includes(field.type)) {
+    return <CountValue field={field} n={Array.isArray(value) ? value.length : 1} />;
+  }
+  if (shownAs === "bar" && ["rollup", "conditional_rollup"].includes(field.type)) return <ValueBar value={value} field={field} />;
   switch (field.type) {
+    case "long_text":
+      return <span>{embedLabel(String(value), siblings)}</span>;
     case "checkbox":
       return <span className={`check ${value ? "on" : ""}`}>{value ? "✓" : ""}</span>;
     case "single_select":
@@ -181,7 +214,11 @@ interface InputProps {
   anchor?: string;           // repeat fields: the record's start, to suggest sensible days
   initial?: string;          // grid: editing started by typing this character (replaces the value)
   takeTyped?: () => string;  // grid: everything typed until the editor appeared (read once it has)
+  asButton?: boolean;        // links: only a "Link records" button that opens the picker (the records are shown elsewhere)
 }
+
+/** A link's picker behind a button (a page or record shows the linked records in a list, table or cards). */
+export const LinkPicker = (props: InputProps) => <LinkInput {...props} asButton />;
 
 /** Editable input for a value. Commits on blur / Enter; Escape cancels. */
 export function FieldInput(props: InputProps) {
@@ -407,7 +444,7 @@ export const invalidateTitles = (tableId?: string) => {
   for (const k of [...titleCache.keys()]) if (k === tableId || k.startsWith(`${tableId}:`)) titleCache.delete(k);  // (and links' own lists)
 };
 
-function LinkInput({ field, value, onCommit, onDone, inline }: InputProps) {
+function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputProps) {
   const { refs, addRefs } = useContext(RefsContext);
   const ids: string[] = Array.isArray(value) ? value : [];
   const single = field.options.relationship === "one";
@@ -456,11 +493,15 @@ function LinkInput({ field, value, onCommit, onDone, inline }: InputProps) {
   };
 
   return (
-    <div ref={shell.setAnchorEl} className={inline ? "choice-inline" : "choice-field input"} onClick={() => !inline && shell.setOpen(true)}>
+    <div ref={shell.setAnchorEl} className={asButton ? "link-picker-btn" : inline ? "choice-inline" : "choice-field input"} onClick={() => !inline && shell.setOpen(true)}>
+      {asButton ? (
+        <button type="button" className="btn sm"><Icon name="plus" size={14} /> {single ? (ids.length ? "Change record" : "Link a record") : "Link records"}</button>
+      ) : (
       <span className="chips">
         {ids.map((id) => <RefChip key={id} kind="record" label={refs.records[id] ?? ""} />)}
         {!ids.length && !inline && <span className="muted">{single ? "Link a record…" : "Link records…"}</span>}
       </span>
+      )}
       {shell.open && shell.anchorEl && (
         <Popover anchor={shell.anchorEl} onClose={() => { setQ(""); shell.close(); }} width={280}>
           <input className="input" autoFocus placeholder="Search records…" value={q} onChange={(e) => setQ(e.target.value)}

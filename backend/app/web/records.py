@@ -45,6 +45,24 @@ def api_list_records(table_id: str, field_key: Literal["id", "name"] = "id", vie
     return FastJSON({"records": out})
 
 
+class RecordIds(BaseModel):
+    ids: list[str]
+
+
+@router.post("/api/tables/{table_id}/records/lookup")
+def api_lookup_records(table_id: str, body: RecordIds, user=User):
+    """Some of a table's records (up to 500, in the order asked), every field computed, with what's needed to show them:
+    a link field's records shown as a list, a table or cards on another table's record."""
+    ids = list(dict.fromkeys(str(i) for i in body.ids))[:500]
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"])
+        eng = Engine(conn)
+        order = {rid: n for n, rid in enumerate(ids)}
+        recs = sorted((r for r in eng.records(table_id) if str(r["id"]) in order), key=lambda r: order[str(r["id"])])
+        return FastJSON({"fields": eng.describe(table_id), "records": [store.clean_record(r) for r in recs],
+                         "refs": eng.refs(table_id, recs)})
+
+
 @router.get("/api/records/{record_id}")
 def api_get_record(record_id: str, field_key: Literal["id", "name"] = "id", user=User):
     with connection() as conn:

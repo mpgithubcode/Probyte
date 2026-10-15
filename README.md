@@ -165,6 +165,14 @@ Every database and combined database can have any number of Notion-style views, 
 
 **The record panel.** Opening a record shows it in a panel beside the view, which stays usable: scroll, edit, or open another record. **↑ / ↓** in its header (or **K / J**) go through the view's records in order. Its **⋯** menu has **Duplicate**, **Copy link** (a link that opens this record) and **Arrange into sections…**, which groups the view's fields under headings such as Schedule or Money; fields not in a section stay at the top. The footer shows the record's ID (click to copy) and when and by whom it was added and last changed. On a phone the panel fills the screen.
 
+**Records as pages.** A table can open its records as **pages**, like Notion's (Table settings → **Page**, or **Page** in the record panel's header, then **Edit page**): the record's title large, then blocks you arrange, the same for every record of the table:
+- **Fields**, each shown its own way (a link as a **table**, **list** or **cards** of the linked records…), full width or half (two side by side on a wide screen);
+- **Headings** and **dividers**;
+- a **long text field as the page's body**: formatted text (headings, lists, quotes, links…) where other fields can be placed in the text with **+ Field**, shown and edited right there;
+- **Other fields**: every field not placed elsewhere, as a list.
+
+The record panel is still there: **Page | Record** in the page's header switches. On a phone the page fills the screen and the blocks are one column. (A long text with fields placed in it shows them as `[Field name]` in the table's cells; it's stored as `{{field:<id>}}` lines.)
+
 **History.** The record panel's **History** lists who changed what and when: you, an API key (by name), a connected AI assistant, a public link, or your phone through calendar sync, with each field's old and new value. Kept for 180 days.
 
 **Selecting records.** In a Table view, tick rows (shift-click selects a range, a group's box selects the group, the header box selects everything in the view). In List, Board and Gallery views, tick the box that appears on a row or card, or right-click it; on a phone, press and hold. A bar then offers **Select all**, **Edit** (set one field on all of them), **Duplicate**, **Export CSV** (the selected records, with the view's fields) and **Delete**.
@@ -271,7 +279,7 @@ Works best with drawing sets exported from CAD (they have real text and lines). 
 
 ## Linked tables (from any Probyte server)
 
-**A whole base, by link.** A public link can share **the whole base**: every table and combined database in it, with all their views, including ones added later. Someone who adds the link (**New table → From a link**) on this or any other Probyte server can add it **as a base of their own**:
+**A whole base, by link.** A public link can share **the whole base**: every table and combined database in it, with all their views, including ones added later. Someone who adds the link on this or any other Probyte server (the sidebar's **+** next to Bases → **Add base with a link…**, or **New table → From a link**) gets it **as a base of their own**:
 - It's a base of linked tables, one for each shared table, and it stays in step: tables shared later appear there at the next check. That happens every few minutes while they use Probyte, or straight away with **Linked base… → Check now** in the base's menu. A table no longer shared says so.
 - **Linked base…** also sets whether all its tables' views **stay updated** with the source's.
 - A password-protected link asks for the password once, for the whole base.
@@ -315,7 +323,7 @@ Each person chooses how they see the views (base menu → **Sharing and your vie
 
 Either way, anyone can add views of their own, which only they see, and hide tables from their own sidebar.
 
-**With a link.** In the same window, **Share with a link** makes an invite link. Anyone with an account on this server who opens it joins the base with the link's role: viewer or editor, or admin when the owner makes the link. The link also says whether joiners' views **stay updated** from the base or become **their own copies**; each person can change that afterwards, as above. A link can last 1, 7 or 30 days, or until it's turned off. Turning it off or deleting it stops it working; people who joined stay until they're removed. Someone who isn't signed in signs in first and then sees what they're joining.
+**With a link.** In the same window, **Share with a link** makes an invite link. Anyone with an account on this server who opens it joins the base with the link's role: viewer or editor, or admin when the owner makes the link. The link also says whether joiners' views **stay updated** from the base or become **their own copies**; each person can change that afterwards, as above. A link can last 1, 7 or 30 days, or until it's turned off. Turning it off or deleting it stops it working; people who joined stay until they're removed. Someone who isn't signed in signs in first and then sees what they're joining. An invite can also be pasted into **+ → Add base with a link…** in the sidebar.
 
 ## Automations
 
@@ -394,6 +402,7 @@ Probyte POSTs `record.created`, `record.updated` and `record.deleted` events (wi
 
 - **Email, URL and phone number** fields follow the same rules in every table, however values arrive (typing, the API, imports, public and linked tables, type changes): an email must be name@domain.tld (its domain is stored in lower case); a URL must be a web address (`example.com` gets `https://`; `javascript:` and other links are refused); a phone number keeps only its digits, a leading + and an extension (labels, letters, `tel:` and punctuation go; `1-800-FLOWERS` becomes its digits) and is stored one way (`+15551234567 x12`) and shown one way everywhere: `(555) 123-4567`, `+1 (555) 123-4567`, `+44 207 946 0958`, with `ext. 12`. Searching `555-123-4567` finds it however it was written. Numbers stored before 0.5 were tidied the same way. They show as links that write, open or call, and the record panel has a button for that. Contacts tables' Phone is a phone field. Numbers synced from phones are tidied too (the card on the phone is left as it is).
 - **Link to record** connects records across tables, or within one table. **Records to choose from** limits what its picker offers: the records of a view of the other table (in that view's order), conditions of its own, or both. Records already linked stay linked. By default it is two-way: adding a link also creates the matching field in the other table, and the two stay in sync. Deleting a record removes it from every link that points to it.
+- **How a link, lookup or rollup is shown**, separately **in the table** (its cells, cards and lists) and **on the record and its page** (in the field's settings, **How it's shown**): a link as **chips** (the titles), a **count** ("3 records"), or on records as a **list**, a **table** or **cards** of the linked records with the fields you choose (open one to see and edit it over the page, unlink it, or **Link records**); a lookup as chips, a list or a count; a rollup as its value or a **progress bar** (full at 1 for fractions, 100 otherwise, or a number you set). A page's blocks can each choose their own way.
 - **What a link shows.** A link cell shows each linked record's title, or any other field of it that you choose (**Show in the cell**, in the field's settings): a formula, a lookup, a date, a number shown as that field formats it. If that field holds files (an attachment, or a lookup of one), they appear as preview thumbnails, and clicking one opens the file viewer. You can turn that off to show their names. Lookups of files have the same switch. Searching and the record picker still use the titles.
 - **Formats.** Fields that show numbers have a **Format type**: Decimal (1.23), Percent (12%), Currency ($100, with any symbol) or File size, plus precision and thousands separators. That covers number fields, and formulas, rollups and lookups that work out a number. Fields that show dates have a date format and a time format: date fields, and formulas, rollups and lookups of dates, and Created / Last modified time. The API's `cell_format=text` uses the same formats.
 - **Lookup** shows a field from the linked records. **Rollup** summarises it: count, sum, average, min, max, and/or/xor, join, unique.
@@ -662,7 +671,8 @@ backend/app/
   data/           the record store: store.py is its interface; schema.py (bases, tables, fields, views), rules.py
                   (required / unique / defaults), behaviors.py (what tasks and events do on their own), records.py
                   (every record write, links, history, the change feed), combos.py (combined databases); value conversion
-                  for imports and the API (values.py), record history (audit.py), vCard import/export
+                  for imports and the API (values.py), record history (audit.py), vCard import/export, pages.py (checks
+                  tables' page layouts and how fields are shown)
   blobs/          bytes: uploaded attachments, and the S3 / WebDAV drivers of files tables
   files/          files tables: kinds.py (what a file is), catalog.py (the storage as records: sync, uploads, moves,
                   streaming), previews.py (covers and viewable copies, by the worker), render.py (drawing covers, in a process
@@ -686,6 +696,8 @@ frontend/src/
   data.ts                    in-memory dataset cache, incremental refresh (/changes), live event stream
   components/DatasetPage.tsx one database / combined database: views, toolbar, record ops
   components/*View.tsx       grid, kanban, calendar, timeline, list, gallery, chart (each loaded on first use)
+  components/PageView.tsx    a record as a page (PageDoc.tsx: a long text as its body); LinkedView.tsx: links as
+                             lists, tables or cards, and how a field is shown
   extensions/                the extensions' screens (#/x/<id>), each loaded when opened; takeoff/ is Blueprint takeoff
 tests/         api/ (pytest), ui/ (Playwright), bench/ (timings), screens/ (README pictures),
                filter_cases.json (filter/sort cases the browser and the server must agree on); run with scripts/test.sh

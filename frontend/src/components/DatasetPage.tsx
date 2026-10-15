@@ -1,8 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { Attachment, Base, CreateTarget, Dataset, Field, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
+import type { Attachment, Base, CreateTarget, Dataset, Field, PageLayout, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
 import { applyView, choiceColor, formatDate, countConditions, debounce, viewFilter, hiddenIds, isEditable, linkCan, mergeRefs, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
-import { FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
+import { FieldsContext, FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
 import { FullViewer, type ViewerEntry } from "./FileViewer";
 import { fromDrop, fromPicker, useUploads } from "./Uploads";
 import { Icon, tableIcon } from "./Icon";
@@ -10,6 +10,7 @@ import { Popover, usePopover } from "./Overlay";
 import { EmojiPicker } from "./EmojiPicker";
 import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
+import { PageView } from "./PageView";
 import { TableSettings } from "./TableSettings";
 import { ContactsImport } from "./ContactsImport";
 import { ViewSettings } from "./ViewSettings";
@@ -72,6 +73,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [ds, setDs] = useState<Dataset | null>(() => cached(kind, id) ?? null);
   const [search, setSearch] = useState("");
   const [openRec, setOpenRec] = useState<string | null>(null);
+  const [asPage, setAsPage] = useState<boolean | null>(null);   // the record as a page or in the panel (null: as the table says)
   const [openOcc, setOpenOcc] = useState<string | null>(null);  // a later repeat that was clicked
   const [fieldEdit, setFieldEdit] = useState<Field | null | undefined>(undefined);
   const [pendingCreate, setPendingCreate] = useState<{ data: Record<string, any>; open: boolean; choices: CreateTarget[] } | null>(null);
@@ -136,7 +138,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
   useEffect(() => {
     const hit = cached(kind, id);
-    setDs(hit ?? null); setSearch(""); setOpenRec(null); setViewing(null); setUploadInto("");
+    setDs(hit ?? null); setSearch(""); setOpenRec(null); setViewing(null); setUploadInto(""); setAsPage(null);
     if (hit) refresh(); else reload();
   }, [kind, id]);
 
@@ -549,6 +551,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
   return (
     <RefsContext.Provider value={{ refs: ds.refs, addRefs, me }}>
+    <FieldsContext.Provider value={ds.fields}>
     <FileOpenContext.Provider value={isFiles ? openFile : null}>
     <div className={`page ${dropping ? "dropping" : ""}`}
       onDragOver={isFiles || isContacts ? (e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } } : undefined}
@@ -711,6 +714,10 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             },
             editField: (f) => setFieldEdit(f),
             fieldsReordered: () => reload(),
+            setPage: ds.kind === "table" && rank >= 3 ? (page) => {
+              setDs((d) => d && d.table ? { ...d, table: { ...d.table, page } } : d);
+              api.patch(`/tables/${ds.id}`, { page: page ?? {} }).catch((e) => onError((e as Error).message));
+            } : undefined,
             syncNow: link ? refreshLink : syncNow,
             // these open their own window instead
             importFile: ds.kind === "table" && can.add && !isFiles && !link ? () => { setSettings(null); setTransfer("import"); } : undefined,
@@ -746,12 +753,26 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
         // the view's records in its order: the panel goes through them (a record the view doesn't show: on its own)
         const i = allRecords.findIndex((r) => r.id === rec.id);
         const go = (r?: Rec) => r && (() => { setOpenRec(r.id); setOpenOcc(null); });
+        const recNav = i >= 0 ? { index: i, total: allRecords.length, prev: go(allRecords[i - 1]), next: go(allRecords[i + 1]) } : undefined;
+        const recLink = `${location.origin}${location.pathname}#/${kind}/${ds.id}${view ? `/${view.id}` : ""}?record=${rec.id}`;
+        const pages = ds.kind === "table" && !openOcc;   // (a repeat's single date: in the panel, which can change just that date)
+        if (pages && (asPage ?? !!ds.table?.page?.enabled)) {
+          const saveLayout = (page: PageLayout) => {
+            setDs((d) => d && d.table ? { ...d, table: { ...d.table, page } } : d);
+            api.patch(`/tables/${ds.id}`, { page }).catch((e) => onError(e.message));
+          };
+          return (
+            <PageView ds={ds} rec={rec} fields={vfields} can={can} canDesign={rank >= 3} nav={recNav} link={recLink}
+              onClose={() => setOpenRec(null)} onRecordView={() => setAsPage(false)} onLayout={saveLayout}
+              onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)} />
+          );
+        }
         return (
-          <RecordModal ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc} docked
-            nav={i >= 0 ? { index: i, total: allRecords.length, prev: go(allRecords[i - 1]), next: go(allRecords[i + 1]) } : undefined}
+          <RecordModal onPage={pages ? () => setAsPage(true) : undefined} ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc} docked
+            nav={recNav}
             sections={view.config.recordSections} onSections={(sections) => setConfig({ recordSections: sections.length ? sections : undefined })}
             onDuplicate={ops.duplicate && can.add ? () => ops.duplicate!([rec]) : undefined}
-            link={`${location.origin}${location.pathname}#/${kind}/${ds.id}${view ? `/${view.id}` : ""}?record=${rec.id}`}
+            link={recLink}
             onCompleteOccurrence={ds.table?.kind === "remote" ? undefined : (occ) => ops.completeOccurrence!(rec, occ)}
             onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)}
           />
@@ -788,6 +809,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
       </Suspense>
     </div>
     </FileOpenContext.Provider>
+    </FieldsContext.Provider>
     </RefsContext.Provider>
   );
 }

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.calc.compute import Engine
 from app.core.db import connection, Jsonb
 from app.core.secretbox import unseal
-from app.data import access, stamps, store, values
+from app.data import access, pages, stamps, store, values
 from app.data.schema import BUILTIN_FIELDS
 from app.dav import sync
 from app.sharing import linked as remote
@@ -286,6 +286,8 @@ def update_table(table_id: str, body: TablePatch, user=User):
             conn.execute("UPDATE tables SET icon = %s WHERE id = %s", (body.icon.strip()[:16] or None, table_id))
         if body.description is not None:
             conn.execute("UPDATE tables SET description = %s WHERE id = %s", (body.description.strip()[:2000] or None, table_id))
+        if body.page is not None:
+            conn.execute("UPDATE tables SET page = %s WHERE id = %s", (Jsonb(pages.clean(store.get_fields(conn, table_id), body.page)), table_id))
         return _table_out(store.get_table(conn, table_id))
 
 

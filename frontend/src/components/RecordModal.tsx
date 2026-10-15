@@ -9,12 +9,14 @@ import { FieldIcon, Icon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
 import { showToast } from "../toast";
 import { RecordHistory } from "./RecordHistory";
+import { RecordValue } from "./LinkedView";
 
 export interface RecordNav { index: number; total: number; prev?: () => void; next?: () => void }
 
 export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onButton, can = CAN_ALL, occurrence, history = true,
-  docked, nav, sections, onSections, onDuplicate, link, onCompleteOccurrence }: {
+  docked, nav, sections, onSections, onDuplicate, link, onCompleteOccurrence, onPage }: {
   onCompleteOccurrence?: (occurrence: string) => void;   // a repeating record: mark one of its dates done
+  onPage?: () => void;  // the table has a page: open the record as one instead
   history?: boolean;  // show "who changed what" (not on public links)
   docked?: boolean;   // a panel beside the view (the app) instead of a dialog (public links)
   nav?: RecordNav;    // the record's place in the view: previous / next (↑ ↓, J / K)
@@ -89,9 +91,8 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
               ) : f.mapping && rec.table_id && !f.mapping[rec.table_id] ? (
                 <span className="muted">Not mapped for this source</span>
               ) : (
-                can.edit ? <FieldInput field={fitField(f, kind, rec.data[f.id])} value={rec.data[f.id]} onCommit={(v) => onUpdate({ [f.id]: v })}
-                    anchor={f.type === "recurrence" ? anchorOf(fields, rec) : undefined} />
-                  : <div className="computed-value"><CellValue field={f} value={rec.data[f.id]} /></div>
+                <RecordValue field={fitField(f, kind, rec.data[f.id])} value={rec.data[f.id]} rec={rec} canEdit={can.edit} onUpdate={onUpdate}
+                  anchor={f.type === "recurrence" ? anchorOf(fields, rec) : undefined} />
               )}
             </div>
           </div>
@@ -102,6 +103,7 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
     navigator.clipboard?.writeText(link).then(() => showToast("Link to the record copied"), () => showToast(link));
   };
   const actions = (<>
+    {onPage && <button className="btn sm ghost" onClick={onPage} title="Open the record as a page"><Icon name="expand" size={14} /> Page</button>}
     {nav && nav.total > 1 && (
       <span className="record-nav">
         <button className="icon-btn" onClick={nav.prev} disabled={!nav.prev} title="Previous record (K)" aria-label="Previous record"><Icon name="up" size={16} /></button>

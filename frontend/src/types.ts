@@ -53,6 +53,7 @@ export interface FieldOptions {
   relationship?: "one" | "many";
   displayFieldId?: string | null;  // link: the field of the linked records shown in the cell (none: their title)
   displayFiles?: boolean;          // link / lookup: files shown as preview thumbnails (default) or by name
+  views?: FieldViews;              // link / lookup / rollup: how it's shown in the table's cells and on the record
   pickView?: string | null;          // Link: the picker offers the records of this view of the linked table…
   pickFilter?: FilterGroup | null;   // …and / or those matching these conditions
   stampWhen?: string | null;      // Date: fill in the date when this formula is true (Started date, Completed date…)
@@ -174,6 +175,16 @@ export interface ChartConfig {
 
 export interface View { id: string; name: string; type: ViewType; config: ViewConfig }
 
+/** How a field holding several records or values is shown (backend/app/data/pages.py): chips (the default), a count, a
+ * list, a table or cards of the linked records (their `fields`), a value or a bar (rollups: `max` is a full bar). */
+export type FieldView = "chips" | "count" | "list" | "table" | "cards" | "value" | "bar";
+export interface FieldViews { cell?: FieldView; record?: FieldView; fields?: string[]; max?: number }
+
+/** A table's page: records open laid out like a document, in blocks (backend/app/data/pages.py). */
+export type PageBlockType = "properties" | "field" | "heading" | "divider" | "doc";
+export interface PageBlock { id: string; type: PageBlockType; field?: string; view?: FieldView; width?: "full" | "half"; text?: string }
+export interface PageLayout { enabled: boolean; blocks: PageBlock[] }
+
 export type TableKind = "generic" | "tasks" | "events" | "mixed" | "contacts" | "remote" | "files";
 
 /** Where a linked table's data comes from (a Probyte public link, on this or another server). */
@@ -207,6 +218,7 @@ export interface TableInfo {
   description?: string | null;
   storage_id?: string | null;     // files tables
   storage_prefix?: string | null;
+  page?: PageLayout | null;       // records open as pages
 }
 
 export interface Account {

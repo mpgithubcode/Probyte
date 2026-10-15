@@ -70,6 +70,7 @@ class TablePatch(BaseModel):
     hidden: bool | None = None  # left out of the sidebar
     icon: str | None = None     # an emoji; "" = the default icon
     description: str | None = None  # what the table is for; "" removes it
+    page: dict | None = None    # records as pages: {"enabled", "blocks"} (see data/pages.py); {} removes it
 
 
 class FieldIn(BaseModel):

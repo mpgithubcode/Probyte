@@ -5,9 +5,10 @@ import { PALETTE } from "../util";
 import type { ExtensionInfo } from "../extensions";
 import { Icon, tableIcon } from "./Icon";
 import { nativeKind } from "../util";
-import { Popover } from "./Overlay";
+import { Popover, usePopover } from "./Overlay";
 import { BaseSharing, LinkedBaseSettings } from "./BaseSharing";
 import { Automations } from "./Automations";
+import { AddBaseLink } from "./AddBaseLink";
 
 const COLLAPSED_KEY = "probyte.collapsedBases";
 
@@ -64,6 +65,8 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
     return next;
   });
 
+  const addMenu = usePopover();
+  const [fromLink, setFromLink] = useState(false);
   const newBase = async () => {
     try {
       const b = await api.post<Base>("/bases", { name: "New base" });
@@ -92,7 +95,17 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
         <div className="side-head">
           <span>Bases</span>
           <button className="icon-btn" title="Search everything (Ctrl K)" aria-label="Search everything" onClick={onSearch}><Icon name="search" size={14} /></button>
-          <button className="icon-btn" title="New base" onClick={newBase}><Icon name="plus" size={14} /></button>
+          <button className="icon-btn" title="New base, or add one from a link" aria-label="Add a base" onClick={addMenu.open}><Icon name="plus" size={14} /></button>
+          {addMenu.anchor && (
+            <Popover anchor={addMenu.anchor} onClose={addMenu.close} width={240}>
+              <div className="menu-list">
+                <button className="menu-item" onClick={() => { addMenu.close(); newBase(); }}><Icon name="plus" size={14} /> New base</button>
+                <button className="menu-item" onClick={() => { addMenu.close(); setFromLink(true); }}><Icon name="link" size={14} /> Add base with a link…</button>
+              </div>
+            </Popover>
+          )}
+          {fromLink && <AddBaseLink onClose={() => setFromLink(false)}
+            onAdded={(first) => { onChanged(); if (first) location.hash = `/table/${first}`; }} />}
         </div>
 
         <div className="side-scroll">
