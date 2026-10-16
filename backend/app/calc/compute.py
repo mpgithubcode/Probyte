@@ -803,8 +803,38 @@ class Engine:
             elif df["type"] in ("user", "created_by", "last_modified_by"):
                 for v in values.values():
                     user_ids.update(str(x) for x in (v if isinstance(v, list) else [v]) if x)
+        chips = {}
+        for f in self.fields(table_id):  # links whose chips show more of their records: other fields, a colour, a picture
+            o = f["options"] or {}
+            chip = o.get("chip") or {}
+            want_ids = [str(x) for x in (chip.get("fields") or [])] + [str(chip[k]) for k in ("colorField", "imageField") if chip.get(k)]
+            if f["type"] != "link" or not want_ids:
+                continue
+            wanted = {str(x) for r in records for x in (r["data"].get(str(f["id"])) or [])}
+            if not wanted:
+                continue
+            ftid = o.get("foreignTableId")
+            ffields = {str(x["id"]): x for x in self.describe(ftid)}
+            shown = [ffields[i] for i in dict.fromkeys(want_ids) if i in ffields]
+            if not shown:
+                continue
+            src = {str(r["id"]): r for r in self.records(ftid) if str(r["id"]) in wanted}
+            values = {rid: {str(x["id"]): src[rid]["data"].get(str(x["id"])) for x in shown} for rid in wanted if rid in src}
+            chips[str(f["id"])] = {"fields": shown, "values": values}
+            for x in shown:   # their own links and people show by name
+                if x["type"] == "link":
+                    titles = self.titles(x["options"].get("foreignTableId"))
+                    for v in values.values():
+                        for y in v.get(str(x["id"])) or []:
+                            rec_titles[str(y)] = titles.get(str(y), "Untitled")
+                elif x["type"] in ("user", "created_by", "last_modified_by"):
+                    for v in values.values():
+                        u = v.get(str(x["id"]))
+                        user_ids.update(str(y) for y in (u if isinstance(u, list) else [u]) if y)
         users = self.users()
         out = {"records": rec_titles, "users": {u: users[u] for u in user_ids if u in users}}
         if display:
             out["display"] = display
+        if chips:
+            out["chips"] = chips
         return out

@@ -78,6 +78,11 @@ def _run(fn, *args, **kw):
     return out[0] if isinstance(out, tuple) else out
 
 
+AddOpts = Query(False, description="Add select options a value names that the field doesn't have yet. Off by default: "
+                                   "a write that names an unknown option is refused, listing the field's options, so a "
+                                   "typo or a guess can't change the table's setup.")
+
+
 # ---------------------------------------------------------------- models (for the docs)
 
 class FieldsIn(BaseModel):
@@ -219,32 +224,34 @@ def get_record(table: str, record_id: str, cell_format: Literal["json", "text"] 
          description="Send `{\"fields\": {...}}` for one record or `{\"records\": [{\"fields\": {...}}, ...]}` for up to 1000. "
                      "A batch is all-or-nothing.")
 def create_records(table: str, body: dict[str, Any], base: str | None = None, cell_format: Literal["json", "text"] = Fmt,
-                   field_key: str = Key, user=User):
+                   field_key: str = Key, add_options: bool = AddOpts, user=User):
     single = "records" not in body
     recs = [body] if single else body["records"]
     if not isinstance(recs, list):
         raise HTTPException(400, "records must be a list")
-    out = _run(apiv1.create_records, user, table, recs, base, cell_format, field_key)
+    out = _run(apiv1.create_records, user, table, recs, base, cell_format, field_key, add_options or bool(body.get("add_options")))
     return out[0] if single else {"records": out}
 
 
 @v1.patch("/tables/{table}/records", tags=["Records"], summary="Update records",
           description="Only the fields you send change. Up to 1000 records; all-or-nothing.")
 def update_records(table: str, body: UpdatesIn, base: str | None = None, cell_format: Literal["json", "text"] = Fmt,
-                   field_key: str = Key, user=User):
-    return {"records": _run(apiv1.update_records, user, table, [r.model_dump() for r in body.records], base, cell_format, field_key)}
+                   field_key: str = Key, add_options: bool = AddOpts, user=User):
+    return {"records": _run(apiv1.update_records, user, table, [r.model_dump() for r in body.records], base, cell_format, field_key,
+                            add_options)}
 
 
 @v1.patch("/tables/{table}/records/{record_id}", tags=["Records"], summary="Update a record")
 def update_record(table: str, record_id: str, body: FieldsIn, cell_format: Literal["json", "text"] = Fmt,
-                  field_key: str = Key, user=User):
-    return _run(apiv1.update_records, user, table, [{"id": record_id, "fields": body.fields}], None, cell_format, field_key)[0]
+                  field_key: str = Key, add_options: bool = AddOpts, user=User):
+    return _run(apiv1.update_records, user, table, [{"id": record_id, "fields": body.fields}], None, cell_format, field_key, add_options)[0]
 
 
 @v1.post("/tables/{table}/records/upsert", tags=["Records"], summary="Create or update records by matching fields")
 def upsert_records(table: str, body: UpsertIn, base: str | None = None, cell_format: Literal["json", "text"] = Fmt,
-                   field_key: str = Key, user=User):
-    return _run(apiv1.upsert_records, user, table, [r.model_dump() for r in body.records], body.match_on, base, cell_format, field_key)
+                   field_key: str = Key, add_options: bool = AddOpts, user=User):
+    return _run(apiv1.upsert_records, user, table, [r.model_dump() for r in body.records], body.match_on, base, cell_format, field_key,
+                add_options)
 
 
 @v1.post("/tables/{table}/records/{record_id}/fields/{field}/files", tags=["Records"], summary="Upload files into a field",

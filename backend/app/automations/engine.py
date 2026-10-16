@@ -114,7 +114,7 @@ def _values_for(conn, table_id, raw: dict, rec, src_fields, eng) -> dict:
     target = eng.describe(table_id)
     filled = {k: _render(v, rec, src_fields, eng) for k, v in (raw or {}).items()}
     try:
-        return apiv1.coerce(target, filled, values.Lookups(conn))
+        return apiv1.coerce(target, filled, values.Lookups(conn), add_options=True)  # set up by the owner
     except HTTPException as e:
         raise Failed(str(e.detail))
 

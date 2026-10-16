@@ -21,7 +21,10 @@ def test_rest_v1(user):
         {"name": "Email", "type": "email"}, {"name": "Stage", "type": "single_select", "options": {"choices": ["New", "Won"]}},
         {"name": "Value", "type": "number"}, {"name": "Next call", "type": "date", "options": {"include_time": True}}]}).json()
     assert [f["type"] for f in t["fields"]][:2] == ["email", "single_select"]
-    r = requests.post(BASE + "/api/v1/tables/Leads/records", headers=W, json={"records": [
+    # "Lost" isn't one of Stage's options: refused (listing them) unless the write asks to add options
+    bad = requests.post(BASE + "/api/v1/tables/Leads/records", headers=W, json={"fields": {"Email": "x@x.org", "Stage": "Lost"}})
+    assert bad.status_code == 400 and "'New', 'Won'" in bad.json()["detail"]
+    r = requests.post(BASE + "/api/v1/tables/Leads/records?add_options=true", headers=W, json={"records": [
         {"fields": {"Email": "ada@x.org", "Stage": "New", "Value": "1,200", "Next call": "2026-10-20T15:00:00Z"}},
         {"fields": {"Email": "bob@x.org", "Stage": "Lost", "Value": 50}}]})
     assert r.status_code == 201 and r.json()["records"][0]["fields"]["Value"] == 1200

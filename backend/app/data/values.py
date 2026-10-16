@@ -61,6 +61,7 @@ class Lookups:
 
 
 TEXT_TYPES = {"text", "long_text", "url", "email", "phone"}
+NUMBER_IN_TEXT = re.compile(r"[^\d\-+.]{0,4}\s*([-+]?\d+(?:\.\d+)?|[-+]?\.\d+)\s*[^\d]{0,16}")
 
 
 def snapshot(conn, field) -> dict:
@@ -118,8 +119,10 @@ def convert(raw, items, vt, old_type, new_type, opts, lookup):
         elif isinstance(raw, bool):
             n = 1 if raw else 0
         elif len(items) == 1:
-            m = re.search(r"-?\d+(?:\.\d+)?", items[0].replace(",", ""))
-            n = float(m.group()) if m else None
+            # one number, perhaps with a currency sign or unit around it ("$1,200.50", "3 hours", "12%"); text with
+            # several numbers in it ("2026-10-12", "555-0199") isn't a number, and is kept rather than half-read
+            m = NUMBER_IN_TEXT.fullmatch(items[0].replace(",", "").strip())
+            n = float(m.group(1)) if m else None
         if n is None:
             return None
         if new_type == "rating":
@@ -129,11 +132,12 @@ def convert(raw, items, vt, old_type, new_type, opts, lookup):
         if isinstance(raw, bool):
             return raw
         return bool(items) and items[0].strip().lower() not in ("false", "0", "no", "off", "unchecked")
+    one_line = lambda x: " ".join(str(x).split())[:200]   # as select options are named (schema.clean_choices)
     if new_type == "single_select":
-        return items[0] if items else None
+        return one_line(items[0]) or None if items else None
     if new_type == "multi_select":
         parts = items if len(items) != 1 else [p.strip() for p in items[0].split(",")]
-        return list(dict.fromkeys(p for p in parts if p)) or None
+        return list(dict.fromkeys(one_line(p) for p in parts if one_line(p))) or None
     if new_type == "date":
         src = raw if vt == "date" and isinstance(raw, str) else (items[0] if items else None)
         if not src:
@@ -183,25 +187,87 @@ def from_cell(field, cell, lookups: "Lookups"):
     return convert(raw, [text], vt, "text", t, field["options"], lookup)
 
 
-def convert_field(conn, old_field, new_field, snapshot: dict):
-    """Rewrite stored values of a field whose type changed, converting instead of discarding them."""
+def _backups(conn, fid) -> dict:
+    """Values of a field kept by earlier type changes: record id -> (raw, items, vt, old type)."""
+    return {str(r["record_id"]): (r["raw"], r["items"] or [], r["vt"], r["old_type"]) for r in conn.execute(
+        "SELECT record_id, raw, items, vt, old_type FROM field_value_backups WHERE field_id = %s", (fid,)).fetchall()}
+
+
+def _blank(ftype, raw, items) -> bool:
+    """Nothing to keep: no value (an unchecked box counts as none)."""
+    if ftype == "checkbox":
+        return not raw
+    return not items and (raw is None or raw == "" or raw == [])
+
+
+def plan_conversion(conn, old_field, new_type, opts, snapshot: dict) -> dict:
+    """What a type change does to each record's value, without changing anything:
+    {"values": {record id: new value or None}, "kept": {record id: (raw, items, vt, old type)} (values that don't fit
+    the new type, kept to come back later), "restored": [record ids whose value an earlier change kept comes back]}."""
+    fid = str(old_field["id"])
+    lookup = Lookups(conn).for_field({"type": new_type, "options": opts})
+    earlier = _backups(conn, fid)
+    out, kept, restored = {}, {}, []
+    for rid, (raw, items, vt) in snapshot.items():
+        if new_type in COMPUTED_TYPES or new_type == "attachment":
+            v = None
+        else:
+            v = convert(raw, items, vt, old_field["type"], new_type, opts, lookup)
+        if (v is None or _blank(new_type, v, [])) and rid in earlier and not items:
+            # empty now, but an earlier change kept its value: convert that one
+            braw, bitems, bvt, btype = earlier[rid]
+            v = None if new_type in COMPUTED_TYPES or new_type == "attachment" else (
+                braw if btype == new_type else convert(braw, bitems, bvt, btype, new_type, opts, lookup))
+            if v is not None:
+                restored.append(rid)
+        elif v is None and old_field["type"] not in COMPUTED_TYPES and not _blank(old_field["type"], raw, items):
+            kept[rid] = (raw, items, vt, old_field["type"])
+        out[rid] = v
+    return {"values": out, "kept": kept, "restored": restored}
+
+
+def convert_field(conn, old_field, new_field, snapshot: dict) -> dict:
+    """Rewrite stored values of a field whose type changed, converting instead of discarding them. A value that
+    doesn't fit the new type is kept aside (field_value_backups) and comes back when the field changes to a type it
+    fits again; each record's history notes the change. Returns {"converted", "kept", "restored"} counts."""
+    from app.data import audit
     new_type, opts = new_field["type"], new_field["options"]
     fid, tid = str(new_field["id"]), str(new_field["table_id"])
-    if new_type in COMPUTED_TYPES or new_type == "attachment":
-        conn.execute("UPDATE records SET data = data - %s WHERE table_id = %s", (fid, tid))
-        return
-    lookup = Lookups(conn).for_field(new_field)
+    plan = plan_conversion(conn, old_field, new_type, opts, snapshot)
     fields = store.get_fields(conn, tid)
     target = next(f for f in fields if str(f["id"]) == fid)
-    for rid, (raw, items, vt) in snapshot.items():
-        v = convert(raw, items, vt, old_field["type"], new_type, opts, lookup)
+    old_data = {str(r["id"]): r["data"].get(fid) for r in conn.execute(
+        "SELECT id, data FROM records WHERE table_id = %s AND data ? %s", (tid, fid)).fetchall()}
+    sets, clears = [], []
+    for rid, v in plan["values"].items():
         if v is None:
-            conn.execute("UPDATE records SET data = data - %s WHERE id = %s", (fid, rid))
+            if rid in old_data:
+                clears.append((fid, rid))
             continue
         store.ensure_choices(conn, target, v)
-        conn.execute("UPDATE records SET data = jsonb_set(data, %s, %s) WHERE id = %s", ([fid], Jsonb(v), rid))
-        if new_type == "link":
-            store._sync_links(conn, fields, rid, tid, {}, {fid: v})
+        sets.append(([fid], Jsonb(v), rid))
+    with conn.cursor() as cur:
+        if clears:
+            cur.executemany("UPDATE records SET data = data - %s WHERE id = %s", clears)
+        if sets:
+            cur.executemany("UPDATE records SET data = jsonb_set(data, %s, %s) WHERE id = %s", sets)
+        if plan["kept"]:
+            cur.executemany(
+                "INSERT INTO field_value_backups (field_id, record_id, old_type, raw, items, vt) VALUES (%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (field_id, record_id) DO UPDATE SET old_type = EXCLUDED.old_type, raw = EXCLUDED.raw, "
+                "items = EXCLUDED.items, vt = EXCLUDED.vt, created_at = now()",
+                [(fid, rid, t, Jsonb(raw), Jsonb(items), vt) for rid, (raw, items, vt, t) in plan["kept"].items()])
+        if plan["restored"]:
+            cur.executemany("DELETE FROM field_value_backups WHERE field_id = %s AND record_id = %s",
+                            [(fid, rid) for rid in plan["restored"]])
+    if new_type == "link":
+        for _, v, rid in sets:
+            store._sync_links(conn, fields, rid, tid, {}, {fid: v.obj})
+    for rid, v in plan["values"].items():
+        before = old_data.get(rid)
+        if before != v and not (before in (None, "", []) and v in (None, "", [])):
+            audit.note(conn, tid, rid, "updated", {fid: before}, {fid: v})
+    return {"converted": len(sets), "kept": len(plan["kept"]), "restored": len(plan["restored"])}
 
 
 # ---------------------------------------------------------------- from API clients
@@ -212,6 +278,17 @@ def _items(val) -> list:
     if isinstance(val, str):
         return [x.strip() for x in val.split(",") if x.strip()]
     return [val]
+
+
+def _option(name, x):
+    """A select option as an API client may write it: its name, or {"name": …}; anything else is a 400."""
+    if isinstance(x, dict) and "name" in x:
+        x = x["name"]
+    if x is None or isinstance(x, (bool, dict, list)):
+        if x is None:
+            return None
+        bad(f"'{name}': an option is written as its name, e.g. \"Done\"")
+    return " ".join(str(x).split())[:200] or None
 
 
 def from_api(f, val, lookups: "Lookups"):
@@ -254,9 +331,13 @@ def from_api(f, val, lookups: "Lookups"):
                 bad(f"'{name}': no user '{s}'")
         return out
     if t == "multi_select":
-        return [str(x).strip() for x in _items(val) if str(x).strip()]
+        return [n for n in (_option(name, x) for x in _items(val)) if n]
     if t == "single_select":
-        return str(val).strip()
+        if isinstance(val, list):
+            if len(val) > 1:
+                bad(f"'{name}' takes one option, not {len(val)}")
+            val = val[0] if val else None
+        return _option(name, val)
     if t == "checkbox":
         if isinstance(val, bool):
             return val

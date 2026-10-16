@@ -62,6 +62,11 @@ def _tool(name, title, description, props, required=(), read_only=False, destruc
 FIELD_KEY = {"type": "string", "enum": ["name", "id"], "default": "name",
              "description": "Key fields in results by name (default) or by field id; field names and ids are both accepted in input"}
 
+ADD_OPTIONS = {"type": "boolean", "default": False,
+               "description": "Add select options the values name that a field doesn't have yet. Leave off unless the user asked "
+                              "for new options: a value that isn't one of a field's options is refused, with the options it has "
+                              "(see describe_table)."}
+
 TOOLS = [
     _tool("list_bases", "List bases and tables", "All bases you can access, with their tables and combined databases.", {}, read_only=True),
     _tool("describe_table", "Describe a table", "A table's fields (name, type, select options, link targets, which are read-only) and views.",
@@ -91,16 +96,19 @@ TOOLS = [
     _tool("search", "Search everything", "Find records containing some text in any field of any table.",
           {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, ["query"], read_only=True),
     _tool("create_records", "Create records", "Add records to a table (up to 200 per call; all-or-nothing).",
-          {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "records": {"type": "array", "items": FIELD_VALUES, "minItems": 1, "maxItems": 200}},
+          {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "records": {"type": "array", "items": FIELD_VALUES, "minItems": 1, "maxItems": 200},
+           "add_options": ADD_OPTIONS},
           ["table", "records"]),
     _tool("update_records", "Update records", "Change some fields of existing records; fields you leave out stay as they are.",
           {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "records": {"type": "array", "minItems": 1, "maxItems": 200, "items": {
-              "type": "object", "properties": {"id": {"type": "string"}, "fields": FIELD_VALUES}, "required": ["id", "fields"]}}},
+              "type": "object", "properties": {"id": {"type": "string"}, "fields": FIELD_VALUES}, "required": ["id", "fields"]}},
+           "add_options": ADD_OPTIONS},
           ["table", "records"], idempotent=True),
     _tool("upsert_records", "Create or update records",
           "For each record: update the one whose match_on fields have the same values, or create it.",
           {"field_key": FIELD_KEY, "table": TABLE, "base": BASE, "records": {"type": "array", "items": FIELD_VALUES, "minItems": 1, "maxItems": 200},
-           "match_on": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Field names that identify a record, e.g. [\"Email\"]"}},
+           "match_on": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Field names that identify a record, e.g. [\"Email\"]"},
+           "add_options": ADD_OPTIONS},
           ["table", "records", "match_on"], idempotent=True),
     _tool("delete_records", "Delete records", "Delete records by id (synced items are also removed from the calendar / address book).",
           {"table": TABLE, "base": BASE, "ids": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 200}},
@@ -146,11 +154,11 @@ def _call(user: dict, name: str, a: dict):
     if name == "search":
         return {"results": run(apiv1.search_all, a["query"], min(int(a.get("limit") or 20), 100))}
     if name == "create_records":
-        return {"created": run(apiv1.create_records, a["table"], a["records"], a.get("base"), "text", fk)}
+        return {"created": run(apiv1.create_records, a["table"], a["records"], a.get("base"), "text", fk, bool(a.get("add_options")))}
     if name == "update_records":
-        return {"updated": run(apiv1.update_records, a["table"], a["records"], a.get("base"), "text", fk)}
+        return {"updated": run(apiv1.update_records, a["table"], a["records"], a.get("base"), "text", fk, bool(a.get("add_options")))}
     if name == "upsert_records":
-        return run(apiv1.upsert_records, a["table"], a["records"], a["match_on"], a.get("base"), "text", fk)
+        return run(apiv1.upsert_records, a["table"], a["records"], a["match_on"], a.get("base"), "text", fk, bool(a.get("add_options")))
     if name == "delete_records":
         return {"deleted": run(apiv1.delete_records, a["table"], a["ids"], a.get("base"))}
     if name == "create_table":

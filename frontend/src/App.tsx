@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { api } from "./api";
 import { DatasetPage } from "./components/DatasetPage";
 import { Icon } from "./components/Icon";
@@ -121,6 +122,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
         onLogout={logout} onChanged={loadWs} onError={onError} onTrash={() => { setModal("trash"); setDrawer(false); }} onSearch={() => { setModal("search"); setDrawer(false); }}
         extensions={extensions} activeExtension={extRoute?.ext} onOpenExtension={(id) => { location.hash = `/x/${id}`; setDrawer(false); }} />
 
+      <ErrorBoundary resetKey={extRoute ? `x:${extRoute.ext}` : route ? `${route.kind}:${route.id}:${route.viewId ?? ""}` : "home"} label="This page">
       {extRoute ? (
         <ExtensionPage key={extRoute.ext} route={extRoute} extensions={extensions} onMenu={() => setDrawer(true)} onError={onError} onWorkspaceChanged={loadWs} />
       ) : route ? (
@@ -141,7 +143,9 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
           </div>
         </div>
       )}
+      </ErrorBoundary>
 
+      <ErrorBoundary resetKey={modal ?? ""} label="This window" compact>
       <Suspense fallback={null}>
       {modal === "table" && (
         <NewTableModal accounts={ws.accounts} bases={ws.bases} baseId={modalBase} onClose={() => setModal(null)} onManageAccounts={() => openSettings("accounts")}
@@ -162,6 +166,7 @@ function WorkspaceShell({ user, onLogout, onUserChanged }: { user: User; onLogou
         {modal === "trash" && <TrashModal onClose={() => setModal(null)} onChanged={loadWs} />}
         {modal === "search" && <SearchModal onClose={() => setModal(null)} onOpen={(tableId, recordId) => go({ kind: "table", id: tableId, record: recordId })} />}
       </Suspense>
+      </ErrorBoundary>
 
       {toast && (
         <div className="toast" role="status" onClick={() => setToastState(null)}>

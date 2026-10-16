@@ -348,3 +348,38 @@ def test_a_page_switched_on_elsewhere_is_used_at_once(browser):
     pg.goto(f"{BASE}/#/table/{t['id']}?record={rec['id']}")
     expect(pg.locator(".page-view .page-title-input")).to_have_value("Site visit")
     assert not pg.errors, pg.errors
+
+
+def test_link_picker_is_a_table_that_creates_records_and_chips_look_as_set(browser):
+    """In a record, a link's picker lists the other table's records with a few columns; typing a name that isn't there
+    creates that record in the other table and links it. The chips look as the field says, in the table too."""
+    u = Client()
+    jobs, crew = u.table(name="Jobs"), u.table(name="Crew")
+    J, C = u.fields(jobs["id"]), u.fields(crew["id"])
+    role = u.j("POST", f"/tables/{crew['id']}/fields", json={"name": "Role", "type": "single_select",
+                                                            "options": {"choices": [{"name": "Electrician", "color": "#f59e0b"}]}})
+    u.j("POST", f"/tables/{crew['id']}/records", json={"data": {C["Name"]: "Ada", role["id"]: "Electrician"}})
+    link = u.j("POST", f"/tables/{jobs['id']}/fields", json={"name": "Crew", "type": "link", "options": {
+        "foreignTableId": crew["id"], "pickFields": [role["id"]], "chip": {"style": "details", "fields": [role["id"]]}}})
+    job = u.j("POST", f"/tables/{jobs['id']}/records", json={"data": {J["Name"]: "Mill St"}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{jobs['id']}?record={job['id']}")
+    pg.locator(".record-modal .choice-field", has_text="Link records").first.click()
+    table = pg.locator(".link-pick-table")
+    expect(table.locator("th", has_text="Role")).to_have_count(1)
+    expect(table.locator("tbody tr", has_text="Ada")).to_contain_text("Electrician")
+    pg.locator(".link-pick-popover input").fill("Create a New Item")
+    pg.click(".link-pick-create")
+    expect(table.locator("tbody tr.on", has_text="Create a New Item")).to_have_count(1)
+    pg.keyboard.press("Escape")
+    assert any(r["data"][C["Name"]] == "Create a New Item" for r in u.records(crew["id"]))
+    rec = next(r for r in u.records(jobs["id"]) if r["id"] == job["id"])
+    assert len(rec["data"][link["id"]]) == 1
+    # the chips' look, in the table's cells
+    pg.keyboard.press("Escape")
+    ada = next(r for r in u.records(crew["id"]) if r["data"][C["Name"]] == "Ada")
+    u.j("PATCH", f"/records/{job['id']}", json={"data": {link["id"]: [ada["id"]]}})
+    pg.goto(f"{BASE}/#/table/{jobs['id']}")
+    expect(pg.locator(".grid .link-chip.details", has_text="Ada")).to_contain_text("Electrician")
+    assert not pg.errors, pg.errors

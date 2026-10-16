@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { saneFields, saneRecords } from "../sane";
 import { api } from "../api";
 import { buttonAction } from "../buttonAction";
 import type { Dataset, Field, PageLayout, Rec, Refs, Source, View, ViewConfig } from "../types";
@@ -85,7 +86,8 @@ export function ShareApp({ token }: { token: string }) {
     kind: payload.item.kind, id: payload.item.id, name: payload.item.name,
     table: payload.item.kind === "table" ? { id: payload.item.id, base_id: "", name: payload.item.name, kind: payload.item.table_kind as "generic",
       account_id: null, calendar_url: null, last_synced_at: null, last_sync_error: null, page: payload.page ?? null } : undefined,
-    sources: payload.sources ?? undefined, fields: payload.fields, views: payload.views, records: payload.records, refs: payload.refs,
+    sources: payload.sources ?? undefined, fields: saneFields(payload.fields), views: payload.views,
+    records: saneRecords(saneFields(payload.fields), payload.records), refs: payload.refs,
     page: payload.item.kind === "combo" ? payload.page ?? null : undefined,
   }, [payload]);
 

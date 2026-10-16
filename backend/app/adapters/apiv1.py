@@ -384,8 +384,10 @@ def _writable_table(conn, user, ref, base=None):
     return row
 
 
-def coerce(fields, values: dict, lookups: values_.Lookups) -> dict:
-    """Field name/id -> value (as a person would write it)  =>  field id -> stored value."""
+def coerce(fields, values: dict, lookups: values_.Lookups, add_options: bool = False) -> dict:
+    """Field name/id -> value (as a person would write it)  =>  field id -> stored value. A select option the field
+    doesn't have is refused (listing the ones it has) unless add_options: a write changes values, not the table's
+    setup, unless the client says so."""
     if not isinstance(values, dict):
         bad('fields must be an object like {"Name": "Ada", "Status": "Done"}')
     idx = _field_index(fields)
@@ -396,7 +398,15 @@ def coerce(fields, values: dict, lookups: values_.Lookups) -> dict:
             bad(f"'{f['name']}' is calculated and can't be set")
         if f["type"] == "attachment":
             bad(f"'{f['name']}' holds uploaded files, which can't be set through the API")
-        out[str(f["id"])] = values_.from_api(f, val, lookups)
+        v = values_.from_api(f, val, lookups)
+        if f["type"] in store.SELECT_TYPES and not add_options and v not in (None, [], ""):
+            known = [c["name"] for c in f["options"].get("choices") or [] if isinstance(c, dict)]
+            unknown = [x for x in (v if isinstance(v, list) else [v]) if x not in known]
+            if unknown and known:   # (a field with no options yet is filled freely: its options come from its values)
+                bad(f"'{f['name']}' has no option {', '.join(repr(x) for x in unknown)}. Its options: "
+                    f"{', '.join(repr(x) for x in known[:50])}. To add new options with this write, "
+                    "send add_options: true")
+        out[str(f["id"])] = v
     return out
 
 
@@ -411,7 +421,7 @@ def _records_by_id(conn, table_id, ids, cell_format="json", field_key="name"):
     return [record_out(eng, fields, found[str(i)], cell_format, field_key) for i in ids if str(i) in found]
 
 
-def create_records(conn, user, ref, records: list[dict], base=None, cell_format="json", field_key="name") -> tuple[list, dict]:
+def create_records(conn, user, ref, records: list[dict], base=None, cell_format="json", field_key="name", add_options=False) -> tuple[list, dict]:
     t = _writable_table(conn, user, ref, base)
     if not records:
         bad("Send at least one record")
@@ -422,7 +432,7 @@ def create_records(conn, user, ref, records: list[dict], base=None, cell_format=
     for n, rec in enumerate(records, start=1):
         values = rec.get("fields", rec) if isinstance(rec, dict) else rec
         try:
-            data = coerce(fields, values, lookups)
+            data = coerce(fields, values, lookups, add_options)
             rid, table = recordops.create(conn, t["id"], data, user["id"])
         except HTTPException as e:
             bad(f"Record {n}: {e.detail}" if len(records) > 1 else e.detail, e.status_code)
@@ -430,7 +440,7 @@ def create_records(conn, user, ref, records: list[dict], base=None, cell_format=
     return _records_by_id(conn, t["id"], ids, cell_format, field_key), t
 
 
-def update_records(conn, user, ref, updates: list[dict], base=None, cell_format="json", field_key="name") -> tuple[list, dict]:
+def update_records(conn, user, ref, updates: list[dict], base=None, cell_format="json", field_key="name", add_options=False) -> tuple[list, dict]:
     t = _writable_table(conn, user, ref, base)
     if not updates:
         bad("Send at least one record")
@@ -443,7 +453,7 @@ def update_records(conn, user, ref, updates: list[dict], base=None, cell_format=
         try:
             if not UUID_RE.match(rid):
                 bad("Each record needs its id")
-            data = coerce(fields, u.get("fields") or {}, lookups)
+            data = coerce(fields, u.get("fields") or {}, lookups, add_options)
             recordops.update(conn, t["id"], rid, data, user["id"])
         except HTTPException as e:
             bad(f"Record {n} ({rid or 'no id'}): {e.detail}" if len(updates) > 1 else e.detail, e.status_code)
@@ -459,7 +469,7 @@ def _match_key(v):
     return json.dumps(v)
 
 
-def upsert_records(conn, user, ref, records: list[dict], match_on: list[str], base=None, cell_format="json", field_key="name") -> tuple[dict, dict]:
+def upsert_records(conn, user, ref, records: list[dict], match_on: list[str], base=None, cell_format="json", field_key="name", add_options=False) -> tuple[dict, dict]:
     """Update the record whose match_on fields equal the given values, or create one."""
     t = _writable_table(conn, user, ref, base)
     if not match_on:
@@ -476,7 +486,7 @@ def upsert_records(conn, user, ref, records: list[dict], match_on: list[str], ba
     for n, rec in enumerate(records, start=1):
         values = rec.get("fields", rec) if isinstance(rec, dict) else rec
         try:
-            data = coerce(fields, values, lookups)
+            data = coerce(fields, values, lookups, add_options)
             if any(k not in data for k in keys):
                 bad(f"needs a value for {', '.join(match_on)}")
             key = tuple(_match_key(data[k]) for k in keys)

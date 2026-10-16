@@ -51,9 +51,11 @@ def on_record_change(conn, table, event, record_id, source, old=None):
 
 def emit(conn, table_id, event: str, record_id) -> None:
     """Queue a record event in the caller's transaction (merged with other changes to the record in the next second)."""
+    # (only when the table's owner has a webhook: most changes have no one to tell, and needn't queue a job)
     conn.execute(
         "INSERT INTO jobs (kind, payload, dedupe_key, run_at, max_attempts) "
-        "VALUES ('webhook_event', %s, %s, now() + make_interval(secs => %s), 3) "
+        "SELECT 'webhook_event', %s, %s, now() + make_interval(secs => %s), 3 "
+        "WHERE EXISTS (SELECT 1 FROM webhooks w JOIN tables t ON t.user_id = w.user_id WHERE t.id = %s AND w.enabled) "
         "ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL AND locked_until IS NULL AND NOT failed DO UPDATE SET payload = "
         "jsonb_set(jobs.payload, '{event}', to_jsonb(CASE WHEN jobs.payload->>'event' = 'record.created' "
         "AND EXCLUDED.payload->>'event' = 'record.updated' THEN 'record.created' ELSE EXCLUDED.payload->>'event' END)) "
@@ -61,7 +63,7 @@ def emit(conn, table_id, event: str, record_id) -> None:
         "|| CASE WHEN jobs.payload->>'event' = 'record.created' AND EXCLUDED.payload->>'event' = 'record.updated' "
         "THEN '{\"also_updated\": true}'::jsonb ELSE '{}'::jsonb END",
         (Jsonb({"table_id": str(table_id), "record_id": str(record_id), "event": event, "at": time.time()}),
-         f"wh:{table_id}:{record_id}", COALESCE_SECONDS))
+         f"wh:{table_id}:{record_id}", COALESCE_SECONDS, str(table_id)))
 
 
 # ---------------------------------------------------------------- URL safety

@@ -241,6 +241,8 @@ def test_covers_the_converter_couldnt_make_are_made_later(user):
     doc = upload(user, t, ("stuck.docx", open(os.path.join(here, "fixtures", "report.docx"), "rb").read(),
                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))[0]
     wait(lambda: user.get(API + f"/files/{doc['id']}/thumb").status_code == 200, timeout=60)
+    # (the cover is served as soon as it's made; the record is marked a moment later)
+    wait(lambda: user.record(t["id"], doc["id"])["data"][F["file"]][0].get("previewed"), timeout=60)
     try:
         conn = psycopg.connect(os.environ.get("BENCH_DB", "postgresql://probyte:probyte-test@db:5432/probyte"))
     except Exception:

@@ -30,7 +30,12 @@ export interface Storage {
 export interface Refs {
   records: Record<string, string>; users: Record<string, string>;
   display?: Record<string, { field: Field; values: Record<string, any> }>;
+  chips?: Record<string, { fields: Field[]; values: Record<string, Record<string, any>> }>;   // link field id -> its chips' extra fields
 }
+
+/** How a link field's linked records look as chips, everywhere it's shown (cells, the record, pages, boards, links). */
+export type ChipStyle = "chip" | "compact" | "details" | "card" | "plain";
+export interface ChipLook { style?: ChipStyle; fields?: string[]; colorField?: string | null; imageField?: string | null }
 
 export interface Choice { name: string; color: string; from?: string }  // from: the name it had when the field editor opened
 
@@ -53,6 +58,8 @@ export interface FieldOptions {
   relationship?: "one" | "many";
   displayFieldId?: string | null;  // link: the field of the linked records shown in the cell (none: their title)
   displayFiles?: boolean;          // link / lookup: files shown as preview thumbnails (default) or by name
+  chip?: ChipLook | null;          // link: how its records' chips look (fields shown in them, a colour, a picture)
+  pickFields?: string[];           // link: the columns its picker shows of the linked table (none set: the first few)
   views?: FieldViews;              // link / lookup / rollup: how it's shown in the table's cells and on the record
   pickView?: string | null;          // Link: the picker offers the records of this view of the linked table…
   pickFilter?: FilterGroup | null;   // …and / or those matching these conditions

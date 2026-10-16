@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { api } from "../api";
 import type { Attachment, Field, FieldView, Refs, User } from "../types";
 import {
@@ -98,6 +98,62 @@ function LinkedValues({ ids, shown, files }: { ids: string[]; shown: { field: Fi
   );
 }
 
+/** A link's records as its field's chips look (options.chip): a chip with the title (and other fields of the record),
+ * compact, two lines, a small card with a picture, or plain text; tinted by a select of the record when set. The same
+ * everywhere the field shows (cells, the record panel, pages, boards, shared links, the picker's field box). */
+export function LinkChips({ field, ids }: { field: Field; ids: string[] }) {
+  const { refs } = useContext(RefsContext);
+  const look = field.options.chip ?? {};
+  const style = look.style ?? "chip";
+  const extra = refs.chips?.[field.id];
+  const def = (fid?: string | null) => (fid ? extra?.fields.find((f) => f.id === fid) : undefined);
+  const shown = (look.fields ?? []).map((fid) => def(fid)).filter(Boolean) as Field[];
+  const colorF = def(look.colorField), imageF = def(look.imageField);
+  const title = (id: string) => refs.records[id] || "Untitled";
+  if (style === "plain") return <span className="plain-values">{ids.map(title).join(", ")}</span>;
+  return (
+    <span className={`chips link-chips ${style}`}>
+      {ids.map((id) => {
+        const vals = extra?.values[id] ?? {};
+        const tint = colorF && typeof vals[colorF.id] === "string" ? choiceColor(colorF, vals[colorF.id]) : null;
+        const img = imageF ? fileItems(vals[imageF.id])[0] : undefined;
+        const src = img ? thumbUrl(img) : null;
+        const css = tint ? { background: `${tint}22`, borderColor: `${tint}66`, color: "var(--text)" } : undefined;
+        const fieldsShown = style === "compact" ? [] : shown.filter((f) => !(vals[f.id] === null || vals[f.id] === undefined || vals[f.id] === "" ||
+          (Array.isArray(vals[f.id]) && !vals[f.id].length)));
+        if (style === "card") {
+          return (
+            <span key={id} className="link-card" style={css} title={title(id)}>
+              {src && <img className="link-card-img" src={src} alt="" loading="lazy" />}
+              <span className="link-card-body">
+                <b className="link-card-title">{tint && <i className="link-dot" style={{ background: tint }} />}{title(id)}</b>
+                {fieldsShown.map((f) => (
+                  <span key={f.id} className="link-card-row"><span className="muted">{f.name}</span> <CellValue field={f} value={vals[f.id]} /></span>
+                ))}
+              </span>
+            </span>
+          );
+        }
+        return (
+          <span key={id} className={`ref-chip record link-chip ${style}`} style={css} title={title(id)}>
+            {src && <img className="link-chip-img" src={src} alt="" loading="lazy" />}
+            {tint && !css && <i className="link-dot" style={{ background: tint }} />}
+            <span className="link-chip-title">{title(id)}</span>
+            {fieldsShown.length > 0 && (
+              <span className="link-chip-fields">
+                {fieldsShown.map((f) => <span key={f.id} className="link-chip-field" title={f.name}><CellValue field={f} value={vals[f.id]} /></span>)}
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+const hasLook = (f: Field) => !!(f.options.chip && (f.options.chip.style && f.options.chip.style !== "chip" || f.options.chip.fields?.length
+  || f.options.chip.colorField || f.options.chip.imageField));
+
 /** A rollup's value as a bar: how full against `max` (its views.max; else 1 for fractions, 100 for the rest). */
 export function ValueBar({ value, field }: { value: unknown; field: Field }) {
   const n = typeof value === "number" ? value : Number(value);
@@ -193,6 +249,7 @@ export function CellValue({ field, value, view }: { field: Field; value: any; vi
     case "link": {
       const shown = refs.display?.[field.id];
       if (shown) return <LinkedValues ids={value as string[]} shown={shown} files={field.options.displayFiles !== false} />;
+      if (hasLook(field)) return <LinkChips field={field} ids={value as string[]} />;
       return <span className="chips">{(value as string[]).map((id) => <RefChip key={id} kind="record" label={refs.records[id] ?? ""} />)}</span>;
     }
     case "user": case "created_by": case "last_modified_by":
@@ -472,31 +529,67 @@ export const invalidateTitles = (tableId?: string) => {
   for (const k of [...titleCache.keys()]) if (k === tableId || k.startsWith(`${tableId}:`)) titleCache.delete(k);  // (and links' own lists)
 };
 
+interface PickData { fields: Field[]; records: { id: string; title: string; data: Record<string, any> }[]; total: number; refs: Refs;
+  can_add: boolean; primary: Field | null }
+
 function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputProps) {
-  const { refs, addRefs } = useContext(RefsContext);
+  const { refs, addRefs, me } = useContext(RefsContext);
   const ids: string[] = Array.isArray(value) ? value : [];
   const single = field.options.relationship === "one";
   const shell = usePickerShell(inline, onDone);
   const [q, setQ] = useState("");
-  const [options, setOptions] = useState<{ id: string; title: string }[] | null>(null);
+  const [data, setData] = useState<PickData | null>(null);
+  const [active, setActive] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
   const tid = field.options.foreignTableId ?? "";
-  // a link that offers only some records (a view of the other table, conditions): its own list
-  const limited = !!(field.options.pickView || field.options.pickFilter?.items?.length);
-  const cacheKey = limited ? `${tid}:${field.id}` : tid;
-  const titlesUrl = `/tables/${tid}/titles${limited ? `?field=${field.id}` : ""}`;
+  const [reloadKey, setReloadKey] = useState(0);
 
+  // the records it offers, as a table (the columns the field picks, else the first few), searched on the server
   useEffect(() => {
     if (!shell.open || !tid) return;
-    if (!titleCache.has(cacheKey)) titleCache.set(cacheKey, api.get(titlesUrl));
-    titleCache.get(cacheKey)!.then(setOptions).catch(() => { titleCache.delete(cacheKey); setOptions([]); });
-  }, [shell.open, cacheKey]);
+    let live = true;
+    const t = setTimeout(() => {
+      api.get<PickData>(`/tables/${tid}/pick?field=${encodeURIComponent(field.id)}&q=${encodeURIComponent(q.trim())}&limit=100`)
+        .then((d) => { if (live) { setData(d); setActive(0); } })
+        .catch((e) => { if (live) { setErr((e as Error).message); setData({ fields: [], records: [], total: 0, refs: { records: {}, users: {} }, can_add: false, primary: null }); } });
+    }, data ? 150 : 0);
+    return () => { live = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shell.open, tid, q, reloadKey]);
 
   const toggle = (o: { id: string; title: string }) => {
     addRefs({ records: { [o.id]: o.title } });
-    if (single) { onCommit(ids[0] === o.id ? [] : [o.id]); shell.close(); return; }
+    if (single) { onCommit(ids[0] === o.id ? [] : [o.id]); setQ(""); shell.close(); return; }
     onCommit(ids.includes(o.id) ? ids.filter((x) => x !== o.id) : [...ids, o.id]);
   };
-  const shown = (options ?? []).filter((o) => o.title.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 200);
+  const rows = data?.records ?? [];
+  const typed = q.trim();
+  const canCreate = !!data?.can_add && !field.readonly && !!typed && !!data.primary && isEditable(data.primary)
+    && !rows.some((r) => r.title.trim().toLowerCase() === typed.toLowerCase());
+  // a new record in the linked table, named as typed, linked at once
+  const create = async () => {
+    if (!canCreate || busy || !data?.primary) return;
+    setBusy(true); setErr("");
+    try {
+      const rec = await api.post<{ id: string }>(`/tables/${tid}/records`, { data: { [data.primary.id]: typed } });
+      invalidateTitles(tid);
+      toggle({ id: rec.id, title: typed });
+      setQ("");
+      setReloadKey((k) => k + 1);
+    } catch (e) { setErr((e as Error).message); }
+    setBusy(false);
+  };
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    const n = rows.length + (canCreate ? 1 : 0);
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(n - 1, a + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (active < rows.length && rows[active]) toggle(rows[active]);
+      else if (canCreate) create();
+    }
+  };
   // linked to a files table: upload files into it and link them
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -513,12 +606,14 @@ function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputPr
         r.records.forEach((x) => { added.push(x.id); addRefs({ records: { [x.id]: f.name } }); });
       } catch (e) { setUpErr(`${f.name}: ${(e as Error).message}`); }
     }
-    titleCache.delete(tid); titleCache.set(cacheKey, api.get(titlesUrl));
-    titleCache.get(cacheKey)!.then(setOptions).catch(() => undefined);
+    invalidateTitles(tid);
+    setReloadKey((k) => k + 1);
     if (added.length) onCommit(single ? added.slice(0, 1) : [...ids, ...added]);
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
   };
+  const cols = data?.fields ?? [];
+  const pickRefs = data ? { records: { ...refs.records, ...data.refs.records }, users: { ...refs.users, ...data.refs.users } } : refs;
 
   return (
     <div ref={shell.setAnchorEl} className={asButton ? "link-picker-btn" : inline ? "choice-inline" : "choice-field input"} onClick={() => !inline && shell.setOpen(true)}>
@@ -526,23 +621,47 @@ function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputPr
         <button type="button" className="btn sm"><Icon name="plus" size={14} /> {single ? (ids.length ? "Change record" : "Link a record") : "Link records"}</button>
       ) : (
       <span className="chips">
-        {ids.map((id) => <RefChip key={id} kind="record" label={refs.records[id] ?? ""} />)}
+        {hasLook(field) ? <LinkChips field={field} ids={ids} /> : ids.map((id) => <RefChip key={id} kind="record" label={refs.records[id] ?? ""} />)}
         {!ids.length && !inline && <span className="muted">{single ? "Link a record…" : "Link records…"}</span>}
       </span>
       )}
       {shell.open && shell.anchorEl && (
-        <Popover anchor={shell.anchorEl} onClose={() => { setQ(""); shell.close(); }} width={280}>
-          <input className="input" autoFocus placeholder="Search records…" value={q} onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && shown[0]) toggle(shown[0]); }} />
-          <div className="menu-list">
-            {options === null && <div className="muted pad">Loading…</div>}
-            {shown.map((o) => (
-              <button key={o.id} className={`menu-item ${ids.includes(o.id) ? "active" : ""}`} onClick={() => toggle(o)}>
-                <RefChip kind="record" label={o.title} />
-                {ids.includes(o.id) && <span className="tick">✓</span>}
+        <Popover anchor={shell.anchorEl} onClose={() => { setQ(""); shell.close(); }} width={Math.min(cols.length ? 420 + cols.length * 110 : 380, 760)}
+          className="link-pick-popover">
+          <input className="input" autoFocus placeholder={data?.can_add && !field.readonly ? "Search or create…" : "Search records…"} value={q}
+            onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} />
+          <div className="link-pick-table-wrap" onClick={(e) => e.stopPropagation()}>
+            {data === null ? <div className="muted pad">Loading…</div> : (
+              <table className="link-pick-table">
+                {rows.length > 0 && (
+                  <thead><tr><th className="pick-check" /><th>{data.primary?.name ?? "Name"}</th>{cols.map((c) => <th key={c.id}>{c.name}</th>)}</tr></thead>
+                )}
+                <RefsContext.Provider value={{ refs: pickRefs, addRefs, me }}>
+                  <tbody>
+                    {rows.map((r, i) => {
+                      const on = ids.includes(r.id);
+                      return (
+                        <tr key={r.id} className={`${on ? "on" : ""} ${i === active ? "active" : ""}`} onMouseEnter={() => setActive(i)}
+                          onClick={() => toggle(r)} aria-selected={on}>
+                          <td className="pick-check">{on ? "✓" : ""}</td>
+                          <td className="pick-title">{r.title}</td>
+                          {cols.map((c) => <td key={c.id}><CellValue field={c} value={r.data[c.id]} /></td>)}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </RefsContext.Provider>
+              </table>
+            )}
+            {data !== null && !rows.length && !canCreate && <div className="muted pad">{typed ? "No matching records" : "No records yet"}</div>}
+            {canCreate && (
+              <button type="button" className={`menu-item link-pick-create ${active === rows.length ? "active" : ""}`} disabled={busy}
+                onMouseEnter={() => setActive(rows.length)} onClick={create}>
+                <Icon name="plus" size={14} /> {busy ? "Creating…" : <>Create <b>{typed}</b>{single ? "" : " and link it"}</>}
               </button>
-            ))}
-            {options !== null && !shown.length && <div className="muted pad">No matching records</div>}
+            )}
+            {data !== null && data.total > rows.length && <div className="muted small pad">Showing {rows.length} of {data.total}: type to narrow down</div>}
+            {err && <div className="error small">{err}</div>}
           </div>
           {field.options._filesTable && !field.readonly && (
             <>

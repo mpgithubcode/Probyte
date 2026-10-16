@@ -1,5 +1,8 @@
 """Records: every write (create, update, delete to the trash, restore) with its checks, two-way links kept in step,
 its history entry and its change-feed event."""
+import math
+from datetime import date, datetime
+
 from app.calc.compute import COMPUTED_TYPES, Engine
 from app.core import events
 from app.core.db import Jsonb
@@ -45,8 +48,19 @@ def normalize_data(conn, table, fields, data: dict, user_id=None, record_id=None
                 v = int(v) if v is not None and v.is_integer() else v
             except ValueError:
                 bad(f"{f['name']} needs a number, not “{v}”")
+            if isinstance(v, float) and not math.isfinite(v):
+                bad(f"{f['name']} needs a number, not “{v}”")
         elif t == "checkbox":
             v = bool(v) and str(v).lower() not in ("false", "0", "no", "off")
+        elif t in ("text", "long_text"):
+            v = _text_value(f, v)
+        elif t == "single_select":
+            v = _choice_value(f, v[0] if isinstance(v, list) and len(v) == 1 else v)
+        elif t == "multi_select":
+            v = list(dict.fromkeys(x for x in (_choice_value(f, x) for x in (v if isinstance(v, list) else [v] if v not in (None, "") else []))
+                                   if x)) or []
+        elif t == "date":
+            v = _date_value(f, v)
         elif t in fieldformats.FORMAT_TYPES:
             try:
                 v = fieldformats.clean(t, v)
@@ -81,6 +95,58 @@ def normalize_data(conn, table, fields, data: dict, user_id=None, record_id=None
         ensure_choices(conn, f, v)
         out[str(k)] = v
     return out
+
+
+MAX_TEXT = 1_000_000   # characters in one text value
+
+
+def _text_value(f, v):
+    """Text fields hold text: a number or yes/no becomes its text; lists and objects are refused (they'd show as
+    nonsense and break whatever reads the field as text)."""
+    if v is None or isinstance(v, str):
+        out = v
+    elif isinstance(v, bool):
+        out = "true" if v else "false"
+    elif isinstance(v, (int, float)):
+        out = str(v)
+    elif isinstance(v, list) and all(isinstance(x, (str, int, float)) and not isinstance(x, bool) for x in v):
+        out = ", ".join(str(x) for x in v)
+    else:
+        bad(f"{f['name']} holds text, not {type(v).__name__} values")
+    if out is not None and len(out) > MAX_TEXT:
+        bad(f"{f['name']}: the text is too long ({len(out):,} characters; at most {MAX_TEXT:,})")
+    if out is not None and f["type"] == "text":
+        out = out.replace("\r\n", "\n")
+    return out if out != "" else None
+
+
+def _choice_value(f, v):
+    """One option of a select field: its name (an option sent as {"name": …} counts), on one line."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, dict) and isinstance(v.get("name"), str):
+        v = v["name"]
+    if isinstance(v, bool) or not isinstance(v, (str, int, float)):
+        bad(f"{f['name']} takes an option's name, not {type(v).__name__} values")
+    out = " ".join(str(v).split())[:200]
+    return out or None
+
+
+def _date_value(f, v):
+    """A date field holds 2026-10-16 (or a full date and time); anything else is refused, not stored as it came."""
+    if v is None or v == "":
+        return None
+    if not isinstance(v, str):
+        bad(f"{f['name']} needs a date like 2026-10-16, not {type(v).__name__} values")
+    s = v.strip()
+    try:
+        if len(s) == 10:
+            date.fromisoformat(s)
+        else:
+            datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        bad(f"{f['name']} needs a date like 2026-10-16 (or 2026-10-16T14:30:00Z), not “{v[:40]}”")
+    return s
 
 
 def _sync_links(conn, fields, record_id, table_id, old: dict, new: dict):

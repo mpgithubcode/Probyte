@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api } from "../api";
-import type { Choice, Field, FieldOptions, FieldType, FieldView, FieldViews, FilterCond, FilterGroup, TableInfo, View } from "../types";
+import type { ChipStyle, Choice, Field, FieldOptions, FieldType, FieldView, FieldViews, FilterCond, FilterGroup, TableInfo, View } from "../types";
 import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable, BUILTIN_KEYS, valueType } from "../util";
 import { FormulaEditor } from "./FormulaEditor";
 import { VIEW_LABEL, displaysFor } from "../display";
@@ -244,6 +244,31 @@ function DefaultInput({ type, o, value, onChange }: { type: FieldType; o: FieldO
   }
 }
 
+const CHIP_STYLES: [ChipStyle, string][] = [
+  ["chip", "Chips: the title (and the fields below)"],
+  ["details", "Two lines: the title, the fields under it"],
+  ["card", "Cards: a picture, the title and the fields"],
+  ["compact", "Small chips: the title only"],
+  ["plain", "Plain text: titles separated by commas"],
+];
+
+/** Pick a few fields, in order: each a toggle; the order they're turned on in is the order they show. */
+function FieldToggles({ fields, value, max, onChange }: { fields: Field[]; value: string[]; max: number; onChange: (v: string[]) => void }) {
+  return (
+    <div className="field-toggles">
+      {fields.map((f) => {
+        const on = value.includes(f.id);
+        return (
+          <button key={f.id} type="button" className={`field-toggle ${on ? "on" : ""}`} disabled={!on && value.length >= max}
+            onClick={() => onChange(on ? value.filter((x) => x !== f.id) : [...value, f.id])}>
+            <FieldIcon type={f.type} /> {f.name}{on && value.length > 1 ? <span className="field-toggle-n">{value.indexOf(f.id) + 1}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function FieldModal({ tableId, tableName, field, fields, tables, onClose, onSaved }: {
   tableId: string; tableName: string; field: Field | null; fields: Field[]; tables: TableInfo[];
   onClose: () => void; onSaved: () => void;
@@ -277,12 +302,44 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
   const typeChanged = field && field.type !== type;
   // Values are converted on type change; say what happens in the cases that aren't a plain conversion.
   const conversionNote = !typeChanged ? null
-    : COMPUTED_TYPES.has(type) ? "This field will be calculated automatically, so its current values will be replaced."
-    : type === "attachment" ? "Existing values can't be turned into files, so this field will start empty."
+    : COMPUTED_TYPES.has(type) ? "This field will be calculated automatically. Its current values are kept aside, and come back if you change the type back."
+    : type === "attachment" ? "Existing values can't be turned into files, so this field will start empty. They're kept aside, and come back if you change the type back."
     : type === "link" ? "Existing values will be matched to records in the linked table by their name."
     : type === "user" ? "Existing values will be matched to users by username."
     : COMPUTED_TYPES.has(field!.type) ? "The current calculated values will be kept as regular values you can edit."
     : null;
+
+  // what the change does to this field's values, asked before saving: how many fit the new type, how many are kept aside
+  const [preview, setPreview] = useState<{ total: number; converted: number; kept: number; restored: number;
+    examples: { from: string; to: unknown }[]; unfit: string[] } | null>(null);
+  const previewKey = typeChanged ? JSON.stringify([type, o.foreignTableId, o.includeTime, o.max, o.relationship, o.multiple]) : "";
+  useEffect(() => {
+    setPreview(null);
+    if (!previewKey || !field) return;
+    let live = true;
+    const t = setTimeout(() => {
+      const { _inner: _a, _error: _b, _filesTable: _c, displayExpression: _d, resultType: _e, displayStampWhen: _f, ...options } = o;
+      api.post<NonNullable<typeof preview>>(`/fields/${field.id}/conversion`, { type, options })
+        .then((p) => { if (live) setPreview(p); }).catch(() => {});
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewKey]);
+  const typeLabel = FIELD_TYPES.find((t) => t.type === type)?.label ?? type;
+  const previewNote = !preview || !preview.total ? null : (
+    <div className={preview.kept ? "notice warn conversion-preview" : "notice conversion-preview"}>
+      {preview.converted === preview.total
+        ? `All ${preview.total} value${preview.total === 1 ? "" : "s"} will be converted to ${typeLabel}.`
+        : `${preview.converted} of ${preview.total} values will be converted to ${typeLabel}.`}
+      {preview.examples.length > 0 && <> E.g. {preview.examples.map((e, i) => <span key={i} className="conversion-example">
+        “{e.from}” → {Array.isArray(e.to) ? e.to.join(", ") : String(e.to)}</span>)}</>}
+      {preview.kept > 0 && <div>
+        {preview.kept} value{preview.kept === 1 ? "" : "s"} can't be shown as {typeLabel} (
+        {preview.unfit.map((u) => `“${u}”`).join(", ")}{preview.unfit.length >= 5 ? ", …" : ""}).
+        They aren't deleted: they're kept, and come back if you change the type back.</div>}
+      {preview.restored > 0 && <div>{preview.restored} value{preview.restored === 1 ? "" : "s"} kept by an earlier change will come back.</div>}
+    </div>
+  );
 
   // Started / Completed date: a date that fills itself in; its formula guessed from the table (a status, a checkbox)
   const pickStamp = (kind: "started" | "completed") => {
@@ -405,6 +462,7 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
           <span className="hint">{FIELD_TYPES.find((t) => t.type === type)?.desc}</span>
         </label>
         {conversionNote && <div className="notice">{conversionNote}</div>}
+        {previewNote}
         {field?.options._error && !typeChanged && <div className="error">{field.options._error}</div>}
 
         {/* ---------------- basic */}
@@ -528,8 +586,51 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
               <label className="inline-check"><input type="checkbox" checked={o.displayFiles !== false} onChange={(e) => set({ displayFiles: e.target.checked })} />
                 Show files as preview thumbnails (a click opens the file)</label>
             )}
+            {o.foreignTableId && foreignFields && !o.displayFieldId && (() => {
+              // how its linked records look, wherever the field shows: the table, the record, pages, boards, shared links
+              const chip = o.chip ?? {};
+              const setChip = (p: Partial<NonNullable<FieldOptions["chip"]>>) => set({ chip: { ...chip, ...p } });
+              const usable = foreignFields.filter((f) => !f.is_primary && !["button", "long_text"].includes(f.type));
+              return (
+                <div className="chip-look">
+                  <label className="stack">How linked records look
+                    <select className="input" value={chip.style ?? "chip"} onChange={(e) => setChip({ style: e.target.value as ChipStyle })}>
+                      {CHIP_STYLES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                    </select>
+                  </label>
+                  {chip.style !== "plain" && chip.style !== "compact" && (
+                    <div className="stack">
+                      <span>Also show in each</span>
+                      <FieldToggles fields={usable} value={chip.fields ?? []} max={4} onChange={(v) => setChip({ fields: v })} />
+                    </div>
+                  )}
+                  <div className="row-2">
+                    <label className="stack">Colour from
+                      <select className="input" value={chip.colorField ?? ""} onChange={(e) => setChip({ colorField: e.target.value || null })}>
+                        <option value="">No colour</option>
+                        {foreignFields.filter((f) => f.type === "single_select").map(fieldOpt)}
+                      </select>
+                    </label>
+                    {chip.style !== "plain" && (
+                      <label className="stack">Picture from
+                        <select className="input" value={chip.imageField ?? ""} onChange={(e) => setChip({ imageField: e.target.value || null })}>
+                          <option value="">No picture</option>
+                          {foreignFields.filter((f) => f.type === "attachment" || ((f.type === "lookup") && f.options._inner?.type === "attachment")).map(fieldOpt)}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
             {o.foreignTableId && foreignInfo && (
               <div className="link-pick">
+                <div className="stack">
+                  <span>Columns in the picker</span>
+                  <FieldToggles fields={foreignInfo.fields.filter((f) => !f.is_primary && !["button", "long_text"].includes(f.type))}
+                    value={o.pickFields ?? []} max={6} onChange={(v) => set({ pickFields: v })} />
+                  <span className="hint">The picker lists the records as a table: their title and these fields (none chosen: the first few).</span>
+                </div>
                 <label className="stack">Records to choose from
                   <select className="input" value={o.pickView ?? ""} onChange={(e) => set({ pickView: e.target.value || null })}>
                     <option value="">All records</option>

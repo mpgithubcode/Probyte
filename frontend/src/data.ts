@@ -1,5 +1,6 @@
 import { mergeRefs } from "./util";
 import { api } from "./api";
+import { saneFields, saneRecords } from "./sane";
 import type { Dataset, Field, Rec, Refs } from "./types";
 
 /**
@@ -20,11 +21,15 @@ export async function loadDataset(kind: "table" | "combo", id: string): Promise<
   const loadedAt = Date.now();
   if (kind === "table") {
     const r = await api.get(`/tables/${id}`);
+    r.fields = saneFields(r.fields ?? []);
+    r.records = saneRecords(r.fields, r.records ?? []);
     return { kind, id, name: r.table.name, table: r.table, access: r.access, fields: r.fields, views: r.views, records: r.records, refs: r.refs,
       linkSources: r.link_sources, dav: r.dav, storage: r.storage, token: r.token, loadedAt };
   }
   // sources that are linked tables (another server, maybe slow) come separately: see loadComboSource
   const r = await api.get(`/combos/${id}?defer_remote=true`);
+  r.fields = saneFields(r.fields ?? []);
+  r.records = saneRecords(r.fields, r.records ?? []);
   const comboFields = r.fields.filter((f: Field) => f.id !== "__source").map((f: Field) => ({ id: f.id, name: f.name, mapping: f.mapping ?? {} }));
   return { kind, id, name: r.combo.name, baseId: r.combo.base_id, access: r.access, sources: r.sources, comboFields, fields: r.fields, views: r.views,
     records: r.records, refs: r.refs, loadedAt, pending: r.pending ?? [], icon: r.combo.icon, description: r.combo.description, page: r.combo.page ?? null };
@@ -35,7 +40,7 @@ export async function loadComboSource(ds: Dataset, tableId: string): Promise<(pr
   const r = await api.get<{ records: Rec[]; refs: Refs; link_sources: Dataset["linkSources"] }>(`/combos/${ds.id}/sources/${tableId}`);
   return (prev) => {
     if (prev.id !== ds.id || !prev.pending?.includes(tableId)) return prev;  // reloaded meanwhile
-    const records = [...prev.records.filter((x) => x.table_id !== tableId), ...r.records]
+    const records = [...prev.records.filter((x) => x.table_id !== tableId), ...saneRecords(prev.fields, r.records)]
       .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     return {
       ...prev, records, pending: prev.pending.filter((t) => t !== tableId),
@@ -67,11 +72,11 @@ export async function refreshDataset(ds: Dataset): Promise<(prev: Dataset) => Da
 
 function applyChanges(ds: Dataset, ch: { token: string; records: Rec[]; deleted: string[]; refs: Refs }): Dataset {
   if (!ch.records.length && !ch.deleted.length) return ch.token === ds.token ? ds : { ...ds, token: ch.token };
-  const changed = new Map(ch.records.map((r) => [r.id, r]));
+  const changed = new Map(saneRecords(ds.fields, ch.records).map((r) => [r.id, r]));
   const gone = new Set(ch.deleted);
   const records = ds.records.flatMap((r) => (gone.has(r.id) ? [] : [changed.get(r.id) ?? r]));
   const known = new Set(ds.records.map((r) => r.id));
-  for (const r of ch.records) if (!known.has(r.id) && !gone.has(r.id)) records.push(r);
+  for (const r of ch.records) if (!known.has(r.id) && !gone.has(r.id)) records.push(changed.get(r.id)!);
   return {
     ...ds, records, token: ch.token,
     refs: mergeRefs(ds.refs, ch.refs),

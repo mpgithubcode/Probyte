@@ -220,28 +220,79 @@ def remote_vcards_export(table_id: str, user=User):
     return remote.export_vcards(t)
 
 
+def _offered(conn, eng, table_id, field):
+    """The records of a table a link field offers in its picker: those of a view of this table (in its order) and / or
+    matching its own conditions; all of them for other links. Returns (records, the link field's options)."""
+    from app.calc.viewfilter import apply_view
+    recs = eng.records(table_id)
+    lf = conn.execute("SELECT options FROM fields WHERE id = %s AND type = 'link'", (field,)).fetchone() if field else None
+    o = (lf or {}).get("options") or {}
+    if o.get("foreignTableId") != str(table_id):
+        return recs, {}
+    if o.get("pickView") or o.get("pickFilter"):
+        fields = eng.describe(table_id)
+        if o.get("pickView"):
+            v = conn.execute("SELECT config FROM views WHERE id = %s AND table_id = %s", (o["pickView"], table_id)).fetchone()
+            if v:
+                recs = apply_view(eng, fields, recs, v["config"] or {})
+        if (o.get("pickFilter") or {}).get("items"):
+            recs = apply_view(eng, fields, recs, {"filter": o["pickFilter"]})
+    return recs, o
+
+
 @router.get("/api/tables/{table_id}/titles")
 def table_titles(table_id: str, field: str | None = None, user=User):
     """Record titles of a table, for the link picker. field: the link field picking from it: only the records its
     settings offer (those of a view of this table, in its order, and / or matching its own conditions)."""
-    from app.calc.viewfilter import apply_view
     with connection() as conn:
         store.get_table(conn, table_id, user["id"])
         eng = Engine(conn)
         titles = eng.titles(table_id)
-        lf = conn.execute("SELECT options FROM fields WHERE id = %s AND type = 'link'", (field,)).fetchone() if field else None
-        o = (lf or {}).get("options") or {}
-        if o.get("foreignTableId") == str(table_id) and (o.get("pickView") or o.get("pickFilter")):
-            fields = eng.describe(table_id)
-            recs = eng.records(table_id)
-            if o.get("pickView"):
-                v = conn.execute("SELECT config FROM views WHERE id = %s AND table_id = %s", (o["pickView"], table_id)).fetchone()
-                if v:
-                    recs = apply_view(eng, fields, recs, v["config"] or {})
-            if (o.get("pickFilter") or {}).get("items"):
-                recs = apply_view(eng, fields, recs, {"filter": o["pickFilter"]})
+        if field:
+            recs, _ = _offered(conn, eng, table_id, field)
             return [{"id": str(r["id"]), "title": titles.get(str(r["id"]), "Untitled")} for r in recs]
     return [{"id": k, "title": v} for k, v in titles.items()]
+
+
+PICK_SKIP = {"long_text", "button", "record_id", "created_by", "last_modified_by", "created_time", "last_modified_time", "recurrence"}
+
+
+@router.get("/api/tables/{table_id}/pick")
+def pick_records(table_id: str, field: str | None = None, q: str = "", limit: int = 100, user=User):
+    """The link picker as a table: the records a link field offers (see _offered), with the columns it shows (its
+    pickFields, else the first few of the table's fields), matching `q` in the title or any of those columns."""
+    from app.calc.viewfilter import display_text
+    with connection() as conn:
+        t = store.get_table(conn, table_id, user["id"])
+        eng = Engine(conn)
+        fields = eng.describe(table_id)
+        titles = eng.titles(table_id)
+        recs, o = _offered(conn, eng, table_id, field)
+        by_id = {str(f["id"]): f for f in fields}
+        if o.get("pickFields"):
+            cols = [by_id[i] for i in o["pickFields"] if i in by_id]
+        else:
+            cols = [f for f in fields if not f.get("is_primary") and f["type"] not in PICK_SKIP and not f.get("system_key") in ("uid",)][:3]
+        words = [w for w in q.lower().split() if w]
+        out = []
+        for r in recs:
+            title = titles.get(str(r["id"]), "Untitled")
+            if words:
+                hay = " ".join([title, *(display_text(eng, f, r["data"].get(str(f["id"]))) for f in cols)]).lower()
+                if not all(w in hay for w in words):
+                    continue
+            out.append(r)
+        total = len(out)
+        out = out[:max(1, min(int(limit or 100), 500))]
+        rows = [{"id": str(r["id"]), "title": titles.get(str(r["id"]), "Untitled"),
+                 "data": {str(f["id"]): r["data"].get(str(f["id"])) for f in cols}} for r in out]
+        refs = eng.refs(table_id, [{"data": x["data"]} for x in rows]) if rows else {"records": {}, "users": {}}
+        refs.pop("display", None); refs.pop("chips", None)
+        # (a files table gets records by uploading, not by name)
+        can_add = access.RANK.get(access.role(conn, t["base_id"], user["id"]) or "", 0) >= access.RANK["editor"] and t["kind"] != "files" \
+            and not (user.get("api_key") and user.get("api_scope") == "read")
+        return FastJSON({"fields": cols, "records": rows, "total": total, "refs": refs, "can_add": can_add,
+                         "primary": next((f for f in fields if f.get("is_primary")), None)})
 
 
 @router.post("/api/tables/{table_id}/formula")
@@ -605,8 +656,7 @@ def update_field(field_id: str, body: FieldPatch, user=User):
                                      {"foreignTableId": str(table["id"]), "relationship": "many", "symmetricFieldId": str(f["id"])})
             updated = conn.execute("UPDATE fields SET options = options || %s WHERE id = %s RETURNING *",
                                    (Jsonb({"symmetricFieldId": str(sym["id"])}), f["id"])).fetchone()
-        if snapshot is not None:
-            values.convert_field(conn, f, updated, snapshot)
+        conversion = values.convert_field(conn, f, updated, snapshot) if snapshot is not None else None
         sent = body.model_fields_set
         rules = store.field_rules(conn, updated if new_type == f["type"] else {**updated, "unique_values": False},
                                   required=body.required, unique=body.unique,
@@ -621,7 +671,30 @@ def update_field(field_id: str, body: FieldPatch, user=User):
         if updated["type"] == "date" and (updated["options"].get("stampWhen"), updated["options"].get("stampClear")) != \
                 ((f["options"] or {}).get("stampWhen"), (f["options"] or {}).get("stampClear")):
             stamps.backfill(conn, f["table_id"], updated)
-        return _describe_field(conn, updated["id"], f["table_id"])
+        out = _describe_field(conn, updated["id"], f["table_id"])
+        return {**out, "conversion": conversion} if conversion is not None else out
+
+
+@router.post("/api/fields/{field_id}/conversion")
+def preview_conversion(field_id: str, body: FieldPatch, user=User):
+    """What changing a field to another type would do to its values, before it's done: how many convert, how many
+    don't fit (kept aside, to come back if the type changes back) and a few examples of each."""
+    with connection() as conn:
+        f = _own_field(conn, field_id, user)
+        table = store.get_table(conn, f["table_id"], user["id"], need="admin")
+        new_type = body.type or f["type"]
+        if new_type == f["type"]:
+            return {"total": 0, "converted": 0, "kept": 0, "restored": 0, "examples": [], "unfit": []}
+        options = store.prepare_field(conn, table, new_type, body.options if body.options is not None else f["options"],
+                                      user["id"], field=f)
+        snap = values.snapshot(conn, f)
+        plan = values.plan_conversion(conn, f, new_type, options, snap)
+        filled = {rid for rid, (raw, items, _vt) in snap.items() if not values._blank(f["type"], raw, items)}
+        converted = [rid for rid, v in plan["values"].items() if v is not None and rid in filled]
+        show = lambda rid: ", ".join(snap[rid][1]) or str(snap[rid][0])
+        return {"total": len(filled), "converted": len(converted), "kept": len(plan["kept"]), "restored": len(plan["restored"]),
+                "examples": [{"from": show(rid), "to": plan["values"][rid]} for rid in converted[:3]],
+                "unfit": list(dict.fromkeys(show(rid) for rid in plan["kept"]))[:5]}
 
 
 @router.delete("/api/fields/{field_id}")

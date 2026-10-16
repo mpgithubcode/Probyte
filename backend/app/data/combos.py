@@ -154,6 +154,11 @@ def combo_refs(conn, combo, engine, only: set | None = None):
                 if u["mapping"].get(str(s["table_id"])) == src_fid:
                     cur = refs["display"].setdefault(u["id"], {"field": d["field"], "values": {}})
                     cur["values"].update(d["values"])
+        for src_fid, d in (r.get("chips") or {}).items():
+            for u in combo["fields"]:
+                if u["mapping"].get(str(s["table_id"])) == src_fid:
+                    cur = refs.setdefault("chips", {}).setdefault(u["id"], {"fields": d["fields"], "values": {}})
+                    cur["values"].update(d["values"])
     if not refs["display"]:
         refs.pop("display")
     return refs

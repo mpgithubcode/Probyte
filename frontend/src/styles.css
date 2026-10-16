@@ -146,6 +146,10 @@ textarea.input { resize: vertical; }
 .error { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); padding: 8px 10px; border-radius: 6px; }
 .success { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); padding: 8px 10px; border-radius: 6px; }
 .notice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border-radius: 6px; background: var(--accent-soft); }
+.notice.conversion-preview { display: block; line-height: 1.5; }
+.notice.conversion-preview > div { margin-top: 4px; }
+.notice.warn { background: color-mix(in srgb, #f59e0b 16%, var(--bg, #fff)); }
+.conversion-example { margin-left: 6px; color: var(--muted); }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -1829,6 +1833,8 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
   color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .tgrid-stack:hover, .tgrid-stack.open { background: color-mix(in srgb, var(--accent) 20%, var(--bg)); }
 .tgrid-stack b { font-weight: 600; white-space: nowrap; }
+.tgrid-stack-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tgrid-stack-inline { color: var(--text-soft); font-size: 11.5px; }
 .tgrid-stack-dots { display: flex; gap: 3px; }
 .tgrid-stack-dots i { width: 7px; height: 7px; border-radius: 50%; }
 .tgrid-stack-list { max-height: 60vh; overflow-y: auto; }
@@ -1839,6 +1845,8 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
   color: var(--text-soft); text-align: left; border-radius: 4px; cursor: pointer; }
 .cal-more:hover, .cal-more.open { background: var(--bg-hover); color: var(--accent); }
 .tgrid-stack .tgrid-time { grid-column: 1 / -1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tgrid-stack-titles { grid-column: 1 / -1; min-width: 0; min-height: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; font-size: 11.5px; line-height: 14px; color: var(--text-soft);
+  overflow-wrap: anywhere; align-self: stretch; }
 .tgrid-allday-stack { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 6px; border: 1px solid var(--accent); border-left-width: 3px;
   border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, var(--bg)); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; overflow: hidden; }
 .tgrid-allday-stack:hover, .tgrid-allday-stack.open { background: color-mix(in srgb, var(--accent) 20%, var(--bg)); }
@@ -1929,3 +1937,79 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .record-doc { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; }
 .record-doc .page-doc-body .ProseMirror { min-height: 80px; font-size: 14px; }
 .record-doc .rt-toolbar { position: static; }
+
+/* ---------------------------------------------------------------- a part of the page that failed (ErrorBoundary) */
+.crash { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px 16px; text-align: center; min-width: 0; }
+.crash h2 { margin: 0; font-size: 18px; }
+.crash p { margin: 0; color: var(--muted); }
+.crash details { max-width: min(560px, 100%); color: var(--muted); font-size: 12px; text-align: left; }
+.crash pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.crash-actions { display: flex; gap: 8px; margin-top: 6px; }
+.crash.compact { position: fixed; z-index: 60; inset: auto 16px 16px auto; max-width: 360px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18); }
+
+/* ---------------------------------------------------------------- the link picker as a table */
+.popover.link-pick-popover { max-width: calc(100vw - 16px); display: flex; flex-direction: column; gap: 6px; }
+.link-pick-table-wrap { max-height: min(360px, 55vh); overflow: auto; margin: 0 -4px; }
+.link-pick-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.link-pick-table th { position: sticky; top: 0; z-index: 1; background: var(--bg); text-align: left; font-weight: 500; font-size: 12px;
+  color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.link-pick-table td { padding: 5px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.link-pick-table tbody tr { cursor: pointer; }
+.link-pick-table tbody tr.active { background: var(--bg-hover); }
+.link-pick-table tbody tr.on { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.link-pick-table tbody tr.on.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.link-pick-table .pick-check { width: 22px; padding-right: 0; color: var(--accent); font-weight: 700; }
+.link-pick-table .pick-title { font-weight: 500; max-width: 260px; }
+.link-pick-table td .chips { flex-wrap: nowrap; }
+.link-pick-create { width: 100%; margin-top: 4px; gap: 6px; }
+@media (max-width: 640px) {
+  .link-pick-table td:nth-child(n+4), .link-pick-table th:nth-child(n+4) { display: none; }   /* a phone: the title and one column */
+}
+
+/* ---------------------------------------------------------------- how a link's records look (options.chip) */
+.link-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
+.link-chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.link-chip-fields { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-soft); font-size: 0.92em; }
+.link-chip-field { display: inline-flex; align-items: center; min-width: 0; white-space: nowrap; }
+.link-chip-field + .link-chip-field::before, .link-chip-title + .link-chip-fields::before { content: "·"; color: var(--muted); margin-right: 6px; }
+.link-chip-field .chip { font-size: 11px; padding: 0 5px; }
+.link-chip-img { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; margin-left: -3px; flex: none; }
+.link-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; margin-right: 4px; }
+.link-chip.compact { padding: 0 6px; font-size: 11.5px; max-width: 140px; }
+.link-chip.details { flex-direction: column; align-items: flex-start; gap: 1px; padding: 3px 8px; border-radius: 8px; line-height: 1.25; }
+.link-chip.details .link-chip-title { font-weight: 600; }
+.link-chip.details .link-chip-fields { flex-wrap: wrap; font-size: 11.5px; }
+.link-chip.details .link-chip-title + .link-chip-fields::before { content: none; }
+.link-chips.card { display: flex; flex-wrap: wrap; gap: 6px; }
+.link-card { display: inline-flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); min-width: 140px; max-width: 260px; text-align: left; }
+.link-card-img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; flex: none; }
+.link-card-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 12px; }
+.link-card-title { display: flex; align-items: center; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-card-row { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.link-card-row .muted { flex: none; }
+.grid td .link-chips.card, .grid td .link-chip.details { flex-wrap: nowrap; }
+.grid td .link-card { padding: 2px 6px; min-width: 0; }
+.grid td .link-card-img { width: 20px; height: 20px; }
+.grid td .link-card-row { display: none; }   /* in a table's row: the card's title and picture; the rest on the record */
+.chip-look { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.chip-look .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 520px) { .chip-look .row-2 { grid-template-columns: 1fr; } }
+.field-toggles { display: flex; flex-wrap: wrap; gap: 4px; }
+.field-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg); color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer; }
+.field-toggle.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.field-toggle:disabled { opacity: 0.45; cursor: default; }
+.field-toggle-n { font-size: 10px; font-weight: 700; color: var(--accent); }
+.chips > .link-chips { display: contents; }   /* the field box's own list: the chips are its */
+.grid td .link-chip.details, .cell-content .link-chip.details { flex-direction: row; align-items: center; padding: 1px 8px; border-radius: 6px; }
+.grid td .link-chip.details .link-chip-title, .cell-content .link-chip.details .link-chip-title { font-weight: 500; }
+.grid td .link-chip.details .link-chip-title + .link-chip-fields::before,
+.cell-content .link-chip.details .link-chip-title + .link-chip-fields::before { content: "·"; }
+.grid td .link-chip.details .link-chip-fields, .cell-content .link-chip.details .link-chip-fields { flex-wrap: nowrap; }
+/* a row's cell: each chip keeps its title readable (the fields give way first), and the cell cuts off what doesn't fit */
+.grid td .link-chip, .cell-content .link-chip { flex: none; max-width: 260px; }
+.grid td .link-chip-title, .cell-content .link-chip-title { flex: none; max-width: 160px; }
+.grid td .link-chip-fields, .cell-content .link-chip-fields { flex: 0 1 auto; overflow: hidden; }

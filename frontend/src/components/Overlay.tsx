@@ -61,14 +61,22 @@ export function Popover({ anchor, onClose, children, align = "left", width, clas
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useLayoutEffect(() => {
-    if (!anchor || !ref.current) return;
-    const r = anchor.getBoundingClientRect();
-    const h = ref.current.offsetHeight, w = ref.current.offsetWidth;
-    let top = r.bottom + 4;
-    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
-    let left = align === "right" ? r.right - w : r.left;
-    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
-    setPos({ top, left });
+    const el = ref.current;
+    if (!anchor || !el) return;
+    const place = () => {
+      const r = anchor.getBoundingClientRect();
+      const h = el.offsetHeight, w = el.offsetWidth;
+      let top = r.bottom + 4;
+      if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+      let left = align === "right" ? r.right - w : r.left;
+      left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+      setPos((p) => (p && p.top === top && p.left === left ? p : { top, left }));
+    };
+    place();
+    // placed again when what's in it changes size (a list that loads, a table that widens)
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(place) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
   }, [anchor, align]);
 
   useEffect(() => {

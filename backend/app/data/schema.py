@@ -1,6 +1,8 @@
 """Bases, tables, fields and views: creating them, checking a field's settings (formulas, links, lookups…), the
 synced fields of calendar and contacts tables, and what kind of table is where. Also the errors every part of the
 store raises."""
+import json
+import re
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -299,13 +301,16 @@ def ensure_choices(conn, field, values):
     if field["type"] not in SELECT_TYPES:
         return
     vals = values if isinstance(values, list) else [values]
-    # (choices written as plain names, as the API accepts them, are kept as {name, color} from here on)
-    choices = [c if isinstance(c, dict) else {"name": str(c), "color": PALETTE[i % len(PALETTE)]}
-               for i, c in enumerate(field["options"].get("choices") or [])]
+    # (choices written as plain names, as the API accepts them, or left malformed, are kept as {name, color} from here on)
+    raw = field["options"].get("choices") or []
+    try:
+        choices = clean_choices(raw)
+    except HTTPException:
+        choices = []
     names = {c["name"] for c in choices}
-    added = any(not isinstance(c, dict) for c in field["options"].get("choices") or [])
+    added = choices != raw
     for v in vals:
-        if v not in (None, "") and str(v) not in names:
+        if isinstance(v, str) and v and v not in names:
             choices.append({"name": str(v), "color": PALETTE[len(choices) % len(PALETTE)]})
             names.add(str(v))
             added = True
@@ -433,6 +438,23 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
         else:
             o.pop("displayFieldId", None)
         o["displayFiles"] = o.get("displayFiles") is not False
+        # how its chips look (fields of the linked records shown in them, a colour, a picture) and the picker's columns
+        ftf = {str(x["id"]): x for x in get_fields(conn, o["foreignTableId"])}
+        chip = o.get("chip") if isinstance(o.get("chip"), dict) else {}
+        chip = {
+            "style": chip.get("style") if chip.get("style") in CHIP_STYLES else "chip",
+            "fields": [str(x) for x in (chip.get("fields") or []) if str(x) in ftf][:4],
+            "colorField": str(chip["colorField"]) if chip.get("colorField") and ftf.get(str(chip["colorField"]), {}).get("type") == "single_select" else None,
+            "imageField": str(chip["imageField"]) if chip.get("imageField") and ftf.get(str(chip["imageField"]), {}).get("type") in ("attachment", "lookup") else None,
+        }
+        o["chip"] = chip if chip != {"style": "chip", "fields": [], "colorField": None, "imageField": None} else None
+        if o["chip"] is None:
+            o.pop("chip")
+        pick = [str(x) for x in (o.get("pickFields") or []) if str(x) in ftf][:6] if isinstance(o.get("pickFields"), list) else None
+        if pick is None:
+            o.pop("pickFields", None)
+        else:
+            o["pickFields"] = pick
     elif ftype in ("lookup", "rollup"):
         link = _field_in(conn, o.get("linkFieldId"), tid, "link field")
         if link["type"] != "link":
@@ -489,7 +511,43 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
             bad("Enter the URL the button opens")
     elif ftype == "user":
         o["multiple"] = bool(o.get("multiple"))
+    elif ftype in SELECT_TYPES:
+        o["choices"] = clean_choices(o.get("choices"))
+    if ftype not in SELECT_TYPES:
+        o.pop("choices", None)   # options another type left behind
     return o
+
+
+MAX_CHOICE = 200
+CHIP_STYLES = ("chip", "compact", "details", "card", "plain")
+COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+
+
+def clean_choices(choices) -> list[dict]:
+    """A select field's options as {name, color}, whatever was sent (names alone, {"label": …}, other keys, repeats):
+    names are text, one line, unique; a colour that isn't one is replaced. Anything else is refused."""
+    if choices in (None, ""):
+        return []
+    if not isinstance(choices, list):
+        bad("A select field's options (choices) must be a list, e.g. [\"Todo\", \"Done\"]")
+    out, seen = [], set()
+    for c in choices:
+        if isinstance(c, dict):
+            name, color = c.get("name", c.get("label", c.get("value"))), c.get("color")
+        elif isinstance(c, (str, int, float)) and not isinstance(c, bool):
+            name, color = c, None
+        else:
+            bad(f"Each option needs a name, not {json.dumps(c)[:60]}")
+        if not isinstance(name, (str, int, float)) or isinstance(name, bool):
+            bad(f"Each option needs a name, not {json.dumps(c)[:60]}")
+        name = " ".join(str(name).split())[:MAX_CHOICE]
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        if not isinstance(color, str) or not COLOR_RE.match(color):
+            color = PALETTE[len(out) % len(PALETTE)]
+        out.append({"name": name, "color": color})
+    return out
 
 
 def is_remote_table(conn, table_id) -> bool:

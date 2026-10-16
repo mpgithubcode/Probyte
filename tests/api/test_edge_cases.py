@@ -166,7 +166,7 @@ def test_webhook_events_filters_and_coalescing(user):
     time.sleep(1.5)
     for i in range(5):                                                     # five quick edits -> one event
         user.j("PATCH", f"/records/{r['id']}", json={"data": {F["Notes"]: str(i)}})
-    got = rx.wait(1)
+    got = rx.wait(1, timeout=60)   # (a first try can time out while the test network settles: then its retry)
     time.sleep(2)
     events = [g["event"] for g in rx.got]
     assert set(events) == {"record.updated"} and len(events) <= 2, events   # coalesced (edits within a second)

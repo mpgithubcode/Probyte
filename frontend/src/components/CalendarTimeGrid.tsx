@@ -6,14 +6,17 @@ import { Icon } from "./Icon";
 import { Popover } from "./Overlay";
 
 const HOUR = 48;          // px per hour
-const LANE_MIN = 64;
-const ALLDAY_MAX = 2;     // a day with more one-day all-day events than this shows them as one "5 events" block      // px: overlapping events narrower than this side by side are shown as one "3 events" block
+const LANE_MIN = 110;     // px: events side by side get at least this much (a readable title); more at once become one "3 events" block
+const MIN_H = 22;         // px: the least height a block is drawn with (a short event); overlaps are judged by what's drawn
+const ALLDAY_MAX = 2;     // a day with more one-day all-day events than this shows them as one "5 events" block
 const SNAP = 15;          // minutes
 const MIN = 60000;
 
-interface Block { rec: Rec; key: string; start: Date; end: Date; col: number; lane: number; lanes: number; hasEnd: boolean }
-/** Events overlapping in one column (each overlaps the next): drawn side by side, or as one block when they don't fit. */
-interface Cluster { col: number; items: Block[]; start: Date; end: Date; lanes: number }
+interface Block { rec: Rec; key: string; start: Date; end: Date; col: number; lane: number; lanes: number; span: number; hasEnd: boolean }
+/** Events at the same time in one column that don't fit side by side: one block saying how many, opening their list. */
+interface Cluster { col: number; items: Block[]; start: Date; end: Date; lane: number; lanes: number; span: number }
+/** What's laid out in a column: one event, or several drawn as one block. `vEnd`: where it ends as drawn (short ones are taller). */
+interface Unit { items: Block[]; start: number; vEnd: number; lane: number }
 interface Drag { key: string; mode: "move" | "resize"; x0: number; y0: number; dMin: number; dDay: number; moved: boolean }
 
 const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -65,7 +68,7 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
 
   // ---- split records into all-day items and timed blocks
   const allDay: { rec: Rec; from: number; to: number }[] = [];
-  const timed: Omit<Block, "lane" | "lanes" | "col">[] = [];
+  const timed: Omit<Block, "lane" | "lanes" | "col" | "span">[] = [];
   const allDayField = fields.find((f) => f.system_key === "all_day");
   for (const r of records) {
     const sv = r.data[startField.id] ?? (endField ? r.data[endField.id] : undefined);
@@ -93,34 +96,70 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
   const oneDay = (col: number) => allDay.filter((a) => a.from === col && a.to === col);
   const stackedDays = days.map((_, col) => col).filter((col) => oneDay(col).length > ALLDAY_MAX);
 
-  // ---- per column: pieces of blocks, laid out side by side when they overlap
+  // ---- per column: events that overlap (as drawn: a short one is taller than its minutes) go side by side while each
+  // still gets a readable width; the ones at the same moment beyond that become one "N events" block. An event with no
+  // neighbour to its right widens into the free space.
   const blocks: Block[] = [];
   const clusters: Cluster[] = [];
+  const minMs = (MIN_H / HOUR) * 3600000;
+  const chains = (units: Unit[]) => {
+    const out: Unit[][] = [];
+    let end = -Infinity;
+    for (const u of [...units].sort((a, b) => a.start - b.start || b.vEnd - a.vEnd)) {
+      if (!out.length || u.start >= end) out.push([]);
+      out[out.length - 1].push(u);
+      end = Math.max(out[out.length - 1].length === 1 ? -Infinity : end, u.vEnd);
+    }
+    return out;
+  };
+  const assignLanes = (chain: Unit[]) => {
+    const ends: number[] = [];
+    for (const u of chain) {
+      let lane = ends.findIndex((e) => e <= u.start);
+      if (lane < 0) lane = ends.length;
+      u.lane = lane;
+      ends[lane] = u.vEnd;
+    }
+    return ends.length;
+  };
   days.forEach((k, col) => {
     const d0 = parseKey(k), d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
-    const pieces = timed.filter((b) => +b.end > +d0 && +b.start < +d1)
-      .map((b) => ({ ...b, start: new Date(Math.max(+b.start, +d0)), end: new Date(Math.min(+b.end, +d1)), col, lane: 0, lanes: 1 }))
-      .sort((a, b) => +a.start - +b.start || +b.end - +a.end);
-    let cluster: Block[] = [], clusterEnd = 0;
-    const flush = () => {
-      if (!cluster.length) return;
-      const n = Math.max(1, ...cluster.map((c) => c.lane + 1));
-      cluster.forEach((c) => { c.lanes = n; });
-      clusters.push({ col, items: cluster, lanes: n, start: new Date(Math.min(...cluster.map((c) => +c.start))), end: new Date(Math.max(...cluster.map((c) => +c.end))) });
-      cluster = [];
-    };
-    for (const p of pieces) {
-      if (cluster.length && +p.start >= clusterEnd) flush();
-      const laneEnds: number[] = [];
-      cluster.forEach((c) => { laneEnds[c.lane] = Math.max(laneEnds[c.lane] ?? 0, +c.end); });
-      let lane = laneEnds.findIndex((e) => e <= +p.start);
-      if (lane < 0) lane = laneEnds.length;
-      p.lane = lane;
-      cluster.push(p);
-      clusterEnd = Math.max(clusterEnd, +p.end);
-      blocks.push(p);
+    const pieces: Block[] = timed.filter((b) => +b.end > +d0 && +b.start < +d1)
+      .map((b) => ({ ...b, start: new Date(Math.max(+b.start, +d0)), end: new Date(Math.min(+b.end, +d1)), col, lane: 0, lanes: 1, span: 1 }));
+    let units: Unit[] = pieces.map((p) => ({ items: [p], start: +p.start, vEnd: Math.max(+p.end, +p.start + minMs), lane: 0 }));
+    // too many at once: merge the busiest moment's events into one block, until every chain fits
+    for (let guard = 0; guard < 200; guard++) {
+      const full = chains(units).find((ch) => assignLanes(ch) > maxLanes);
+      if (!full) break;
+      let best: Unit[] = [];
+      for (const u of full) {
+        const at = full.filter((v) => v.start <= u.start && u.start < v.vEnd);
+        if (at.length > best.length) best = at;
+      }
+      const merged: Unit = { items: best.flatMap((u) => u.items), start: Math.min(...best.map((u) => u.start)),
+        vEnd: Math.max(...best.map((u) => u.vEnd)), lane: 0 };
+      units = [...units.filter((u) => !best.includes(u)), merged];
     }
-    flush();
+    for (const ch of chains(units)) {
+      const lanes = assignLanes(ch);
+      for (const u of ch) {
+        // widen into the lanes to the right that are free for its whole time
+        let span = 1;
+        while (u.lane + span < lanes && !ch.some((v) => v.lane === u.lane + span && v.start < u.vEnd && u.start < v.vEnd)) span++;
+        if (u.items.length === 1) {
+          const b = u.items[0];
+          Object.assign(b, { lane: u.lane, lanes, span });
+          blocks.push(b);
+        } else {
+          clusters.push({ col, items: u.items.sort((a, b) => +a.start - +b.start), lane: u.lane, lanes, span,
+            start: new Date(u.start), end: new Date(Math.max(...u.items.map((b) => +b.end))) });
+        }
+      }
+    }
+  });
+  const place = (col: number, lane: number, lanes: number, span: number) => ({
+    left: `calc(${col} * 100% / var(--days) + ${lane} * (100% / var(--days)) / ${lanes} + 2px)`,
+    width: `calc((100% / var(--days)) * ${span} / ${lanes} - 4px)`,
   });
 
   // ---- dragging
@@ -237,34 +276,36 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
                 {col === todayIdx && <div className="tgrid-now" style={{ top: (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR }} />}
               </div>
             ))}
-            {clusters.filter((c) => c.lanes > maxLanes).map((c) => {
-              // more at once than fit side by side: one block that says how many, opening their list
+            {clusters.map((c) => {
+              // more at once than fit side by side: one block that says how many (and as many titles as fit), opening their list
               const top = ((c.start.getHours() * 60 + c.start.getMinutes()) / 60) * HOUR;
-              const h = Math.max(((+c.end - +c.start) / 3600000) * HOUR, 22);
+              const h = Math.max(((+c.end - +c.start) / 3600000) * HOUR, MIN_H + 4);
               const open = stack?.cluster === c;
               return (
-                <button key={`stack:${c.col}:${+c.start}`} type="button" className={`tgrid-stack ${open ? "open" : ""}`}
+                <button key={`stack:${c.col}:${+c.start}:${c.lane}`} type="button" className={`tgrid-stack ${open ? "open" : ""}`}
                   aria-label={`${c.items.length} events, ${fmt(c.start)} to ${fmt(c.end)}`} aria-expanded={open}
-                  style={{ top, height: h - 2, left: `calc(${c.col} * 100% / var(--days) + 2px)`, width: "calc(100% / var(--days) - 4px)" }}
+                  title={c.items.map((b) => `${fmt(b.start)} ${recordTitle(fields, b.rec)}`).join("\n")}
+                  style={{ top, height: h - 2, ...place(c.col, c.lane, c.lanes, c.span) }}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); setStack(open ? null : { anchor: e.currentTarget, cluster: c }); }}>
                   <span className="tgrid-stack-dots">{c.items.slice(0, 4).map((b) => <i key={b.key} style={{ background: color(b.rec) }} />)}</span>
-                  <b>{c.items.length} events</b>
-                  {h > 34 && <span className="tgrid-time">{fmt(c.start)} – {fmt(c.end)}</span>}
+                  <span className="tgrid-stack-head"><b>{c.items.length} events</b>
+                    {h <= 34 && <span className="tgrid-stack-inline"> · {c.items.map((b) => recordTitle(fields, b.rec)).join(" · ")}</span>}</span>
+                  {h > 90 && <span className="tgrid-time">{fmt(c.start)} – {fmt(c.end)}</span>}
+                  {h > 34 && <span className="tgrid-stack-titles" style={{ WebkitLineClamp: Math.max(1, Math.floor((h - 26 - (h > 90 ? 15 : 0)) / 14)) }}>{c.items.map((b) => recordTitle(fields, b.rec)).join(" · ")}</span>}
                 </button>
               );
             })}
-            {blocks.filter((b) => !clusters.some((c) => c.lanes > maxLanes && c.items.includes(b))).map((b) => {
+            {blocks.map((b) => {
               const d = drag?.key === b.key ? drag : null;
               const top = ((b.start.getHours() * 60 + b.start.getMinutes()) / 60) * HOUR + (d?.mode === "move" ? d.dMin / 60 * HOUR : 0);
-              let h = Math.max(((+b.end - +b.start) / 3600000) * HOUR, 18);
+              let h = Math.max(((+b.end - +b.start) / 3600000) * HOUR, MIN_H);
               if (d?.mode === "resize") h = Math.max(h + d.dMin / 60 * HOUR, SNAP / 60 * HOUR);
               const col = b.col + (d?.mode === "move" ? d.dDay : 0);
               const c = color(b.rec);
               return (
                 <div key={`${b.key}:${b.col}`} className={`tgrid-block ${d ? "dragging" : ""}`} title={recordTitle(fields, b.rec)}
-                  style={{ top, height: h - 2, left: `calc(${col} * 100% / var(--days) + ${b.lane} * (100% / var(--days)) / ${b.lanes} + 2px)`,
-                    width: `calc((100% / var(--days)) / ${b.lanes} - 4px)`, background: `color-mix(in srgb, ${c} 18%, var(--bg))`, borderLeftColor: c }}
+                  style={{ top, height: h - 2, ...(d?.mode === "move" ? place(col, 0, 1, 1) : place(col, b.lane, b.lanes, b.span)), background: `color-mix(in srgb, ${c} 18%, var(--bg))`, borderLeftColor: c }}
                   onPointerDown={(e) => startDrag(e, b, "move")}
                   onClick={(e) => { if ((e.nativeEvent as PointerEvent).pointerType === "touch") ops.open(b.rec); }}>
                   <span className="tgrid-title">{recordTitle(fields, b.rec)}</span>
