@@ -429,7 +429,8 @@ def test_phone_navigation_and_editing(browser, table_user):
     expect(pg.locator(".sidebar.open")).to_have_count(0)    # the drawer closes after choosing
     pg.click(".menu-btn")
     pg.click(".sidebar.open .side-name:has-text('Inventory')")
-    pg.locator(".phone-card").filter(has_text="Lamp").click()             # a table on a phone: a card per record
+    pg.click(".phone-switch button:has-text('Cards')")                    # a table on a phone as a card per record
+    pg.locator(".phone-card").filter(has_text="Lamp").click()
     notes = pg.locator(".modal .form-row").filter(has_text="Notes").locator("textarea, input").first
     notes.fill("From my phone")
     notes.press("Tab")

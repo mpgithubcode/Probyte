@@ -1141,7 +1141,7 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
   border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--accent) 10%, var(--bg)); color: var(--accent);
   font-weight: 600; pointer-events: none; }
 .storage-badge { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.link-upload { margin-top: 6px; width: 100%; justify-content: center; }
+.link-upload { justify-content: flex-start; }
 .storage-form { gap: 10px; }
 
 /* ---------------------------------------------------------------- full-screen file viewer (files tables, attachments) */
@@ -1820,10 +1820,9 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
   .view-options-more { display: inline-flex; }
   .view-options:not(.open) .view-options-more ~ * { display: none; }
   .view-options .tool-sep { display: none; }
-  /* a board: its columns one under another */
-  .kanban { flex-direction: column; align-items: stretch; overflow-x: visible; overflow-y: auto; }
-  .kanban-col { width: auto; max-height: none; }
-  .kanban-cards { overflow: visible; }
+  /* a board: its columns side by side, swiped through one at a time */
+  .kanban { overflow-x: auto; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+  .kanban-col { width: min(82vw, 320px); flex: none; scroll-snap-align: start; }
 }
 
 /* ---------------------------------------------------------------- calendar: several events at once */
@@ -1963,7 +1962,8 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .link-pick-table .pick-check { width: 22px; padding-right: 0; color: var(--accent); font-weight: 700; }
 .link-pick-table .pick-title { font-weight: 500; max-width: 260px; }
 .link-pick-table td .chips { flex-wrap: nowrap; }
-.link-pick-create { width: 100%; margin-top: 4px; gap: 6px; }
+.link-pick-create { width: 100%; gap: 6px; color: var(--accent); font-weight: 500; }
+.link-pick-create b { color: var(--text); }
 @media (max-width: 640px) {
   .link-pick-table td:nth-child(n+4), .link-pick-table th:nth-child(n+4) { display: none; }   /* a phone: the title and one column */
 }
@@ -2013,3 +2013,17 @@ textarea.file-text { min-height: 40vh; resize: vertical; width: 100%; box-sizing
 .grid td .link-chip, .cell-content .link-chip { flex: none; max-width: 260px; }
 .grid td .link-chip-title, .cell-content .link-chip-title { flex: none; max-width: 160px; }
 .grid td .link-chip-fields, .cell-content .link-chip-fields { flex: 0 1 auto; overflow: hidden; }
+
+/* ---------------------------------------------------------------- on a phone: what scrolls sideways and what fits
+   Data views (a table, a board, a list, a timeline) scroll sideways inside their own box; the page around them never
+   does. A record, a page and every settings window fit the screen's width: what's wide inside them (a table of linked
+   records, a mapping, code) scrolls in its own box. */
+html, body { overflow-x: hidden; }
+@media (max-width: 760px) {
+  .page-body { min-width: 0; max-width: 100vw; }
+  .grid-wrap, .grid-scroll, .list-view, .tl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+  .modal, .record-modal, .docked-panel, .page-view, .settings, .popover { max-width: 100vw; }
+  .modal-body, .page-scroll, .settings-body, .record-modal .form, .record-modal .form-row, .record-modal .form-input { min-width: 0; max-width: 100%; overflow-x: clip; }
+  .modal-body > *, .page-scroll > *, .record-modal .form-input > * { max-width: 100%; min-width: 0; }
+  .modal-body pre, .modal-body table, .page-scroll table, .modal-body .mapping-wrap { display: block; max-width: 100%; overflow-x: auto; }
+}

@@ -78,8 +78,8 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [openRec, setOpenRec] = useState<string | null>(null);
   const narrow = useNarrow();
   // a table view on a phone: cards (the default) or the full table, as this device last chose
-  const [phoneGrid, setPhoneGridState] = useState<"cards" | "table">(() => { try { return localStorage.getItem("probyte.phoneGrid") === "table" ? "table" : "cards"; } catch { return "cards"; } });
-  const setPhoneGrid = (v: "cards" | "table") => { setPhoneGridState(v); try { localStorage.setItem("probyte.phoneGrid", v); } catch { /* private mode */ } };
+  const [phoneGrid, setPhoneGridState] = useState<"cards" | "table">(() => { try { return localStorage.getItem("probyte.phoneGrid.v2") === "cards" ? "cards" : "table"; } catch { return "table"; } });
+  const setPhoneGrid = (v: "cards" | "table") => { setPhoneGridState(v); try { localStorage.setItem("probyte.phoneGrid.v2", v); } catch { /* private mode */ } };
   const [openOcc, setOpenOcc] = useState<string | null>(null);  // a later repeat that was clicked
   const [fieldEdit, setFieldEdit] = useState<Field | null | undefined>(undefined);
   const [pendingCreate, setPendingCreate] = useState<{ data: Record<string, any>; open: boolean; choices: CreateTarget[] } | null>(null);

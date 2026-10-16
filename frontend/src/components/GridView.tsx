@@ -109,7 +109,9 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
   // Frozen columns stay put while the table scrolls sideways. Their offsets are measured from the header, so
   // they're right whatever the column widths are (phones use narrower columns).
   const headRow = useRef<HTMLTableRowElement>(null);
-  const frozenIds = visible.slice(0, Math.max(0, view.config.frozen ?? 0)).map((f) => f.id);
+  const narrow = useNarrow();
+  // (on a phone the title column stays put while the rest scrolls sideways, unless the view says otherwise)
+  const frozenIds = visible.slice(0, Math.max(0, view.config.frozen ?? (narrow ? 1 : 0))).map((f) => f.id);
   const [lefts, setLefts] = useState<Record<string, number>>({});
   useLayoutEffect(() => {
     const ths = headRow.current ? [...headRow.current.children] as HTMLElement[] : [];
@@ -125,7 +127,6 @@ export function GridView({ ds, view, fields, visible, records, allRecords, ops, 
   // A column can be narrower than what's in it: the text is cut off with "…".
   const [liveWidth, setLiveWidth] = useState<{ id: string; w: number } | null>(null);
   const resizing = useRef(false);
-  const narrow = useNarrow();
   const widthOf = (f: Field) => (liveWidth?.id === f.id ? liveWidth.w : view.config.columnWidths?.[f.id] ?? (narrow ? 150 : WIDTHS[f.type] ?? 200));
   // the table is exactly as wide as its columns (an explicit width: otherwise the browser widens columns to fit their text)
   const tableWidth = (narrow ? 46 : 64) + visible.reduce((n, f) => n + widthOf(f), 0) + 48;

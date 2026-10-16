@@ -551,7 +551,7 @@ function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputPr
     let live = true;
     const t = setTimeout(() => {
       api.get<PickData>(`/tables/${tid}/pick?field=${encodeURIComponent(field.id)}&q=${encodeURIComponent(q.trim())}&limit=100`)
-        .then((d) => { if (live) { setData(d); setActive(0); } })
+        .then((d) => { if (live) { setData(d); setActive(-1); } })
         .catch((e) => { if (live) { setErr((e as Error).message); setData({ fields: [], records: [], total: 0, refs: { records: {}, users: {} }, can_add: false, primary: null }); } });
     }, data ? 150 : 0);
     return () => { live = false; clearTimeout(t); };
@@ -580,14 +580,17 @@ function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputPr
     } catch (e) { setErr((e as Error).message); }
     setBusy(false);
   };
+  // "Create …" comes first, then the records; until arrows move, the first record is the one Enter picks (else Create)
+  const offset = canCreate ? 1 : 0;
+  const at = active < 0 ? (rows.length ? offset : 0) : active;
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    const n = rows.length + (canCreate ? 1 : 0);
-    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(n - 1, a + 1)); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
+    const n = rows.length + offset;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive(Math.min(n - 1, at + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(Math.max(0, at - 1)); }
     else if (e.key === "Enter") {
       e.preventDefault();
-      if (active < rows.length && rows[active]) toggle(rows[active]);
-      else if (canCreate) create();
+      if (canCreate && at === 0) create();
+      else if (rows[at - offset]) toggle(rows[at - offset]);
     }
   };
   // linked to a files table: upload files into it and link them
@@ -630,6 +633,22 @@ function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputPr
           className="link-pick-popover">
           <input className="input" autoFocus placeholder={data?.can_add && !field.readonly ? "Search or create…" : "Search records…"} value={q}
             onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} />
+          {/* first, before the records: a new one (named as typed) or new files */}
+          {field.options._filesTable && !field.readonly && (
+            <>
+              <input ref={fileRef} type="file" multiple={!single} hidden onChange={(e) => uploadAndLink(e.target.files)} />
+              <button type="button" className="menu-item link-pick-create link-upload" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                <Icon name="upload" size={14} /> {uploading ? "Uploading…" : single ? "Upload a new file and link it" : "Upload new files and link them"}
+              </button>
+              {upErr && <div className="error small">{upErr}</div>}
+            </>
+          )}
+          {canCreate && (
+            <button type="button" className={`menu-item link-pick-create ${at === 0 ? "active" : ""}`} disabled={busy}
+              onMouseEnter={() => setActive(0)} onClick={create}>
+              <Icon name="plus" size={14} /> {busy ? "Creating…" : <>Create <b>{typed}</b>{single ? "" : " and link it"}</>}
+            </button>
+          )}
           <div className="link-pick-table-wrap" onClick={(e) => e.stopPropagation()}>
             {data === null ? <div className="muted pad">Loading…</div> : (
               <table className="link-pick-table">
@@ -641,7 +660,7 @@ function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputPr
                     {rows.map((r, i) => {
                       const on = ids.includes(r.id);
                       return (
-                        <tr key={r.id} className={`${on ? "on" : ""} ${i === active ? "active" : ""}`} onMouseEnter={() => setActive(i)}
+                        <tr key={r.id} className={`${on ? "on" : ""} ${i + offset === at ? "active" : ""}`} onMouseEnter={() => setActive(i + offset)}
                           onClick={() => toggle(r)} aria-selected={on}>
                           <td className="pick-check">{on ? "✓" : ""}</td>
                           <td className="pick-title">{r.title}</td>
@@ -654,24 +673,9 @@ function LinkInput({ field, value, onCommit, onDone, inline, asButton }: InputPr
               </table>
             )}
             {data !== null && !rows.length && !canCreate && <div className="muted pad">{typed ? "No matching records" : "No records yet"}</div>}
-            {canCreate && (
-              <button type="button" className={`menu-item link-pick-create ${active === rows.length ? "active" : ""}`} disabled={busy}
-                onMouseEnter={() => setActive(rows.length)} onClick={create}>
-                <Icon name="plus" size={14} /> {busy ? "Creating…" : <>Create <b>{typed}</b>{single ? "" : " and link it"}</>}
-              </button>
-            )}
             {data !== null && data.total > rows.length && <div className="muted small pad">Showing {rows.length} of {data.total}: type to narrow down</div>}
             {err && <div className="error small">{err}</div>}
           </div>
-          {field.options._filesTable && !field.readonly && (
-            <>
-              <input ref={fileRef} type="file" multiple={!single} hidden onChange={(e) => uploadAndLink(e.target.files)} />
-              <button className="btn sm link-upload" disabled={uploading} onClick={() => fileRef.current?.click()}>
-                <Icon name="upload" size={14} /> {uploading ? "Uploading…" : single ? "Upload a file…" : "Upload files…"}
-              </button>
-              {upErr && <div className="error small">{upErr}</div>}
-            </>
-          )}
         </Popover>
       )}
     </div>

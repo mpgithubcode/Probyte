@@ -77,10 +77,7 @@ def test_every_view_renders(browser, seeded, phone):
         open_view(pg, view, {"Grid": "Table"}.get(view, view))
         pg.wait_for_timeout(300)
         assert pg.evaluate(NO_SIDEWAYS), f"{view} scrolls sideways"
-        if phone:   # on a phone nothing scrolls sideways inside the page either (no wide table, board or timeline)
-            wide = pg.evaluate("""() => [...document.querySelectorAll('.page-body *')].filter(e => { const s = getComputedStyle(e);
-              return ['auto', 'scroll'].includes(s.overflowX) && e.scrollWidth > e.clientWidth + 2; }).map(e => e.className.toString())""")
-            assert not wide, f"{view}: {wide}"
+        # (on a phone a wide table, board, list or timeline scrolls sideways inside its own box; the page doesn't)
     assert pg.locator(".view-options .new-record-btn").count() == 1
     assert not errors, errors
 
@@ -165,4 +162,37 @@ def test_changes_appear_live_and_tables_reopen_from_memory(browser, seeded):
     pg.wait_for_selector("text=Added from a phone", timeout=3000)
     pg.wait_for_timeout(500)
     assert not loads, "reopening a table should use the copy in memory plus /changes"
+    assert not errors, errors
+
+
+FITS = """sel => [...document.querySelectorAll(sel)].filter(e => e.offsetWidth).every(e =>
+    e.scrollWidth <= e.clientWidth + 1 && e.getBoundingClientRect().right <= innerWidth + 1)"""
+
+
+def test_on_a_phone_views_scroll_sideways_but_records_pages_and_settings_fit(browser, seeded):
+    u, t = seeded
+    pg, errors = open_page(browser, seeded, True)
+    open_view(pg, "Board", "Board")
+    pg.wait_for_selector(".kanban-col")
+    assert pg.evaluate("() => { const k = document.querySelector('.kanban'); return k.scrollWidth > k.clientWidth + 20 }")  # swiped through
+    assert pg.evaluate(NO_SIDEWAYS)
+    open_view(pg, "Grid", "Table")
+    pg.wait_for_selector(".grid")                                         # a table on a phone: the table, scrolled sideways
+    assert pg.evaluate("() => { const g = document.querySelector('.grid-wrap'); return g.scrollWidth > g.clientWidth }")
+    assert pg.evaluate(NO_SIDEWAYS)
+    rec = u.records(t["id"])[0]
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rec['id']}")              # the record: fits
+    pg.wait_for_selector(".record-modal .form-row")
+    pg.wait_for_timeout(300)
+    assert pg.evaluate(FITS, ".record-modal, .record-modal .modal-body, .record-modal .form-row"), "the record is wider than the screen"
+    assert pg.evaluate(NO_SIDEWAYS)
+    pg.keyboard.press("Escape")
+    # its page: fits
+    u.j("PATCH", f"/tables/{t['id']}", json={"page": {"enabled": True}})
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={rec['id']}")
+    pg.wait_for_selector(".page-view")
+    pg.wait_for_timeout(300)
+    assert pg.evaluate(FITS, ".page-view, .page-scroll"), "the page is wider than the screen"
+    u.j("PATCH", f"/tables/{t['id']}", json={"page": {"enabled": False}})
     assert not errors, errors

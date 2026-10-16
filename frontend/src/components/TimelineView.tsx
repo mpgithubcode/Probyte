@@ -15,6 +15,7 @@ const SCALES: Record<Scale, { px: number; days: number; step: number; label: str
 };
 
 /** Days on the screen at once on a phone, for each scale. */
+const FIT_ON_PHONE = false;
 const FIT_DAYS: Record<Scale, number> = { day: 7, week: 28, month: 120 };
 
 const ROW_H = 36;
@@ -38,7 +39,8 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
   const dragRef = useRef<Drag | null>(null);
   const win = useVirtualRows(records.length, ROW_H, HEADER_H);
   const narrow = useNarrow();
-  // on a phone the dates fit the screen (no sideways scrolling: ‹ › page through them); titles are beside the bars
+  // (a "fit" layout, dates squeezed to the screen with ‹ › paging, is kept for narrow boxes that can't scroll; a phone
+  // scrolls the timeline sideways like any wide view, its titles in a narrower column)
   const [boxW, setBoxW] = useState(0);
   useLayoutEffect(() => {
     const el = win.el;
@@ -48,7 +50,7 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
     setBoxW(el.clientWidth);
     return () => ro.disconnect();
   }, [win.el, narrow]);
-  const fit = narrow && boxW > 0;
+  const fit = FIT_ON_PHONE && narrow && boxW > 0;
   const S = fit ? { ...SCALES[scale], days: FIT_DAYS[scale], step: Math.ceil(FIT_DAYS[scale] / 2), px: (boxW - 2) / FIT_DAYS[scale] } : SCALES[scale];
   const TITLE_W = fit ? 0 : narrow ? 130 : 240;
   const width = S.days * S.px;
