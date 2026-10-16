@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { loadExtensions, type ExtensionInfo } from "../extensions";
 import { tk } from "../extensions/takeoff/tk";
@@ -48,12 +48,16 @@ export function ExtensionsSettings({ admin }: { admin: boolean }) {
 function TakeoffSettings() {
   const [st, setSt] = useState<{ inherit: string[] | null; fields: string[] } | null>(null);
   const [err, setErr] = useState("");
+  const saves = useRef(0);
   useEffect(() => { tk.settings().then(setSt).catch((x) => setErr(x.message)); }, []);
   if (!st) return err ? <div className="error">{err}</div> : null;
   const save = (inherit: string[] | null) => {
     setErr("");
     setSt({ ...st, inherit });
-    tk.saveSettings(inherit).then(setSt).catch((x) => { setErr(x.message); tk.settings().then(setSt); });
+    // (only the latest save's answer counts: an earlier one arriving late mustn't undo a change made since)
+    const n = ++saves.current;
+    tk.saveSettings(inherit).then((r) => { if (n === saves.current) setSt(r); })
+      .catch((x) => { if (n !== saves.current) return; setErr(x.message); tk.settings().then(setSt); });
   };
   const chosen = new Set(st.inherit ?? st.fields);
   return (

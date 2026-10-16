@@ -354,7 +354,7 @@ def core_meta(token: str, cookie: str | None) -> dict:
         s = _load(conn, token)
         unlocked = _ok(s, cookie)
         items = _items(conn, s) if unlocked else []
-    base = conn.execute("SELECT name FROM bases WHERE id = %s", (s["base_id"],)).fetchone() if s.get("whole_base") else None
+        base = conn.execute("SELECT name FROM bases WHERE id = %s", (s["base_id"],)).fetchone() if s.get("whole_base") else None
     return {"name": s["name"], "color": s["color"], "permissions": effective(s["permissions"]), "needs_password": not unlocked,
             "whole_base": bool(s.get("whole_base")), "base_name": base["name"] if base else None,
             "items": [{"kind": i["kind"], "id": i["id"], "name": i["name"], "table_kind": i["table_kind"],

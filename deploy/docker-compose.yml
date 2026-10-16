@@ -9,8 +9,16 @@
 # PUBLIC_URL, ALLOW_SIGNUP, BACKUP_INTERVAL…  Upgrade: docker compose pull && docker compose up -d
 # Phones sync calendars and contacts through Probyte's own address (no extra port).
 
+# Logs are rotated (10 MB × 5 per service) so months of requests don't fill the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   probyte:
+    logging: *logging
     image: mpgithubcode/probyte:${PROBYTE_VERSION:-latest}
     restart: unless-stopped
     ports:
@@ -31,6 +39,7 @@ services:
         condition: service_healthy
 
   db:
+    logging: *logging
     image: postgres:16-alpine
     restart: unless-stopped
     # makes a random database password on the first start, shared with Probyte through the "secrets" volume
@@ -50,6 +59,7 @@ services:
 
   # Shows Word / PowerPoint files page by page in files tables. Not needed? Delete these lines.
   office:
+    logging: *logging
     image: mpgithubcode/probyte-office:${PROBYTE_VERSION:-latest}
     restart: unless-stopped
     mem_limit: 1g

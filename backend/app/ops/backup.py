@@ -9,7 +9,8 @@ keeping the newest BACKUP_KEEP. Each backup is a folder in BACKUP_DIR:
         attachments.tar.gz   uploaded files
         manifest.json        when, sizes, database migrations
 
-Point BACKUP_DIR at a disk that isn't the server's own (or copy the folders off it) to survive a lost server.
+Point BACKUP_DIR at a disk that isn't the server's own, or set up a copy to a storage (S3, WebDAV; see the end of
+this file), to survive a lost server.
 The encryption key for stored passwords (secretbox.py) is not included: keep it with your .env.
 Restore with `python -m app.admin restore <name>` while the app is stopped (see README).
 """
@@ -98,6 +99,9 @@ def run_backup() -> dict:
         raise
     prune()
     log.info("backup %s done in %.1fs (%d bytes)", name, manifest["seconds"], manifest["total"])
+    with connection() as conn:
+        if copy_settings(conn):   # and a copy off this disk, when one is set up
+            jobs.enqueue(conn, "backup_copy", {"name": name}, key="backup_copy", max_attempts=4)
     return {"name": name, **manifest}
 
 
@@ -148,3 +152,86 @@ def restore(name: str):
             shutil.rmtree(child) if child.is_dir() else child.unlink()
         with tarfile.open(src / archive) as tar:
             tar.extractall(dest, filter="data")
+
+
+# ======================================================================== a copy of each backup off this disk
+#
+# Backups in BACKUP_DIR are on the server's own disk: a lost disk takes them with the data. With a copy set up
+# (Settings → Backups), each new backup is also uploaded to one of the admin's storages (an S3 bucket, a WebDAV
+# folder), into <prefix><backup name>/, and the newest `keep` there are kept.
+
+COPY_KEY, COPY_STATUS = "backup_copy", "backup_copy_status"
+
+
+def _setting(conn, key):
+    row = conn.execute("SELECT value FROM app_settings WHERE key = %s", (key,)).fetchone()
+    try:
+        return json.loads(row["value"]) if row else None
+    except ValueError:
+        return None
+
+
+def copy_settings(conn) -> dict | None:
+    """{"storage_id", "prefix", "keep"} or None."""
+    s = _setting(conn, COPY_KEY)
+    return s if s and s.get("storage_id") else None
+
+
+def copy_status(conn) -> dict | None:
+    """The last copy: {"name", "at", "ok", "error", "seconds"}."""
+    return _setting(conn, COPY_STATUS)
+
+
+def save_copy_settings(conn, storage_id: str | None, prefix: str, keep: int):
+    if not storage_id:
+        conn.execute("DELETE FROM app_settings WHERE key = %s", (COPY_KEY,))
+        return None
+    from app.blobs.filestore import norm_prefix
+    value = {"storage_id": str(storage_id), "prefix": norm_prefix(prefix or "probyte-backups"), "keep": max(1, min(int(keep or KEEP), 365))}
+    conn.execute("INSERT INTO app_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                 (COPY_KEY, json.dumps(value)))
+    return value
+
+
+def _copy_driver(conn, cfg):
+    from app.blobs.filestore import driver
+    st = conn.execute("SELECT * FROM storages WHERE id = %s", (cfg["storage_id"],)).fetchone()
+    return driver(dict(st) if st else None, cfg["prefix"])
+
+
+def copy_backup(name: str) -> dict:
+    """Upload one backup's files to the copy's storage, then keep only the newest there."""
+    with connection() as conn:
+        cfg = copy_settings(conn)
+        if not cfg:
+            return {}
+        drv = _copy_driver(conn, cfg)
+    folder = BACKUP_DIR / name
+    if not folder.is_dir():
+        raise RuntimeError(f"No backup {name} to copy")
+    started, status = time.time(), {"name": name, "at": datetime.now(timezone.utc).isoformat(), "ok": False}
+    try:
+        files = sorted(folder.iterdir(), key=lambda f: f.name == "manifest.json")   # the manifest last: a complete copy has one
+        for f in files:
+            with f.open("rb") as fh:
+                drv.put(f"{name}/{f.name}", fh, "application/json" if f.suffix == ".json" else "application/octet-stream")
+        # the newest `keep` complete copies stay (each one's folder named probyte-<date>)
+        names = sorted({o["path"].split("/")[0] for o in drv.list() if o["path"].startswith(PREFIX) and "/" in o["path"]}, reverse=True)
+        for old in names[cfg["keep"]:]:
+            for o in [o for o in drv.list() if o["path"].startswith(old + "/")]:
+                drv.delete(o["path"])
+        status.update(ok=True, seconds=round(time.time() - started, 1), copies=min(len(names), cfg["keep"]))
+    except Exception as e:
+        status.update(error=str(e)[:500])
+        raise
+    finally:
+        with connection() as conn:
+            conn.execute("INSERT INTO app_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                         (COPY_STATUS, json.dumps(status)))
+    log.info("backup %s copied off the server in %.1fs", name, status.get("seconds", 0))
+    return status
+
+
+@jobs.handler("backup_copy")
+def _job_backup_copy(payload):
+    copy_backup(payload["name"])

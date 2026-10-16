@@ -2027,3 +2027,8 @@ html, body { overflow-x: hidden; }
   .modal-body > *, .page-scroll > *, .record-modal .form-input > * { max-width: 100%; min-width: 0; }
   .modal-body pre, .modal-body table, .page-scroll table, .modal-body .mapping-wrap { display: block; max-width: 100%; overflow-x: auto; }
 }
+
+.backup-copy { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; }
+.backup-copy-form { display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 8px; align-items: end; }
+.backup-copy-form .row { grid-column: 1 / -1; gap: 8px; }
+@media (max-width: 640px) { .backup-copy-form { grid-template-columns: 1fr; } }

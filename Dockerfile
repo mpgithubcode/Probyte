@@ -23,5 +23,6 @@ COPY docker ./docker
 COPY --from=frontend /src/dist ./static
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
 EXPOSE 8000
+HEALTHCHECK --interval=60s --timeout=15s --start-period=120s --start-interval=5s --retries=3 CMD ["python", "/app/docker/healthcheck.py"]
 # --proxy-headers: trust X-Forwarded-Proto from the reverse proxy (for Secure cookies)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

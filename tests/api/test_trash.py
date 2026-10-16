@@ -79,3 +79,33 @@ def test_change_feed_sees_a_restored_record_as_present(user):
     user.j("POST", "/trash/records/restore", json={"ids": [r["id"]]})
     ch = user.j("GET", f"/tables/{t['id']}/changes", params={"since": tok})
     assert r["id"] in {x["id"] for x in ch["records"]} and r["id"] not in ch["deleted"]
+
+
+def test_a_trashed_records_files_are_kept_until_the_trash_is_emptied(user):
+    """The cleanup of unused uploads leaves the files of records in the trash alone: restored, they're still there."""
+    import os
+    import time
+    import psycopg
+    t = user.table(name="With files")
+    F = user.fields(t["id"])
+    att = user.j("POST", f"/tables/{t['id']}/fields", json={"name": "Photo", "type": "attachment"})
+    up = user.post(API + "/attachments", files={"file": ("site.txt", b"site photo notes", "text/plain")}).json()
+    stray = user.post(API + "/attachments", files={"file": ("stray.txt", b"nobody's", "text/plain")}).json()
+    r = user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Mill St", att["id"]: [up]}})
+    user.delete(API + f"/records/{r['id']}")                                       # to the trash
+    try:
+        conn = psycopg.connect(os.environ.get("BENCH_DB", "postgresql://probyte:probyte-test@db:5432/probyte"), autocommit=True)
+    except Exception:
+        import pytest
+        pytest.skip("no database access")
+    conn.execute("UPDATE attachments SET created_at = now() - interval '3 hours' WHERE id = ANY(%s::uuid[])", ([up["id"], stray["id"]],))
+    conn.execute("INSERT INTO jobs (kind, payload) VALUES ('attachments_gc', '{}')")
+    conn.execute("NOTIFY probyte_jobs")
+    for _ in range(60):                                                          # the cleanup ran: the stray upload is gone
+        if user.get(API + f"/attachments/{stray['id']}").status_code == 404:
+            break
+        time.sleep(0.5)
+    assert user.get(API + f"/attachments/{stray['id']}").status_code == 404
+    user.j("POST", "/trash/records/restore", json={"ids": [r["id"]]})
+    got = user.get(API + f"/attachments/{up['id']}")
+    assert got.status_code == 200 and got.content == b"site photo notes"

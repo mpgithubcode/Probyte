@@ -25,7 +25,14 @@ DATABASE_URL = _database_url()
 
 # A sync holds two connections while it runs (its per-table lock, and its work), so the worker sizes this to its threads.
 POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))
-pool = ConnectionPool(DATABASE_URL, kwargs={"row_factory": dict_row}, open=False, min_size=1, max_size=POOL_SIZE)
+# Durable over months of uptime: a connection is checked before it's handed out (after a database restart, a dead one
+# is replaced instead of failing a request), connections are renewed hourly, and a transaction left idle (a request
+# that died mid-way) is ended by the database after 30 minutes rather than holding its locks for ever.
+IDLE_TX_SECONDS = int(os.environ.get("DB_IDLE_TRANSACTION_SECONDS", "1800"))
+pool = ConnectionPool(DATABASE_URL, open=False, min_size=1, max_size=POOL_SIZE, check=ConnectionPool.check_connection,
+                      max_lifetime=3600, max_idle=600, timeout=30,
+                      kwargs={"row_factory": dict_row, "application_name": "probyte",
+                              "options": f"-c idle_in_transaction_session_timeout={IDLE_TX_SECONDS * 1000}"})
 
 
 def init_db() -> None:

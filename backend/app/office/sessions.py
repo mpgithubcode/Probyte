@@ -23,7 +23,7 @@ log = logging.getLogger("probyte.office")
 TOKEN_DAYS = 7
 
 
-def doc_key(base: str, n: int) -> str:
+def doc_key(base: str, n) -> str:
     """The Document Server's document key: base (the file's version) and a counter."""
     return re.sub(r"[^0-9A-Za-z_-]", "", f"{base}-{n}")[:120]
 
@@ -38,9 +38,8 @@ def pick_key(conn, record_id, base: str) -> str:
                         (record_id, base + "-%")).fetchone()
     if live:
         return live["doc_key"]
-    n = conn.execute("SELECT count(*) AS n FROM office_sessions WHERE record_id = %s AND doc_key LIKE %s",
-                     (record_id, base + "-%")).fetchone()["n"]
-    return doc_key(base, n)
+    # (a random suffix, not a count of earlier sessions: old sessions are cleaned up, and a count would then repeat)
+    return doc_key(base, secrets.token_hex(5))
 
 
 def settings_stamp(cfg: dict) -> str:
@@ -271,3 +270,9 @@ def handle_callback(token: str, auth_header: str, body: dict) -> dict:
         with connection() as conn:
             conn.execute("UPDATE office_sessions SET closed_at = now() WHERE doc_key = %s AND closed_at IS NULL", (s["doc_key"],))
     return {"error": 0}
+
+
+def prune(conn):
+    """Editing sessions closed (or left open) over 30 days ago: nothing needs them (their keys are never reused)."""
+    conn.execute("DELETE FROM office_sessions WHERE created_at < now() - interval '30 days' "
+                 "AND (closed_at IS NOT NULL OR created_at < now() - interval '60 days')")

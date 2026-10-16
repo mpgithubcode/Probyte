@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
+import { api, onFlush, track as trackWrite } from "../api";
 import type { Attachment, Base, CreateTarget, Dataset, Field, PageLayout, Rec, Refs, TableInfo, User, View, ViewConfig, ViewType } from "../types";
 import { applyView, choiceColor, formatDate, countConditions, debounce, viewFilter, hiddenIds, isEditable, linkCan, mergeRefs, nativeKind, orderFields, recordTitle, timeAgo, withDisplayNames } from "../util";
 import { FieldsContext, FileOpenContext, RefsContext, invalidateTitles } from "./Cells";
@@ -201,15 +201,16 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
     pendingView.current = null;
     savingView.current = p;
     // keepalive lets the request finish even when the page is being closed or reloaded.
-    fetch(`/api/views/${p.vid}`, {
+    trackWrite(fetch(`/api/views/${p.vid}`, {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: p.config }), keepalive: true,
     }).then((r) => { if (!r.ok) onError("Could not save view settings"); }).catch(() => undefined)
-      .finally(() => { if (savingView.current === p) savingView.current = null; });
+      .finally(() => { if (savingView.current === p) savingView.current = null; }));
   }, [onError]);
   const saveView = useMemo(() => debounce(flushView, 400), [flushView]);
   useEffect(() => {
     window.addEventListener("pagehide", flushView);
-    return () => { window.removeEventListener("pagehide", flushView); flushView(); };
+    const off = onFlush(flushView);
+    return () => { off(); window.removeEventListener("pagehide", flushView); flushView(); };
   }, [flushView]);
 
   const setConfig = (patch: Partial<ViewConfig>) => {

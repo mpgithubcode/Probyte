@@ -28,6 +28,7 @@ from app.sharing import links as shares
 from app.web import admin, records, tables, templates, views, workspace
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("probyte")
 
 
 @asynccontextmanager
@@ -112,6 +113,64 @@ async def cors(request: Request, call_next):
 def _bad_id(request: Request, exc):
     # Malformed UUIDs in the URL: treat like any other missing object.
     return JSONResponse({"detail": "Not found"}, status_code=404)
+
+
+# What the database refuses reads as a clear answer, not "Internal Server Error" (the change was rolled back)
+@app.exception_handler(psycopg.errors.UniqueViolation)
+def _duplicate(request: Request, exc):
+    log.warning("unique violation on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse({"detail": "That already exists (something with the same name or key). Nothing was changed."}, status_code=409)
+
+
+@app.exception_handler(psycopg.errors.IntegrityError)
+def _integrity(request: Request, exc):
+    log.warning("integrity error on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse({"detail": "That change would leave the data inconsistent (something it refers to is missing). "
+                                   "Nothing was changed."}, status_code=400)
+
+
+@app.exception_handler(psycopg.errors.DataError)
+def _bad_value(request: Request, exc):
+    log.warning("data error on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse({"detail": "A value doesn't fit (too large, or not the right kind). Nothing was changed."}, status_code=400)
+
+
+@app.exception_handler(psycopg.errors.QueryCanceled)
+@app.exception_handler(psycopg.errors.LockNotAvailable)
+@app.exception_handler(psycopg.OperationalError)
+def _busy(request: Request, exc):
+    log.warning("database busy on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse({"detail": "The database is busy or restarting. Try again in a moment."}, status_code=503,
+                        headers={"Retry-After": "5"})
+
+
+@app.get("/api/health", include_in_schema=False)
+def health():
+    """For Docker's health check and monitoring: the database answers, and background jobs aren't stuck (the oldest
+    job that's due has waited under 15 minutes). 503 when not."""
+    try:
+        with connection() as conn:
+            r = conn.execute("SELECT EXTRACT(EPOCH FROM now() - min(run_at)) AS waited, count(*) AS due FROM jobs "
+                             "WHERE NOT failed AND locked_until IS NULL AND run_at <= now()").fetchone()
+    except Exception as e:
+        return JSONResponse({"ok": False, "database": False, "error": str(e)[:200]}, status_code=503)
+    waited = float(r["waited"] or 0)
+    ok = waited < 900
+    return JSONResponse({"ok": ok, "database": True, "jobs_due": r["due"], "oldest_due_seconds": round(waited)},
+                        status_code=200 if ok else 503)
+
+
+MAX_BODY = int(os.environ.get("MAX_REQUEST_MB", "100")) * 1024 * 1024   # anything but file uploads (they have their own limit)
+
+
+@app.middleware("http")
+async def body_limit(request: Request, call_next):
+    """A request body larger than any the app sends (a runaway script, a mistake) is refused before it's read."""
+    n = request.headers.get("content-length")
+    if n and n.isdigit() and int(n) > MAX_BODY and not request.headers.get("content-type", "").startswith("multipart/") \
+            and request.method in ("POST", "PUT", "PATCH") and request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": f"The request is larger than {MAX_BODY // (1024 * 1024)} MB"}, status_code=413)
+    return await call_next(request)
 
 
 

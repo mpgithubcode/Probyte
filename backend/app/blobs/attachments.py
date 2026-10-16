@@ -91,12 +91,17 @@ def serve(conn, user_id, attachment_id, download: bool):
 def collect_garbage(conn, grace_hours: int = 1) -> int:
     """Delete uploads no record refers to any more (older than the grace period, so files that were
     just uploaded and not yet saved into a record are left alone). Returns how many were removed."""
+    # (a record in the trash still holds its files: restored within its 30 days, it gets them back)
     rows = conn.execute(
         """
         SELECT a.id FROM attachments a
         WHERE a.created_at < now() - make_interval(hours => %s)
           AND NOT EXISTS (
               SELECT 1 FROM records r JOIN tables t ON t.id = r.table_id
+              WHERE (t.user_id = a.user_id OR t.base_id IN (SELECT base_id FROM base_members m WHERE m.user_id = a.user_id))
+                AND jsonb_path_exists(r.data, '$.*[*] ? (@.id == $id)', jsonb_build_object('id', a.id::text)))
+          AND NOT EXISTS (
+              SELECT 1 FROM record_trash r JOIN tables t ON t.id = r.table_id
               WHERE (t.user_id = a.user_id OR t.base_id IN (SELECT base_id FROM base_members m WHERE m.user_id = a.user_id))
                 AND jsonb_path_exists(r.data, '$.*[*] ? (@.id == $id)', jsonb_build_object('id', a.id::text)))
         """,

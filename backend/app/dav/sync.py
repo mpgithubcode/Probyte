@@ -80,6 +80,7 @@ def sync_table(table_id, full: bool = False) -> dict:
     with connection() as lock_conn:
         lock_conn.execute("SET statement_timeout = '120s'")
         lock_conn.execute("SELECT pg_advisory_lock(hashtext('sync:' || %s))", (table_id,))
+        lock_conn.commit()   # (the lock is the session's: no transaction stays open, idle, while the sync runs)
         try:
             stats = _sync(table_id, full)
             with connection() as conn:

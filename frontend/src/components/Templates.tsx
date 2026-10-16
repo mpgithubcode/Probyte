@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, settle } from "../api";
 import { Icon } from "./Icon";
 
 /** Templates: a table (fields, views, maybe records) or a view, as a JSON file that can be saved, downloaded,
@@ -92,6 +92,7 @@ export function TemplateActions({ kind, tableId, viewId, defaultName, records }:
   const save = async () => {
     setErr(""); setMsg("");
     try {
+      await settle();   // (a change just made to the view or table, still being saved, is in the template too)
       await api.post("/templates", { ...what, name: name.trim() || defaultName, description });
       setMsg(kind === "table" ? "Saved: it's offered under New table → From a template." : "Saved: it's offered in the “+” next to the view tabs.");
     } catch (e) { setErr((e as Error).message); }

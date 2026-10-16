@@ -530,6 +530,9 @@ A phone sends its changes at once. It checks for changes made in Probyte on its 
 | `BACKUP_INTERVAL`   | `24`    | Hours between automatic backups (`0` = off) |
 | `BACKUP_KEEP`       | `14`    | How many backups to keep |
 | `PROBYTE_SECRET_KEY` | –      | Key that encrypts stored account passwords; empty = a key file made on the `keys` volume on first start |
+| `MAX_REQUEST_MB`    | `100`   | Largest request body the API takes, other than file uploads (those have their own limits) |
+| `DB_POOL_SIZE`      | `10`    | Database connections the web app keeps (the worker sizes its own to its threads) |
+| `DB_IDLE_TRANSACTION_SECONDS` | `1800` | A transaction left open and idle this long (a request that died mid-way) is ended by the database, so it can't hold its locks for ever |
 
 ### Upgrading to 0.9
 
@@ -636,7 +639,11 @@ What's covered: every field type, formulas, links, lookups and rollups, type cha
 
 ### Backups
 
-The worker backs up the database (which holds the calendars and contacts) and uploaded files every `BACKUP_INTERVAL` hours into the `backups` volume (one folder per backup, the newest `BACKUP_KEEP` kept). The admin account sees them under **Settings → Backups**, with **Back up now** and a **Download** for each. Keep copies somewhere else too: download one now and then, or replace the `backups` volume in docker-compose.yml with a folder on another disk (`- /mnt/usb/probyte-backups:/backups`).
+The worker backs up the database (which holds the calendars and contacts) and uploaded files every `BACKUP_INTERVAL` hours into the `backups` volume (one folder per backup, the newest `BACKUP_KEEP` kept). The admin account sees them under **Settings → Backups**, with **Back up now** and a **Download** for each. Keep copies somewhere else too, so a lost disk doesn't take the backups with the data:
+- **Off this server** (Settings → Backups): choose one of your storages (an S3 bucket such as AWS, Backblaze B2, Cloudflare R2 or Wasabi, or a WebDAV folder such as Nextcloud or a NAS). Each new backup is uploaded there into its own folder, the newest you choose to keep are kept, and the panel shows how the last copy went. **Copy the latest now** tests it.
+- Or download one now and then, or replace the `backups` volume in docker-compose.yml with a folder on another disk (`- /mnt/usb/probyte-backups:/backups`).
+
+The panel warns when the last backup is older than it should be.
 
 ```bash
 docker compose exec worker python -m app.admin backup        # one now
@@ -658,6 +665,14 @@ docker compose exec app cat /keys/probyte.key
 ```
 
 Without it, a restored backup still has all your data, but external calendar accounts need their passwords entered again and phones need a new sync password.
+
+### Keeping it healthy
+
+- **Health check.** `GET /api/health` answers 200 when the database is reachable and background jobs aren't stuck (no due job waiting over 15 minutes), 503 otherwise; the image's Docker `HEALTHCHECK` uses it (a worker container checks its database connection), so `docker ps` shows *healthy* / *unhealthy*. Point an uptime monitor at it too.
+- **Logs are rotated** by the compose files (10 MB × 5 per service). If you run Probyte from your own compose file, add the same `logging:` options, or Docker keeps every request's log line for ever.
+- **What cleans itself up:** record history after 180 days, the trash after 30 days (files of records in the trash are kept until then), finished document-editing sessions after 30 days, expired invites, deletion markers phones no longer need, uploads no record uses, failed background jobs after a while, and values a type change kept aside after a year.
+- **Database connections** are checked before use (a database restart doesn't break requests), renewed hourly, and a transaction left idle is ended after `DB_IDLE_TRANSACTION_SECONDS`.
+- **Clear errors.** What the database refuses (a duplicate, a value too large, a busy database) comes back as a readable message with nothing half-done; the web app asks again by itself when it lost the network or the server was restarting (only for reads: a change is never sent twice).
 
 ### Forgotten password
 

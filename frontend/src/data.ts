@@ -14,7 +14,13 @@ const cache = new Map<string, Dataset>();
 const key = (kind: string, id: string) => `${kind}:${id}`;
 
 export const cached = (kind: "table" | "combo", id: string) => cache.get(key(kind, id));
-export const remember = (ds: Dataset) => { cache.set(key(ds.kind, ds.id), ds); };
+const KEEP_DATASETS = 12;   // a tab open for days: the tables opened most recently stay, older ones load again when opened
+export const remember = (ds: Dataset) => {
+  const k = key(ds.kind, ds.id);
+  cache.delete(k);           // (a Map keeps insertion order: re-adding makes it the newest)
+  cache.set(k, ds);
+  while (cache.size > KEEP_DATASETS) cache.delete(cache.keys().next().value as string);
+};
 export const forget = (kind: "table" | "combo", id: string) => { cache.delete(key(kind, id)); };
 
 export async function loadDataset(kind: "table" | "combo", id: string): Promise<Dataset> {

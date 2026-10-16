@@ -1,5 +1,13 @@
+# Logs are rotated (10 MB × 5 per service) so months of requests don't fill the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   db:
+    logging: *logging
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -15,6 +23,7 @@ services:
       retries: 20
 
   app:
+    logging: *logging
     build: .
     restart: unless-stopped
     environment: &probyte-env
@@ -53,6 +62,7 @@ services:
   # Background jobs: syncs with other calendar/files servers, webhook deliveries (with retries), previews, backups,
   # cleanup. Same image as app.
   worker:
+    logging: *logging
     build: .
     restart: unless-stopped
     command: ["python", "-m", "app.worker"]
@@ -69,6 +79,7 @@ services:
   # Converts Word, PowerPoint and OpenDocument files to PDF for previews in files tables (LibreOffice, no GUI).
   # Internal only. Not needed without files tables: remove it and set OFFICE_CONVERTER_URL= to turn previews of those off.
   office:
+    logging: *logging
     build: ./office
     restart: unless-stopped
     mem_limit: 1g

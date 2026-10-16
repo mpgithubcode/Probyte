@@ -52,11 +52,12 @@ export function FormulaEditor({ tableId, fieldId, fields, value, onChange }: {
   // Validate + preview on the server, debounced.
   useEffect(() => {
     if (!value.trim()) { setCheck(null); return; }
+    let live = true;   // (a slow answer for what was typed before doesn't replace the one for what's there now)
     const t = setTimeout(() => {
       api.post<Check>(`/tables/${tableId}/formula`, { expression: value, field_id: fieldId })
-        .then(setCheck).catch((e) => setCheck({ ok: false, error: e.message }));
+        .then((c) => { if (live) setCheck(c); }).catch((e) => { if (live) setCheck({ ok: false, error: e.message }); });
     }, 350);
-    return () => clearTimeout(t);
+    return () => { live = false; clearTimeout(t); };
   }, [value, tableId, fieldId]);
 
   // ---- autocomplete for the token at the caret

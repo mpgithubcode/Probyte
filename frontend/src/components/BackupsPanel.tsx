@@ -50,6 +50,11 @@ export function BackupsPanel() {
               <Icon name="sync" size={14} className={waiting !== null ? "spin" : ""} /> {waiting !== null ? "Backing up…" : "Back up now"}
             </button>
           </div>
+          {last && info.interval_hours > 0 && Date.now() - Date.parse(last.created_at) > info.interval_hours * 1.5 * 3600e3 && (
+            <div className="notice warn">The last backup is older than it should be ({timeAgo(last.created_at)}). Check that the worker is
+              running and has room on its disk, or press Back up now to see what happens.</div>
+          )}
+          <BackupCopy />
           <p className="muted small">
             Each backup holds the database, the calendars and contacts, and uploaded files. They're stored on this server
             ({info.dir}); download one now and then, or point the backup folder at another disk, to survive losing the server.
@@ -71,5 +76,76 @@ export function BackupsPanel() {
       )}
       {error && <div className="error">{error}</div>}
     </section>
+  );
+}
+
+interface CopyInfo {
+  settings: { storage_id: string; prefix: string; keep: number } | null;
+  status: { name: string; at: string; ok: boolean; error?: string; seconds?: number; copies?: number } | null;
+  storages: { id: string; name: string; kind: string }[];
+}
+
+/** A copy of each backup off this server's disk: to one of your storages (an S3 bucket, a WebDAV folder). */
+function BackupCopy() {
+  const [c, setC] = useState<CopyInfo | null>(null);
+  const [draft, setDraft] = useState<{ storage_id: string; prefix: string; keep: number }>({ storage_id: "", prefix: "probyte-backups", keep: 14 });
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const load = useCallback(() => api.get<CopyInfo>("/admin/backups/copy").then((x) => {
+    setC(x);
+    if (x.settings) setDraft({ storage_id: x.settings.storage_id, prefix: x.settings.prefix.replace(/\/$/, ""), keep: x.settings.keep });
+  }).catch((e) => setErr(e.message)), []);
+  useEffect(() => { load(); }, [load]);
+  if (!c) return null;
+  const save = async () => {
+    setErr(""); setMsg("");
+    try {
+      await api.put("/admin/backups/copy", { ...draft, storage_id: draft.storage_id || null });
+      setMsg(draft.storage_id ? "Saved: each new backup is copied there." : "Saved: backups stay on this server only.");
+      load();
+    } catch (e) { setErr((e as Error).message); }
+  };
+  const copyNow = async () => {
+    setErr(""); setMsg("");
+    try {
+      const r = await api.post<{ name: string }>("/admin/backups/copy");
+      setMsg(`Copying ${r.name}…`);
+      setTimeout(load, 4000);
+    } catch (e) { setErr((e as Error).message); }
+  };
+  return (
+    <div className="backup-copy">
+      <b>Off this server</b>
+      <p className="muted small">A copy of each backup on another disk survives losing this one. Choose one of your storages (the S3 buckets
+        and WebDAV folders set up for files tables): each backup goes into its own folder there, and the newest are kept.</p>
+      {!c.storages.length ? <p className="muted small">You have no storages yet: set one up with New table → Files.</p> : (
+        <div className="backup-copy-form">
+          <label className="stack">Copy to
+            <select className="input" value={draft.storage_id} onChange={(e) => setDraft({ ...draft, storage_id: e.target.value })}>
+              <option value="">Nowhere (only on this server)</option>
+              {c.storages.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.kind === "s3" ? "S3" : "WebDAV"})</option>)}
+            </select>
+          </label>
+          <label className="stack">In the folder
+            <input className="input" value={draft.prefix} onChange={(e) => setDraft({ ...draft, prefix: e.target.value })} />
+          </label>
+          <label className="stack">Keep the newest
+            <input className="input" type="number" min={1} max={365} value={draft.keep} onChange={(e) => setDraft({ ...draft, keep: Number(e.target.value) || 1 })} />
+          </label>
+          <div className="row">
+            <button className="btn sm primary" onClick={save}>Save</button>
+            {c.settings && <button className="btn sm" onClick={copyNow}>Copy the latest now</button>}
+          </div>
+        </div>
+      )}
+      {c.status && (
+        <div className={`small ${c.status.ok ? "muted" : "error"}`}>
+          {c.status.ok ? `Last copy: ${new Date(c.status.at).toLocaleString()} (${c.status.copies ?? 1} kept there)`
+            : `The last copy failed (${new Date(c.status.at).toLocaleString()}): ${c.status.error}`}
+        </div>
+      )}
+      {msg && <div className="success small">{msg}</div>}
+      {err && <div className="error small">{err}</div>}
+    </div>
   );
 }

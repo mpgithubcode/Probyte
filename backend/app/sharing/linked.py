@@ -386,7 +386,11 @@ def load(conn, table, force=False) -> dict:
         conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), tid))
         table["remote"] = link
     with _lock:
-        _cache[tid] = (time.time(), entry)
+        now = time.time()
+        _cache[tid] = (now, entry)
+        # copies nobody has looked at for a while (tables deleted, links no one opens) don't stay in memory
+        for k in [k for k, (at, _) in _cache.items() if now - at > 900]:
+            _cache.pop(k, None)
     return entry
 
 

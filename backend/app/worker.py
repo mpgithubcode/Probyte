@@ -19,6 +19,7 @@ from app.core.db import connection, init_db
 from app.data import audit
 from app.dav import radicale_import, sync
 from app.files import catalog as files  # noqa: F401
+from app.office import sessions as office_sessions
 from app.ops import backup
 from app.sharing import linked_base  # noqa: F401  (registers the linked bases' background check)
 from app.web.tables import purge_expired
@@ -46,6 +47,11 @@ def prune():
     with connection() as conn:
         audit.prune(conn)  # record history: 180 days
         automations.prune(conn)  # automation runs: 30 days
+        office_sessions.prune(conn)  # document editing sessions: 30 days
+        # values a type change kept aside: a year (the field's history shows them for 180 days anyway)
+        conn.execute("DELETE FROM field_value_backups WHERE created_at < now() - interval '365 days'")
+        conn.execute("DELETE FROM base_invites WHERE expires_at < now() - interval '30 days'")  # expired invite links
+        conn.execute("DELETE FROM dav_devices WHERE last_seen < now() - interval '365 days'")    # phones gone a year
 
 
 def start(stop: threading.Event):
