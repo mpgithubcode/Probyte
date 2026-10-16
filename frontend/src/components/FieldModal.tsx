@@ -312,7 +312,10 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
   // what the change does to this field's values, asked before saving: how many fit the new type, how many are kept aside
   const [preview, setPreview] = useState<{ total: number; converted: number; kept: number; restored: number;
     examples: { from: string; to: unknown }[]; unfit: string[] } | null>(null);
-  const previewKey = typeChanged ? JSON.stringify([type, o.foreignTableId, o.includeTime, o.max, o.relationship, o.multiple]) : "";
+  // (switching between one value and several converts the values too: the same preview)
+  const multiOf = (t: FieldType, opts?: FieldOptions) => (["text", "email", "url", "phone"].includes(t) && opts?.multi) || null;
+  const multiChanged = !!field && multiOf(field.type, field.options) !== multiOf(type, o);
+  const previewKey = typeChanged || multiChanged ? JSON.stringify([type, o.foreignTableId, o.includeTime, o.max, o.relationship, o.multiple, o.multi]) : "";
   useEffect(() => {
     setPreview(null);
     if (!previewKey || !field) return;
@@ -464,6 +467,21 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
         {conversionNote && <div className="notice">{conversionNote}</div>}
         {previewNote}
         {field?.options._error && !typeChanged && <div className="error">{field.options._error}</div>}
+
+        {/* ---------------- one value, or several */}
+        {["text", "email", "url", "phone"].includes(type) && !field?.is_primary && (
+          <label className="stack">Values
+            <div className="segmented multi-mode" role="group" aria-label="Values">
+              {([[null, "One value"], ["list", "Several values"], ["labeled", "Several, with labels"]] as const).map(([m, label]) => (
+                <button key={label} type="button" className={(o.multi ?? null) === m ? "active" : ""} onClick={() => set({ multi: m })}>{label}</button>
+              ))}
+            </div>
+            <span className="hint">{o.multi === "labeled"
+              ? `Each ${type === "phone" ? "number" : type === "email" ? "email" : type === "url" ? "link" : "value"} with a label (${type === "phone" ? "mobile, work, home…" : "work, home…"}), as phones keep contacts. The first is the primary one.`
+              : o.multi === "list" ? "As many as needed; the first is the primary one (what a sort or a one-value place uses)."
+              : "Switch to several to keep more than one (a person's numbers, a company's websites)."}</span>
+          </label>
+        )}
 
         {/* ---------------- basic */}
         {(type === "single_select" || type === "multi_select") && (

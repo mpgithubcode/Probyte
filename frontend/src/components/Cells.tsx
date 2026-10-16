@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { Attachment, Field, FieldView, Refs, User } from "../types";
 import {
   choiceColor, cleanFormatted, displayText, formatDate, formatNumber, fromInputValue, innerField, isDateOnly, isEditable, isErrorValue,
-  FORMAT_TYPES, formatPhone, shortUrl, telHref,
+  FORMAT_TYPES, formatPhone, shortUrl, telHref, isMulti, multiItems, MULTI_LABELS, MULTI_TYPES, type MultiItem,
   toInputValue, valueType,
 } from "../util";
 import { Icon } from "./Icon";
@@ -214,6 +214,17 @@ export function CellValue({ field, value, view }: { field: Field; value: any; vi
   const siblings = useContext(FieldsContext);
   if (isErrorValue(value)) return <span className="cell-error" title={value.__error}>#ERROR</span>;
   if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) return null;
+  if (MULTI_TYPES.has(field.type) && Array.isArray(value)) {   // several values: the primary one, and how many more
+    const items = multiItems(value);
+    if (!items.length) return null;
+    if (view === "list" || view === "hcards") return <MultiList field={field} items={items} />;
+    return (
+      <span className="multi-cell" title={items.map((x) => (x.label ? `${x.label}: ` : "") + x.value).join("\n")}>
+        <CellValue field={{ ...field, options: { ...field.options, multi: null } }} value={items[0].value} view={view} />
+        {items.length > 1 && <span className="multi-more">+{items.length - 1}</span>}
+      </span>
+    );
+  }
   const how = view ?? displayOf(field, "cell");
   const special = how ? shownAs(field, value, how, refs) : null;
   if (special) return special;
@@ -309,6 +320,7 @@ export const LinkPicker = (props: InputProps) => <LinkInput {...props} asButton 
 export function FieldInput(props: InputProps) {
   const { field, value, onCommit, onDone, autoFocus } = props;
   if (!isEditable(field)) return <div className="computed-value"><CellValue field={field} value={value} /></div>;
+  if (isMulti(field)) return <MultiInput {...props} />;
   switch (field.type) {
     case "checkbox":
       return <input type="checkbox" className="checkbox" checked={!!value} autoFocus={autoFocus}
@@ -785,6 +797,133 @@ function AttachmentInput({ value, onCommit, onDone, inline }: InputProps) {
     <div ref={shell.setAnchorEl} className="choice-inline">
       <AttachmentThumbs items={items} />
       {shell.open && shell.anchorEl && <Popover anchor={shell.anchorEl} onClose={shell.close} width={320}>{editor}</Popover>}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------- fields with several values (options.multi)
+
+/** One of several values as a link where it is one: a web address opens, an email is written to, a number called. */
+function MultiValueLink({ field, value }: { field: Field; value: string }) {
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  if (field.type === "url") {
+    return /^https?:\/\//i.test(value)
+      ? <a className="cell-link" href={value} target="_blank" rel="noopener noreferrer nofollow" onClick={stop} title={value}>{shortUrl(value)}</a>
+      : <span>{value}</span>;
+  }
+  if (field.type === "email") return <a className="cell-link" href={`mailto:${value}`} onClick={stop} title={`Write to ${value}`}>{value}</a>;
+  if (field.type === "phone") return <a className="cell-link" href={telHref(value)} onClick={stop} title={`Call ${formatPhone(value)}`}>{formatPhone(value)}</a>;
+  return <span className="multi-text">{value}</span>;
+}
+
+/** Every value, one per line, each with its label: how a record or a page shows the field. */
+function MultiList({ field, items }: { field: Field; items: MultiItem[] }) {
+  return (
+    <span className="multi-list">
+      {items.map((x, i) => (
+        <span key={i} className={`multi-row ${i === 0 && items.length > 1 ? "primary" : ""}`}>
+          {x.label && <span className="multi-label">{x.label}</span>}
+          <MultiValueLink field={field} value={x.value} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+const MULTI_NOUN: Record<string, [string, string]> = { email: ["email", "emails"], url: ["link", "links"], phone: ["number", "numbers"], text: ["value", "values"] };
+const aNoun = (n: string) => (n === "email" ? "an email" : `a ${n}`);
+
+/** A field with several values: shown as its values (each a link where it is one); a click opens the box that lists
+ * them, where each can be opened, edited, made the primary one or removed, and more added. In a table's cell the box
+ * opens at once. */
+function MultiInput({ field, value, onCommit, onDone, inline }: InputProps) {
+  const items = multiItems(value);
+  const shell = usePickerShell(inline, onDone);
+  const labeled = field.options.multi === "labeled";
+  const [editing, setEditing] = useState<number | null>(null);    // which value is being edited (items.length: a new one)
+  const [draft, setDraft] = useState<MultiItem>({ value: "" });
+  const [err, setErr] = useState("");
+  const noun = MULTI_NOUN[field.type] ?? MULTI_NOUN.text;
+  const suggestions = MULTI_LABELS[field.type] ?? [];
+  const listId = `labels-${field.id}`;
+  const commit = (next: MultiItem[]) => onCommit(next.length ? next : null);
+  const start = (i: number) => {
+    setErr("");
+    setEditing(i);
+    setDraft(i < items.length ? { ...items[i] } : { value: "", label: labeled ? suggestions.find((l) => !items.some((x) => x.label === l)) : undefined });
+  };
+  const check = (v: string): string => {
+    if (field.type === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s.]{2,}$/.test(v)) return "That isn't an email address";
+    if (field.type === "phone" && v.replace(/\D/g, "").length < 3) return "That isn't a phone number";
+    return "";
+  };
+  const save = () => {
+    const v = draft.value.trim();
+    if (!v) { setEditing(null); return; }
+    const problem = check(v);
+    if (problem) { setErr(problem); return; }
+    const item: MultiItem = { value: field.type === "url" && !/^[a-z]+:/i.test(v) ? `https://${v}` : v,
+      ...(labeled && draft.label?.trim() ? { label: draft.label.trim() } : {}) };
+    const next = [...items];
+    if (editing !== null && editing < items.length) next[editing] = item; else next.push(item);
+    commit(next);
+    setEditing(null);
+    setErr("");
+  };
+  const remove = (i: number) => commit(items.filter((_, j) => j !== i));
+  const primary = (i: number) => commit([items[i], ...items.filter((_, j) => j !== i)]);
+  const close = () => { setEditing(null); setErr(""); shell.close(); };
+
+  const editor = (
+    <div className="multi-edit" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } if (e.key === "Escape") { e.stopPropagation(); setEditing(null); } }}>
+      {labeled && (
+        <>
+          <input className="input multi-label-input" list={listId} placeholder="label" value={draft.label ?? ""} aria-label="Label"
+            onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+          <datalist id={listId}>{suggestions.map((l) => <option key={l} value={l} />)}</datalist>
+        </>
+      )}
+      <input className="input" autoFocus aria-label={noun[0]} value={draft.value}
+        type={field.type === "email" ? "email" : field.type === "url" ? "url" : field.type === "phone" ? "tel" : "text"}
+        placeholder={field.type === "email" ? "name@example.com" : field.type === "url" ? "example.com" : field.type === "phone" ? "(555) 123-4567" : ""}
+        onChange={(e) => { setDraft({ ...draft, value: e.target.value }); setErr(""); }} />
+      <button type="button" className="btn sm primary" onClick={save}>Save</button>
+      <button type="button" className="btn sm" onClick={() => { setEditing(null); setErr(""); }}>Cancel</button>
+    </div>
+  );
+
+  return (
+    <div ref={shell.setAnchorEl} className={inline ? "choice-inline" : "choice-field input multi-field"}
+      onClick={(e) => { if (!inline && !(e.target as HTMLElement).closest("a")) shell.setOpen(true); }}>
+      {!inline && (items.length ? <MultiList field={field} items={items} /> : <span className="muted">Add {aNoun(noun[0])}…</span>)}
+      {shell.open && shell.anchorEl && (
+        <Popover anchor={shell.anchorEl} onClose={close} width={360} className="multi-popover">
+          <div className="menu-heading">{field.name} · {items.length} {items.length === 1 ? noun[0] : noun[1]}</div>
+          <div className="multi-box">
+            {items.map((x, i) => editing === i ? <div key={i}>{editor}</div> : (
+              <div key={i} className={`multi-box-row ${i === 0 && items.length > 1 ? "primary" : ""}`}>
+                {labeled && <span className="multi-label">{x.label || "—"}</span>}
+                <span className="multi-box-value"><MultiValueLink field={field} value={x.value} /></span>
+                {i === 0 && items.length > 1 && <span className="multi-primary" title="The primary one: what a single value shows">primary</span>}
+                {!field.readonly && <>
+                  <button type="button" className="icon-btn" title="Edit" aria-label="Edit" onClick={() => start(i)}><Icon name="edit" size={13} /></button>
+                  {i > 0 && <button type="button" className="icon-btn" title="Make it the primary one" aria-label="Make primary" onClick={() => primary(i)}><Icon name="up" size={13} /></button>}
+                  <button type="button" className="icon-btn" title="Remove" aria-label="Remove" onClick={() => remove(i)}><Icon name="x" size={13} /></button>
+                </>}
+              </div>
+            ))}
+            {!items.length && editing === null && <div className="muted pad">No {noun[1]} yet</div>}
+            {editing === items.length && editor}
+          </div>
+          {err && <div className="error small">{err}</div>}
+          {!field.readonly && editing === null && (
+            <button type="button" className="menu-item link-pick-create" onClick={() => start(items.length)}>
+              <Icon name="plus" size={14} /> Add {aNoun(noun[0])}
+            </button>
+          )}
+        </Popover>
+      )}
     </div>
   );
 }

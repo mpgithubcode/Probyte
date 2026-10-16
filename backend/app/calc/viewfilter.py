@@ -42,6 +42,9 @@ def display_text(eng: Engine, f, v) -> str:
     if v is None or (isinstance(v, dict) and "__error" in v):
         return ""
     t = f["type"]
+    if isinstance(v, list) and t in ("text", "email", "url", "phone"):   # several values (data/multi.py): as exported
+        return "; ".join((f"{x['label']}: " if isinstance(x, dict) and x.get("label") else "")
+                         + display_text(eng, f, x.get("value") if isinstance(x, dict) else x) for x in v if x)
     if t in ("link", "user", "created_by", "last_modified_by", "attachment"):
         return ", ".join(x for x in eng.shown(f, v) if x)
     if t in ("lookup", "conditional_lookup"):
@@ -167,8 +170,13 @@ def _sorted(eng, by_id, out, sort):
         sid, vt = str(sf["id"]), eng.value_type(sf)
         order = [c["name"] for c in sf["options"].get("choices", [])] if sf["type"] == "single_select" else None
 
+        multi = sf["type"] in ("text", "email", "url", "phone")
+
         def cmp(a, b):
             x, y = a["data"].get(sid), b["data"].get(sid)
+            if multi:   # several values: by the primary one
+                x = x[0].get("value") if isinstance(x, list) and x and isinstance(x[0], dict) else x
+                y = y[0].get("value") if isinstance(y, list) and y and isinstance(y[0], dict) else y
             if _empty(x) and _empty(y):
                 return 0
             if _empty(x):

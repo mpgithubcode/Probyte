@@ -545,7 +545,8 @@ class Engine:
                 continue
             v = rec["data"].get(lookup_fid)
             if isinstance(v, list):
-                vals.extend(v)
+                # (a field with several values: their values, not the {value, label} they're kept as)
+                vals.extend(x["value"] if isinstance(x, dict) and "value" in x and "id" not in x else x for x in v)
             elif v is not None and v != "":
                 vals.append(v)
         return vals
@@ -563,6 +564,8 @@ class Engine:
             return [users.get(str(x), "") for x in ids]
         if f["type"] == "attachment":
             return [a.get("name", "") for a in (v or []) if isinstance(a, dict)]
+        if isinstance(v, list) and f["type"] in ("text", "email", "url", "phone"):   # several values (data/multi.py)
+            return [x.get("value", "") if isinstance(x, dict) else x for x in v]
         return v
 
     def _norm(self, field, value, vt):
@@ -752,6 +755,8 @@ class Engine:
             return [a.get("name", "") for a in (v or []) if isinstance(a, dict)]
         if self.value_type(f) == "date" and isinstance(v, str) and v:
             return F.parse_dt(v).date() if len(v) == 10 else F.parse_dt(v)
+        if isinstance(v, list) and t in ("text", "email", "url", "phone"):   # several values: the list of them
+            return [x.get("value", "") if isinstance(x, dict) else x for x in v]
         return v
 
     # ------------------------------------------------------------ references for display

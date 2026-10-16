@@ -515,6 +515,11 @@ def prepare_field(conn, table, ftype: str, options: dict, user_id, field=None) -
         o["choices"] = clean_choices(o.get("choices"))
     if ftype not in SELECT_TYPES:
         o.pop("choices", None)   # options another type left behind
+    # several values (data/multi.py): text, email, URL and phone fields; not the title (a record has one name)
+    if o.get("multi") not in ("list", "labeled") or ftype not in ("text", "email", "url", "phone"):
+        o.pop("multi", None)
+    elif field and field["is_primary"]:
+        bad("The title field holds one value; add another field for more")
     return o
 
 

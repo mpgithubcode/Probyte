@@ -198,9 +198,34 @@ export function formatNumber(v: unknown, o?: number | Pick<FieldOptions, "precis
   return s;
 }
 
+// ---- fields with several values (options.multi): [{value, label}], the first the primary one (data/multi.py)
+export interface MultiItem { value: string; label?: string }
+export const MULTI_TYPES = new Set(["text", "email", "url", "phone"]);
+export const isMulti = (f: Pick<Field, "type" | "options">) =>
+  MULTI_TYPES.has(f.type) && (f.options?.multi === "list" || f.options?.multi === "labeled");
+export const MULTI_LABELS: Record<string, string[]> = {
+  phone: ["mobile", "work", "home", "main", "iPhone", "work fax", "home fax", "pager", "other"],
+  email: ["work", "home", "school", "iCloud", "other"],
+  url: ["homepage", "work", "home", "profile", "other"],
+  text: [],
+};
+/** A stored value as [{value, label}] (a plain string: one value). */
+export function multiItems(v: unknown): MultiItem[] {
+  if (v === null || v === undefined || v === "") return [];
+  if (typeof v === "string") return [{ value: v }];
+  const list = Array.isArray(v) ? v : [v];
+  return list.flatMap((x): MultiItem[] => typeof x === "string" ? (x ? [{ value: x }] : [])
+    : x && typeof x === "object" && typeof (x as MultiItem).value === "string" && (x as MultiItem).value
+      ? [{ value: (x as MultiItem).value, ...((x as MultiItem).label ? { label: String((x as MultiItem).label) } : {}) }] : []);
+}
+const isMultiValue = (field: Field, v: unknown) => MULTI_TYPES.has(field.type) && Array.isArray(v);
+
 export function displayText(field: Field, v: unknown, refs?: Refs): string {
   if (v === null || v === undefined) return "";
   if (isErrorValue(v)) return "#ERROR";
+  if (isMultiValue(field, v)) {   // as exported (and imported): "work: a@x.org; b@x.org"
+    return multiItems(v).map((x) => (x.label ? `${x.label}: ` : "") + (field.type === "phone" ? formatPhone(x.value) : x.value)).join("; ");
+  }
   switch (field.type) {
     case "link":
       return (Array.isArray(v) ? v : [v]).map((id) => refs?.records[String(id)] ?? "").join(", ");
@@ -297,6 +322,9 @@ function matches(field: Field, v: unknown, f: Filter, refs?: Refs): boolean {
 }
 
 function compare(field: Field, a: unknown, b: unknown, refs?: Refs) {
+  if (isMultiValue(field, a) || isMultiValue(field, b)) {   // several values: by the primary one
+    a = multiItems(a)[0]?.value ?? null; b = multiItems(b)[0]?.value ?? null;
+  }
   if (isEmpty(a) && isEmpty(b)) return 0;
   if (isEmpty(a)) return 1;
   if (isEmpty(b)) return -1;

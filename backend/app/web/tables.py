@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.calc.compute import Engine
 from app.core.db import connection, Jsonb
 from app.core.secretbox import unseal
-from app.data import access, pages, stamps, store, values
+from app.data import access, multi, pages, stamps, store, values
 from app.data.schema import BUILTIN_FIELDS, PRIMARY_TYPES
 from app.dav import sync
 from app.sharing import linked as remote
@@ -641,7 +641,8 @@ def update_field(field_id: str, body: FieldPatch, user=User):
         if new_type != f["type"] or body.options is not None:
             options = store.prepare_field(conn, table, new_type, f["options"] if body.options is None else body.options,
                                           user["id"], field=f)
-        snapshot = values.snapshot(conn, f) if new_type != f["type"] else None
+        mode_changed = multi.mode(f) != multi.mode({"type": new_type, "options": options})   # one value <-> several
+        snapshot = values.snapshot(conn, f) if new_type != f["type"] or mode_changed else None
         if new_type != f["type"] and f["type"] == "link":
             store.delete_field_cleanup(conn, f)  # drops the counterpart field (values were captured above)
         updated = conn.execute(
@@ -683,12 +684,12 @@ def preview_conversion(field_id: str, body: FieldPatch, user=User):
         f = _own_field(conn, field_id, user)
         table = store.get_table(conn, f["table_id"], user["id"], need="admin")
         new_type = body.type or f["type"]
-        if new_type == f["type"]:
-            return {"total": 0, "converted": 0, "kept": 0, "restored": 0, "examples": [], "unfit": []}
         options = store.prepare_field(conn, table, new_type, body.options if body.options is not None else f["options"],
                                       user["id"], field=f)
         snap = values.snapshot(conn, f)
         plan = values.plan_conversion(conn, f, new_type, options, snap)
+        if new_type == f["type"] and multi.mode(f) == multi.mode({"type": new_type, "options": options}):
+            return {"total": 0, "converted": 0, "kept": 0, "restored": 0, "examples": [], "unfit": []}
         filled = {rid for rid, (raw, items, _vt) in snap.items() if not values._blank(f["type"], raw, items)}
         converted = [rid for rid, v in plan["values"].items() if v is not None and rid in filled]
         show = lambda rid: ", ".join(snap[rid][1]) or str(snap[rid][0])

@@ -4,7 +4,9 @@ Only the properties Probyte shows are touched: when a card is written back, ever
 original card (photos, extra phone numbers, Apple labels, X- properties...) is kept as it was, and a
 managed property is only rewritten when its value actually changed.
 
-EMAIL, TEL, ADR and URL can repeat; Probyte manages the first of each (the preferred one if marked).
+EMAIL, TEL and URL can repeat: they're fields with several labelled values (data/multi.py), every one read and
+written, with its label (TYPE=WORK, CELL…, or the label Apple keeps in an item's X-ABLabel). ADR can repeat too;
+Probyte manages the first (the preferred one if marked).
 """
 import re
 import uuid
@@ -20,11 +22,11 @@ CONTACT_FIELDS = [
     ("last", "Last Name", "text", {}, False),
     ("org", "Company", "text", {}, False),
     ("title", "Job Title", "text", {}, False),
-    ("email", "Email", "email", {}, False),
-    ("phone", "Phone", "phone", {}, False),
+    ("email", "Email", "email", {"multi": "labeled"}, False),
+    ("phone", "Phone", "phone", {"multi": "labeled"}, False),
     ("address", "Address", "long_text", {}, False),
     ("birthday", "Birthday", "date", {}, False),
-    ("url", "Website", "url", {}, False),
+    ("url", "Website", "url", {"multi": "labeled"}, False),
     ("note", "Notes", "long_text", {}, False),
     ("categories", "Groups", "multi_select", {"choices": []}, False),
 ]
@@ -167,6 +169,90 @@ def _uri(card: Card, name: str, scheme: str) -> str | None:
     return v or None
 
 
+# vCard TYPE values <-> labels (the ones phones show); anything else Apple keeps as an item's X-ABLabel
+_TYPE_LABEL = {"CELL": "mobile", "MOBILE": "mobile", "WORK": "work", "HOME": "home", "MAIN": "main", "IPHONE": "iPhone",
+               "PAGER": "pager", "OTHER": "other", "SCHOOL": "school"}
+_APPLE = re.compile(r"^_\$!<(.+)>!\$_$")
+_APPLE_KNOWN = {"mobile": "mobile", "home": "home", "work": "work", "main": "main", "other": "other", "homepage": "homepage",
+                "homefax": "home fax", "workfax": "work fax", "pager": "pager", "school": "school"}
+MULTI_PROPS = {"email": ("EMAIL", "mailto:"), "phone": ("TEL", "tel:"), "url": ("URL", "")}
+
+
+def _types(p: Prop) -> list[str]:
+    out = []
+    for m in re.finditer(r"(?i)type=(\"[^\"]*\"|[^;:]*)", p.params):
+        out += [t.strip().strip('"').upper() for t in m.group(1).split(",") if t.strip()]
+    out += [x.upper() for x in re.findall(r";([A-Za-z]+)(?=;|$)", p.params)]   # vCard 2.1: ;CELL;WORK
+    return out
+
+
+def _label(card: "Card", p: Prop) -> str | None:
+    if p.group:   # Apple: item1.TEL + item1.X-ABLabel:_$!<Mobile>!$_ (or the user's own label)
+        lab = next((q for q in card.props if q.group.lower() == p.group.lower() and q.name.upper() == "X-ABLABEL"), None)
+        if lab and lab.value.strip():
+            v = unescape(lab.value).strip()
+            m = _APPLE.match(v)
+            return _APPLE_KNOWN.get(m.group(1).lower().replace(" ", ""), m.group(1).lower()) if m else v[:40]
+    types = _types(p)
+    if "FAX" in types:
+        return "work fax" if "WORK" in types else "home fax" if "HOME" in types else "fax"
+    return next((_TYPE_LABEL[t] for t in types if t in _TYPE_LABEL), None)
+
+
+def _multi(card: "Card", key: str) -> list[dict] | None:
+    """Every EMAIL / TEL / URL of the card, the preferred one first, each with its label."""
+    name, scheme = MULTI_PROPS[key]
+    props = card.all(name)
+    pref = card.first(name)
+    if pref in props:
+        props = [pref] + [p for p in props if p is not pref]
+    out = []
+    for p in props:
+        v = unescape(p.value).strip()
+        if scheme and v.lower().startswith(scheme):
+            v = v[len(scheme):]
+        if key == "phone":
+            v = fieldformats.phone_or_raw(v)
+        if v and not any(x["value"] == v for x in out):
+            item = {"value": v}
+            if (lab := _label(card, p)):
+                item["label"] = lab
+            out.append(item)
+    return out or None
+
+
+_LABEL_TYPE = {"mobile": "CELL", "work": "WORK", "home": "HOME", "main": "MAIN", "iPhone": "IPHONE", "pager": "PAGER",
+               "other": "OTHER", "school": "SCHOOL", "work fax": "WORK,FAX", "home fax": "HOME,FAX", "fax": "FAX"}
+
+
+def _set_multi(card: "Card", key: str, items: list[dict]):
+    """Replace every EMAIL / TEL / URL of the card with these (their labels as TYPE=, or Apple's X-ABLabel)."""
+    name, _ = MULTI_PROPS[key]
+    old = card.all(name)
+    groups = {p.group.lower() for p in old if p.group}
+    card.props = [p for p in card.props if p not in old and not (p.group and p.group.lower() in groups and p.name.upper() == "X-ABLABEL")]
+    used = {int(m.group(1)) for p in card.props if p.group and (m := re.match(r"(?i)item(\d+)$", p.group))}
+    n = max(used, default=0)
+    base = {"email": "INTERNET", "phone": "VOICE", "url": ""}[key]
+    for i, it in enumerate(items):
+        label = it.get("label")
+        known = _LABEL_TYPE.get(label) if label else None
+        types = [t for t in [base, *(known.split(",") if known else []), "PREF" if i == 0 and len(items) > 1 else ""] if t]
+        params = f";TYPE={','.join(types)}" if types else ""
+        if label and not known:   # a label of their own: Apple's way, which phones show
+            n += 1
+            card.props.append(Prop(f"item{n}", name, params, escape(it["value"])))
+            card.props.append(Prop(f"item{n}", "X-ABLabel", "", escape(label)))
+        else:
+            card.props.append(Prop("", name, params, escape(it["value"])))
+
+
+def _primary(v) -> str | None:
+    if isinstance(v, list):
+        return next((x.get("value") for x in v if isinstance(x, dict) and x.get("value")), None)
+    return v or None
+
+
 def _bday(v: str | None) -> str | None:
     if not v:
         return None
@@ -199,16 +285,16 @@ def card_to_values(raw: str) -> tuple[str | None, dict]:
         "last": n[0].strip() or None,
         "org": (_split(org, ";")[0].strip() or None) if org else None,
         "title": _text(card, "TITLE"),
-        "email": _uri(card, "EMAIL", "mailto:"),
-        "phone": fieldformats.phone_or_raw(_uri(card, "TEL", "tel:")),
+        "email": _multi(card, "email"),
+        "phone": _multi(card, "phone"),
         "address": _address(card),
         "birthday": _bday(card.get("BDAY")),
-        "url": _text(card, "URL"),
+        "url": _multi(card, "url"),
         "note": _text(card, "NOTE"),
         "categories": [c.strip() for c in _split(cats, ",") if c.strip()] if cats else [],
     }
     if not vals["fn"]:
-        vals["fn"] = " ".join(x for x in (vals["first"], vals["last"]) if x) or vals["org"] or vals["email"] or vals["phone"]
+        vals["fn"] = " ".join(x for x in (vals["first"], vals["last"]) if x) or vals["org"] or _primary(vals["email"]) or _primary(vals["phone"])
     uid = _text(card, "UID")
     return uid, vals
 
@@ -217,6 +303,13 @@ def _norm(v):
     if v in ("", [], None):
         return None
     return v
+
+
+def _items_of(v) -> list[dict]:
+    """A contact's email / phone / website as it's kept (several labelled values), or a plain value from before."""
+    if isinstance(v, str):
+        return [{"value": v}] if v.strip() else []
+    return [{k: x[k] for k in ("value", "label") if x.get(k)} for x in (v or []) if isinstance(x, dict) and x.get("value")]
 
 
 def build_vcard(uid: str, vals: dict, raw: str | None = None) -> str:
@@ -246,18 +339,15 @@ def build_vcard(uid: str, vals: dict, raw: str | None = None) -> str:
         card.set("ORG", ";".join(escape(x) for x in [vals.get("org") or "", *extra]) if vals.get("org") else None)
     if changed("title"):
         card.set("TITLE", escape(vals.get("title") or ""))
-    if changed("email"):
-        card.set("EMAIL", escape(vals.get("email") or ""), ";TYPE=INTERNET")
-    if changed("phone"):
-        card.set("TEL", escape(vals.get("phone") or ""), ";TYPE=CELL")
+    for key in ("email", "phone", "url"):   # several labelled values: all of them, when they changed
+        if _items_of(vals.get(key)) != _items_of(old.get(key)):
+            _set_multi(card, key, _items_of(vals.get(key)))
     if changed("address"):
         addr = (vals.get("address") or "").strip()
         # Free text can't be split back into street/city/...; it goes into the street part.
         card.set("ADR", ";;" + escape(addr.replace("\n", ", ")) + ";;;;" if addr else None, ";TYPE=HOME")
     if changed("birthday"):
         card.set("BDAY", (vals.get("birthday") or "")[:10], ";VALUE=date" if not card.first("BDAY") else "")
-    if changed("url"):
-        card.set("URL", escape(vals.get("url") or ""))
     if changed("note"):
         card.set("NOTE", escape(vals.get("note") or ""))
     if changed("categories"):

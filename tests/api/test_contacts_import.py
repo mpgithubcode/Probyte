@@ -30,9 +30,9 @@ def test_import_vcards(user):
     assert res["created"] == 3 and res["error_count"] == 1, res                      # the empty card can't be read
     recs = {r["data"][F["fn"]]: r["data"] for r in user.records(t["id"])}
     ada, jurgen = recs["Ada Lovelace"], recs["Jürgen Müller"]
-    assert ada[F["email"]] == "ada@example.com" and ada[F["org"]] == "Analytical Engines" and set(ada[F["categories"]]) == {"Clients", "VIP"}
+    assert ada[F["email"]] == [{"value": "ada@example.com"}] and ada[F["org"]] == "Analytical Engines" and set(ada[F["categories"]]) == {"Clients", "VIP"}
     assert recs["Alan Turing"][F["birthday"]] == "1912-06-23"
-    assert jurgen[F["last"]] == "Müller" and jurgen[F["phone"]] == "+4930123456"
+    assert jurgen[F["last"]] == "Müller" and jurgen[F["phone"]] == [{"value": "+4930123456", "label": "mobile"}]
     assert jurgen[F["note"]].startswith("First line") and "wraps onto the next" in jurgen[F["note"]]
     # the address book gets them, with what Probyte doesn't show (the photo)
     user.sync(t["id"])
@@ -45,7 +45,7 @@ def test_import_vcards(user):
     assert res == {**res, "created": 0, "skipped": 3}
     res = upload(user, t, ("again.vcf", again.encode(), "text/vcard"), existing="update")
     assert res["updated"] == 1
-    alan = next(r["data"] for r in user.records(t["id"]) if (r["data"].get(F["email"]) or "").lower() == "alan@example.com")
+    alan = next(r["data"] for r in user.records(t["id"]) if [x["value"].lower() for x in r["data"].get(F["email"]) or []] == ["alan@example.com"])
     assert alan[F["title"]] == "Mathematician"
     # download them all as one .vcf
     r = user.get(API + f"/tables/{t['id']}/vcards")

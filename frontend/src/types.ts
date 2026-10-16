@@ -58,6 +58,7 @@ export interface FieldOptions {
   relationship?: "one" | "many";
   displayFieldId?: string | null;  // link: the field of the linked records shown in the cell (none: their title)
   displayFiles?: boolean;          // link / lookup: files shown as preview thumbnails (default) or by name
+  multi?: "list" | "labeled" | null;   // text / email / URL / phone: several values (with labels), the first the primary one
   chip?: ChipLook | null;          // link: how its records' chips look (fields shown in them, a colour, a picture)
   pickFields?: string[];           // link: the columns its picker shows of the linked table (none set: the first few)
   views?: FieldViews;              // link / lookup / rollup: how it's shown in the table's cells and on the record

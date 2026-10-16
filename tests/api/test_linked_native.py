@@ -86,7 +86,7 @@ def test_linked_contacts_table(user, other_user):
         r = other_user.post(API + f"/remote/{lt['id']}/vcards", files=[("files", ("a.vcf", vcf.replace(b"grace@example.com", email.encode()), "text/vcard"))])
         assert r.status_code == 200 and r.json()["created"] == 1, r.text
         F = user.fields(t["id"])
-        assert any(x["data"].get(F["email"]) == email for x in user.records(t["id"]))
+        assert any(x["data"].get(F["email"]) == [{"value": email}] for x in user.records(t["id"]))   # (several values: a list)
         out = other_user.get(API + f"/remote/{lt['id']}/vcards")
         assert out.status_code == 200 and email in out.text
     info = other_user.j("GET", f"/tables/{lt['id']}")

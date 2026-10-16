@@ -6,7 +6,7 @@ from datetime import date, datetime
 from app.calc.compute import COMPUTED_TYPES, Engine
 from app.core import events
 from app.core.db import Jsonb
-from app.data import audit, pages, stamps
+from app.data import audit, multi, pages, stamps
 from app.data.behaviors import _is_task, advance_recurring, advance_repeating_record, apply_done, apply_event_defaults, apply_task_auto, sync_done
 from app.data.rules import apply_defaults, check_rules
 from app.data.schema import bad, DAV_KINDS, ensure_choices, get_fields, get_table, is_remote_table, is_served, not_found, SELECT_TYPES
@@ -52,6 +52,12 @@ def normalize_data(conn, table, fields, data: dict, user_id=None, record_id=None
                 bad(f"{f['name']} needs a number, not “{v}”")
         elif t == "checkbox":
             v = bool(v) and str(v).lower() not in ("false", "0", "no", "off")
+        elif multi.mode(f):   # several values: each one checked as the field's type checks one
+            def one(x, f=f):
+                if f["type"] in fieldformats.FORMAT_TYPES:
+                    return fieldformats.clean(f["type"], x)
+                return _text_value(f, x)
+            v = multi.clean(f, v, one)
         elif t in ("text", "long_text"):
             v = _text_value(f, v)
         elif t == "single_select":

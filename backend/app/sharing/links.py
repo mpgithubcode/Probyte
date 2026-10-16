@@ -304,7 +304,7 @@ def _view_payload(conn, s, item, view):
 # Only what's needed to display values; formulas, conditions and table/field ids stay private.
 _DISPLAY_OPTIONS = {"choices", "includeTime", "max", "precision", "resultType", "label", "color", "action", "url",
                     "updates", "multiple", "relationship", "numberFormat", "currency", "separators", "dateFormat", "timeFormat",
-                    "allowNew"}
+                    "allowNew", "multi"}
 
 
 def _display_options(o: dict) -> dict:

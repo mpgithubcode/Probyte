@@ -1152,6 +1152,7 @@ def test_view_tabs_reorder_and_view_settings(browser, table_user):
     sign_in(pg, u)
     pg.goto(f"{BASE}/#/table/{t['id']}")
     tabs = lambda: [x.strip() for x in pg.locator(".view-tab .view-tab-name").all_text_contents()]
+    expect(pg.locator(".view-tab .view-tab-name")).to_have_count(3)      # (drawn once the table has loaded)
     assert tabs() == ["Table", "Board", "Cards"]
     # drag a tab to reorder; the order is saved
     pg.locator(".view-tab", has_text="Cards").drag_to(pg.locator(".view-tab", has_text="Table"))
@@ -1597,4 +1598,57 @@ def test_tables_are_reordered_in_the_sidebar(browser):
     row.locator("button[aria-label='Move up']").click()
     pg.click(".modal-foot button:has-text('Done')")
     eventually(lambda: [n for n in names() if n in ("First", "Second", "Third")] == ["Third", "Second", "First"] or None)
+    assert not pg.errors, pg.errors
+
+
+def test_a_field_with_several_values_opens_as_a_box_of_them(browser):
+    """A field with several links: the cell shows the first and "+1"; a click opens a box listing them, each a link
+    that opens; a value is edited, one added, one made the primary one and one removed from there. The field editor
+    turns several values on."""
+    u = Client()
+    t = u.table(name="Vendors")
+    F = u.fields(t["id"])
+    sites = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Links", "type": "url", "options": {"multi": "labeled"}})
+    r = u.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: "Acme", sites["id"]: [
+        {"value": "https://acme.com", "label": "homepage"}, {"value": "https://shop.acme.com", "label": "work"}]}})
+    pg = new_page(browser)
+    sign_in(pg, u)
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    cell = pg.locator(".grid tbody tr").first.locator(".multi-cell")
+    expect(cell).to_contain_text("acme.com")
+    expect(cell.locator(".multi-more")).to_have_text("+1")
+    pg.goto(f"{BASE}/#/table/{t['id']}?record={r['id']}")
+    field = pg.locator(".record-modal .multi-field")
+    expect(field.locator(".multi-row")).to_have_count(2)
+    field.locator(".multi-label").first.click()                               # (not on a link: opens the box)
+    box = pg.locator(".multi-popover")
+    expect(box.locator(".multi-box-row")).to_have_count(2)
+    expect(box.locator(".multi-box-row a").nth(1)).to_have_attribute("href", "https://shop.acme.com")
+    # add one
+    box.locator("button:has-text('Add a link')").click()
+    box.locator(".multi-edit input[type=url]").fill("support.acme.com")
+    box.locator(".multi-edit .multi-label-input").fill("help")
+    box.locator(".multi-edit button:has-text('Save')").click()
+    eventually(lambda: len(u.record(t["id"], r["id"])["data"][sites["id"]]) == 3 or None)
+    assert u.record(t["id"], r["id"])["data"][sites["id"]][2] == {"value": "https://support.acme.com", "label": "help"}
+    # make the second one the primary one, then remove the old first
+    box.locator(".multi-box-row").nth(1).locator("button[aria-label='Make primary']").click()
+    eventually(lambda: u.record(t["id"], r["id"])["data"][sites["id"]][0]["value"] == "https://shop.acme.com" or None)
+    box.locator(".multi-box-row").nth(1).locator("button[aria-label='Remove']").click()
+    eventually(lambda: [x["value"] for x in u.record(t["id"], r["id"])["data"][sites["id"]]] == ["https://shop.acme.com", "https://support.acme.com"] or None)
+    # edit one
+    box.locator(".multi-box-row").nth(1).locator("button[aria-label='Edit']").click()
+    box.locator(".multi-edit input[type=url]").fill("https://help.acme.com")
+    box.locator(".multi-edit input[type=url]").press("Enter")
+    eventually(lambda: u.record(t["id"], r["id"])["data"][sites["id"]][1]["value"] == "https://help.acme.com" or None)
+    pg.keyboard.press("Escape")
+    pg.keyboard.press("Escape")
+    # the field editor: one value -> several
+    mail = u.j("POST", f"/tables/{t['id']}/fields", json={"name": "Email", "type": "email"})
+    pg.goto(f"{BASE}/#/table/{t['id']}")
+    pg.click("thead th:has-text('Email')")
+    pg.click(".menu-item:has-text('Edit field')")
+    pg.click(".modal .multi-mode button:has-text('Several values')")
+    pg.click(".modal-foot button:has-text('Save')")
+    eventually(lambda: next(f for f in u.j("GET", f"/tables/{t['id']}")["fields"] if f["id"] == mail["id"])["options"].get("multi") == "list" or None)
     assert not pg.errors, pg.errors

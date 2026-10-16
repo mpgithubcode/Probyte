@@ -25,8 +25,13 @@ export function saneFields(fields: Field[]): Field[] {
   });
 }
 
-function saneValue(type: string, v: unknown): unknown {
+function saneValue(type: string, v: unknown, multi = false): unknown {
   if (v == null) return v;
+  if (multi && ["text", "email", "url", "phone"].includes(type)) {   // several values: [{value, label}]
+    const list = (Array.isArray(v) ? v : [v]).flatMap((x) => typeof x === "string" ? (x ? [{ value: x }] : [])
+      : x && typeof x === "object" && typeof (x as { value?: unknown }).value === "string" ? [x] : []);
+    return list.length === (Array.isArray(v) ? v.length : -1) ? v : list;
+  }
   switch (type) {
     case "text": case "long_text": case "url": case "email": case "phone":
       return typeof v === "string" ? v : Array.isArray(v) ? v.map(asName).filter(Boolean).join(", ") : asName(v);
@@ -57,7 +62,7 @@ export function saneRecords(fields: Field[], records: Rec[]): Rec[] {
     for (const f of typed) {
       const v = r.data[f.id];
       if (v == null) continue;
-      const s = saneValue(f.type, v);
+      const s = saneValue(f.type, v, f.options?.multi === "list" || f.options?.multi === "labeled");
       if (s !== v) { data ??= { ...r.data }; data[f.id] = s; }
     }
     if (!data) return r;

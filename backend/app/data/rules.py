@@ -75,6 +75,16 @@ def check_rules(conn, table_id, fields, data: dict, keys, record_id=None):
         v = data.get(fid)
         if f.get("required") and is_blank(v):
             bad(f"{f['name']} is required")
+        if f.get("unique_values") and not is_blank(v) and isinstance(v, list) and v and isinstance(v[0], dict):
+            # several values: none of them may be one of another record's
+            vals = [str(x.get("value", "")).lower() for x in v if x.get("value")]
+            hit = conn.execute(
+                "SELECT e->>'value' AS v FROM records r, jsonb_array_elements(CASE WHEN jsonb_typeof(r.data->%s) = 'array' "
+                "THEN r.data->%s ELSE '[]'::jsonb END) e WHERE r.table_id = %s AND NOT r.deleted AND r.id IS DISTINCT FROM %s "
+                "AND lower(e->>'value') = ANY(%s) LIMIT 1", (fid, fid, table_id, record_id, vals)).fetchone()
+            if hit:
+                bad(f"{f['name']} must be unique: another record already has “{hit['v']}”")
+            continue
         if f.get("unique_values") and not is_blank(v):
             if isinstance(v, str):
                 q = "lower(data->>%s) = lower(%s)"

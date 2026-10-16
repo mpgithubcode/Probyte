@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from app.calc import formula as F
 from app.calc.compute import COMPUTED_TYPES, Engine
 from app.core.db import Jsonb
-from app.data import store
+from app.data import multi, store
 from app.formats import fieldformats, recur
 
 
@@ -96,6 +96,22 @@ def convert(raw, items, vt, old_type, new_type, opts, lookup):
     """A value shown as `items` in a field of old_type -> the stored value for new_type (None if it doesn't fit).
     `lookup`: lower-cased title/username -> id, for link and user fields."""
     text = ", ".join(items)
+    src_multi = isinstance(raw, list) and old_type in multi.MULTI_TYPES and all(isinstance(x, dict) for x in raw)
+    if opts.get("multi") in multi.MODES and new_type in multi.MULTI_TYPES:
+        # to several values: each value (or the one there was) converted on its own, labels kept when wanted
+        src = multi.items(raw) if src_multi else [{"value": x} for x in (items if old_type not in TEXT_TYPES else [raw] if isinstance(raw, str) else items)]
+        one = {**opts, "multi": None}
+        out = []
+        for it in src:
+            v = convert(it["value"], [it["value"]], "text", "text", new_type, one, lookup)
+            if v not in (None, ""):
+                out.append({"value": v, **({"label": it["label"]} if it.get("label") and opts["multi"] == "labeled" else {})})
+        return out or None
+    if src_multi:   # from several values to one: the primary one for a one-value field (a text field takes them all)
+        vals = multi.values(raw)
+        if new_type in ("text", "long_text"):
+            return ", ".join(vals) or None if new_type == "long_text" or len(vals) > 1 and old_type != new_type else (vals[0] if vals else None)
+        raw, items, text = (vals[0] if vals else None), vals[:1], vals[0] if vals else ""
     if new_type == "recurrence":
         try:
             return recur.normalize(raw if isinstance(raw, str) else text)
@@ -165,10 +181,30 @@ def convert(raw, items, vt, old_type, new_type, opts, lookup):
     return None  # attachments can't be made from other values; computed fields have no stored value
 
 
+LABELED = re.compile(r"^([A-Za-z][\w .\-]{0,30}):\s+(\S.*)$")   # "work: +1 555 0100" (a URL's "https://" isn't a label)
+
+
+def multi_from_text(f, text: str) -> list[dict]:
+    """Several values written as text, as they're exported: "work: a@x.org; home: b@x.org" or one per line."""
+    parts = [p.strip() for p in re.split(r"[;\n]", text) if p.strip()]
+    out = []
+    for p in parts:
+        m = LABELED.match(p) if multi.mode(f) == "labeled" else None
+        out.append({"value": m.group(2).strip(), "label": m.group(1).strip()} if m else {"value": p})
+    return out
+
+
+def multi_as_text(v) -> str:
+    """Several values as one cell of text (exports): "work: a@x.org; b@x.org"."""
+    return "; ".join(f"{x['label']}: {x['value']}" if x.get("label") else x["value"] for x in multi.items(v))
+
+
 def from_cell(field, cell, lookups: "Lookups"):
     """A spreadsheet cell -> a value for the field (None when it can't be read)."""
     lookup = lookups.for_field(field)
     t = field["type"]
+    if multi.mode(field):
+        return multi_from_text(field, str(cell).strip()) or None
     if isinstance(cell, bool):
         text = "true" if cell else "false"
     elif isinstance(cell, float) and cell.is_integer():
@@ -222,6 +258,15 @@ def plan_conversion(conn, old_field, new_type, opts, snapshot: dict) -> dict:
                 restored.append(rid)
         elif v is None and old_field["type"] not in COMPUTED_TYPES and not _blank(old_field["type"], raw, items):
             kept[rid] = (raw, items, vt, old_field["type"])
+        elif old_field["type"] in multi.MULTI_TYPES and isinstance(raw, list) and all(isinstance(x, dict) for x in raw) \
+                and len(raw) > 1 and not isinstance(v, list):
+            kept[rid] = (raw, items, vt, old_field["type"])   # several values to one: the others are kept aside
+        if isinstance(v, list) and rid in earlier and isinstance(earlier[rid][0], list) and multi.values(v)[:1] == multi.values(earlier[rid][0])[:1]:
+            # back to several values: the ones kept aside when it went to one come back
+            again = convert(earlier[rid][0], multi.values(earlier[rid][0]), "text", earlier[rid][3], new_type, opts, lookup)
+            if again:
+                v = again
+                restored.append(rid)
         out[rid] = v
     return {"values": out, "kept": kept, "restored": restored}
 
@@ -296,6 +341,8 @@ def from_api(f, val, lookups: "Lookups"):
     t, name = f["type"], f["name"]
     if val is None or (isinstance(val, str) and not val.strip()) or val == []:
         return [] if t in ("link", "multi_select", "user") else None
+    if multi.mode(f):   # several values: a string (one; or several, one per line or separated by ";"), a list of them
+        return multi_from_text(f, val) if isinstance(val, str) else multi.items(val if isinstance(val, list) else [val])
     if t == "link":
         # record ids first (they identify records); a title only when exactly one record has it
         ids, by_name = lookups.link_index(f["options"].get("foreignTableId"))

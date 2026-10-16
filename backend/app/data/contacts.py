@@ -67,10 +67,11 @@ def split_cards(text: str) -> list[str]:
 def _key(vals: dict) -> list[str]:
     """What identifies a contact besides its UID: its email, or its name with its phone."""
     keys = []
-    if vals.get("email"):
-        keys.append("e:" + vals["email"].strip().lower())
-    if vals.get("fn") and vals.get("phone"):
-        keys.append("np:" + vals["fn"].strip().lower() + "|" + re.sub(r"\D", "", vals["phone"]))
+    email, phone = vcard._primary(vals.get("email")), vcard._primary(vals.get("phone"))   # (several values: the first)
+    if email:
+        keys.append("e:" + email.strip().lower())
+    if vals.get("fn") and phone:
+        keys.append("np:" + vals["fn"].strip().lower() + "|" + re.sub(r"\D", "", phone))
     return keys
 
 
