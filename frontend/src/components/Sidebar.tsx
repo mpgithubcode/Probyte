@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { api } from "../api";
 import type { Base, User, Workspace } from "../types";
 import { PALETTE } from "../util";
 import type { ExtensionInfo } from "../extensions";
 import { Icon, tableIcon } from "./Icon";
 import { nativeKind } from "../util";
-import { Popover, usePopover } from "./Overlay";
+import { Modal, Popover, usePopover } from "./Overlay";
 import { BaseSharing, LinkedBaseSettings } from "./BaseSharing";
 import { Automations } from "./Automations";
 import { AddBaseLink } from "./AddBaseLink";
@@ -56,6 +56,26 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
     if (ids.join() === ws.bases.map((x) => x.id).join()) { setOrder(null); return; }
     setOrder(ids);
     patchBase(b, { position: to });
+  };
+
+  // reordering a base's tables and combined databases (one list): drag one onto another's place; saved for the base
+  const [reordering, setReordering] = useState<Base | null>(null);   // the tap-friendly list (phones can't drag)
+  const [dragItem, setDragItem] = useState<{ base: string; key: string } | null>(null);
+  const [itemOrder, setItemOrder] = useState<Record<string, string[]>>({});
+  useEffect(() => setItemOrder({}), [ws.tables, ws.combos]);
+  const itemsOf = (baseId: string) => {
+    const all = [
+      ...ws.tables.filter((t) => t.base_id === baseId).map((t, i) => ({ key: `table:${t.id}`, kind: "table" as const, t, c: undefined, pos: t.position ?? 1e6 + i })),
+      ...ws.combos.filter((c) => c.base_id === baseId).map((c, i) => ({ key: `combo:${c.id}`, kind: "combo" as const, t: undefined, c, pos: c.position ?? 2e6 + i })),
+    ].sort((a, b) => a.pos - b.pos);
+    const o = itemOrder[baseId];
+    return o ? o.map((k) => all.find((x) => x.key === k)!).filter(Boolean) : all;
+  };
+  const saveOrder = async (baseId: string, keys: string[]) => {
+    try {
+      await api.put(`/bases/${baseId}/order`, { items: keys.map((k) => ({ kind: k.split(":")[0], id: k.split(":")[1] })) });
+      onChanged();
+    } catch (e) { setItemOrder((o) => { const n = { ...o }; delete n[baseId]; return n; }); onError((e as Error).message); }
   };
 
   const toggle = (id: string) => setCollapsed((c) => {
@@ -114,8 +134,28 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
             const reveal = showHidden.has(b.id);
             const allTables = ws.tables.filter((t) => t.base_id === b.id);
             const allCombos = ws.combos.filter((c) => c.base_id === b.id);
-            const tables = allTables.filter((t) => !t.hidden || reveal || is("table", t.id));
-            const combos = allCombos.filter((c) => !c.hidden || reveal || is("combo", c.id));
+            const items = itemsOf(b.id).filter((x) => x.t ? !x.t.hidden || reveal || is("table", x.t.id) : !x.c!.hidden || reveal || is("combo", x.c!.id));
+            const canOrder = rankOf(b) >= 3;
+            const dragProps = (key: string) => !canOrder ? {} : {
+              draggable: true,
+              onDragStart: (e: DragEvent) => { e.stopPropagation(); setDragItem({ base: b.id, key }); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", key); },
+              onDragOver: (e: DragEvent) => {
+                if (!dragItem || dragItem.base !== b.id || dragItem.key === key) return;
+                e.preventDefault(); e.stopPropagation();
+                const keys = itemsOf(b.id).map((x) => x.key);
+                const from = keys.indexOf(dragItem.key), to = keys.indexOf(key);
+                keys.splice(from, 1);
+                keys.splice(to, 0, dragItem.key);
+                setItemOrder((o) => ({ ...o, [b.id]: keys }));
+              },
+              onDrop: (e: DragEvent) => { e.preventDefault(); e.stopPropagation(); },
+              onDragEnd: (e: DragEvent) => {
+                e.stopPropagation();
+                const d = dragItem;
+                setDragItem(null);
+                if (d && itemOrder[b.id]) saveOrder(b.id, itemOrder[b.id]);
+              },
+            };
             const nHidden = allTables.filter((t) => t.hidden).length + allCombos.filter((c) => c.hidden).length;
             const isCollapsed = collapsed.has(b.id);
             return (
@@ -152,8 +192,9 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                 </div>
                 {!isCollapsed && (
                   <div className="base-items">
-                    {tables.map((t) => (
-                      <button key={t.id} className={`side-item ${is("table", t.id) ? "active" : ""} ${t.hidden ? "is-hidden" : ""}`} onClick={() => onOpen("table", t.id)}>
+                    {items.map(({ key, t, c }) => t ? (
+                      <button key={key} {...dragProps(key)} className={`side-item ${is("table", t.id) ? "active" : ""} ${t.hidden ? "is-hidden" : ""} ${dragItem?.key === key ? "dragging" : ""}`}
+                        onClick={() => onOpen("table", t.id)} title={canOrder ? "Drag to reorder" : undefined}>
                         {t.icon ? <span className="emoji-icon">{t.icon}</span> : <Icon name={tableIcon(nativeKind(t) ?? t.kind)} size={15} />}
                         {t.kind === "remote" && t.remote?.source_kind && <span className="side-linked" title="Linked from a public link"><Icon name="link" size={10} /></span>}
                         <span className="side-name">{t.name}</span>
@@ -161,12 +202,12 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
                           ? t.remote?.error && <span className="side-dot err" title={t.remote.error} />
                           : t.kind !== "generic" && <span className={`side-dot ${t.last_sync_error ? "err" : ""}`} title={t.last_sync_error ?? "CalDAV synced"} />}
                       </button>
-                    ))}
-                    {combos.map((c) => (
-                      <button key={c.id} className={`side-item ${is("combo", c.id) ? "active" : ""} ${c.hidden ? "is-hidden" : ""}`} onClick={() => onOpen("combo", c.id)}>
-                        {c.icon ? <span className="emoji-icon">{c.icon}</span> : <Icon name="layers" size={15} />}
-                        <span className="side-name">{c.name}</span>
-                        <span className="side-swatches">{c.sources.map((s) => <span key={s.table_id} style={{ background: s.color }} />)}</span>
+                    ) : (
+                      <button key={key} {...dragProps(key)} className={`side-item ${is("combo", c!.id) ? "active" : ""} ${c!.hidden ? "is-hidden" : ""} ${dragItem?.key === key ? "dragging" : ""}`}
+                        onClick={() => onOpen("combo", c!.id)} title={canOrder ? "Drag to reorder" : undefined}>
+                        {c!.icon ? <span className="emoji-icon">{c!.icon}</span> : <Icon name="layers" size={15} />}
+                        <span className="side-name">{c!.name}</span>
+                        <span className="side-swatches">{c!.sources.map((s) => <span key={s.table_id} style={{ background: s.color }} />)}</span>
                       </button>
                     ))}
                     {!allTables.length && !allCombos.length && <div className="muted small side-empty-note">No tables yet</div>}
@@ -205,6 +246,32 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
         </div>
       </aside>
 
+      {reordering && (() => {
+        const list = itemsOf(reordering.id);
+        const move = (i: number, d: number) => {
+          const keys = list.map((x) => x.key);
+          const [k] = keys.splice(i, 1);
+          keys.splice(i + d, 0, k);
+          setItemOrder((o) => ({ ...o, [reordering.id]: keys }));
+          saveOrder(reordering.id, keys);
+        };
+        return (
+          <Modal title={`Reorder ${reordering.name}`} onClose={() => setReordering(null)} width={380}
+            footer={<button className="btn primary" onClick={() => setReordering(null)}>Done</button>}>
+            <div className="reorder-list">
+              {list.map((x, i) => (
+                <div key={x.key} className="reorder-row">
+                  <Icon name={x.t ? tableIcon(nativeKind(x.t) ?? x.t.kind) : "layers"} size={15} />
+                  <span className="side-name">{x.t?.name ?? x.c!.name}</span>
+                  <button className="icon-btn" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}><Icon name="up" size={14} /></button>
+                  <button className="icon-btn" aria-label="Move down" disabled={i === list.length - 1} onClick={() => move(i, 1)}>
+                    <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="up" size={14} /></span></button>
+                </div>
+              ))}
+            </div>
+          </Modal>
+        );
+      })()}
       {menu && (
         <Popover anchor={menu.anchor} onClose={() => setMenu(null)} width={220}>
           <div className="menu-list">
@@ -219,6 +286,9 @@ export function Sidebar({ ws, user, active, open, onClose, onOpen, onNewTable, o
             )}
             <button className="menu-item" onClick={() => { setSharing(menu.base); setMenu(null); }}><Icon name="share" size={14} />
               {menu.base.owner ? " Sharing and your views…" : " Share with people…"}</button>
+            {rankOf(menu.base) >= 3 && itemsOf(menu.base.id).length > 1 && (
+              <button className="menu-item" onClick={() => { setReordering(menu.base); setMenu(null); }}><Icon name="list" size={14} /> Reorder tables…</button>
+            )}
             {bases.length > 1 && (() => {
               const i = bases.findIndex((x) => x.id === menu.base.id);
               return (<>

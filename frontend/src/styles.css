@@ -2032,3 +2032,8 @@ html, body { overflow-x: hidden; }
 .backup-copy-form { display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 8px; align-items: end; }
 .backup-copy-form .row { grid-column: 1 / -1; gap: 8px; }
 @media (max-width: 640px) { .backup-copy-form { grid-template-columns: 1fr; } }
+.reorder-list { display: flex; flex-direction: column; gap: 2px; }
+.reorder-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; }
+.reorder-row:hover { background: var(--bg-hover); }
+.reorder-row .side-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-item.dragging { opacity: 0.45; }

@@ -237,6 +237,7 @@ export interface TableInfo {
   id: string;
   base_id: string;
   name: string;
+  position?: number | null;   // its place among the base's tables and combined databases (unset: after those that have one)
   hidden?: boolean;  // left out of the sidebar
   icon?: string | null;  // an emoji instead of the default icon
   kind: TableKind;
@@ -272,7 +273,7 @@ export interface DavInfo {
   password: string | null;
 }
 
-export interface ComboSummary { id: string; base_id: string; name: string; sources: { table_id: string; color: string }[]; hidden?: boolean; icon?: string | null }
+export interface ComboSummary { position?: number | null; id: string; base_id: string; name: string; sources: { table_id: string; color: string }[]; hidden?: boolean; icon?: string | null }
 
 export interface LinkSource { table_id: string; name: string; color?: string | null; kind?: string }
 export interface Source { table_id: string; name: string; kind: TableKind; color: string; link_sources?: LinkSource[] | null }

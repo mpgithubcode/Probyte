@@ -161,7 +161,7 @@ Every database and combined database can have any number of Notion-style views, 
 
 **Search everything.** Ctrl/⌘ K (or the 🔍 in the sidebar) finds records in every table, linked tables from other servers included, by title or any other field (title matches first), and opens the one you pick. Linked tables are read from their sources in parallel for up to a few seconds; one whose source doesn't answer is listed as not searched.
 
-**Bases** can be reordered by dragging them in the sidebar, or with **Move up** / **Move down** in a base's ⋯ menu.
+**Bases** can be reordered by dragging them in the sidebar, or with **Move up** / **Move down** in a base's ⋯ menu. **A base's tables and combined databases** too (one list, so a combined database can sit between tables): drag one onto another's place, or use **Reorder tables…** in the base's ⋯ menu (arrows, for phones). The order is the base's, so everyone it's shared with sees it; its owner and admins set it. New tables go at the end.
 
 **Undo and the trash.** Deleting a record, deleting, duplicating or editing several at once, deleting a view or a table, or clearing a view's filter shows **Undo** for a few seconds. Deleted records and tables also stay in the **Trash** (sidebar, bottom) for 30 days, where you can restore them or delete them for good. A deleted table's calendar on the server is only removed when the trash is emptied, so restoring a table brings back everything, phones included.
 

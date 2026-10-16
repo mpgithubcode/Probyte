@@ -1571,3 +1571,30 @@ def test_a_link_shows_another_field_and_its_files_open(browser):
     thumb.click()
     expect(pg.locator(".viewer[aria-label='logo.png'], .preview, [role=dialog]").first).to_be_visible()
     assert not pg.errors, pg.errors
+
+
+def test_tables_are_reordered_in_the_sidebar(browser):
+    """Drag a table onto another's place in the sidebar, or use the base's Reorder tables… (for phones): the order is
+    kept."""
+    u = Client()
+    for n in ("First", "Second", "Third"):
+        u.table(name=n)
+    pg = new_page(browser)
+    sign_in(pg, u)
+    names = lambda: [x.strip() for x in pg.locator(".base-items .side-item .side-name").all_text_contents()]  # noqa: E731
+    expect(pg.locator(".base-items .side-item", has_text="Third")).to_have_count(1)
+    start = [n for n in names() if n in ("First", "Second", "Third")]
+    assert start == ["First", "Second", "Third"]
+    pg.locator(".base-items .side-item", has_text="Third").drag_to(pg.locator(".base-items .side-item", has_text="First"))
+    eventually(lambda: [n for n in names() if n in ("First", "Second", "Third")] == ["Third", "First", "Second"] or None)
+    pg.reload()
+    expect(pg.locator(".base-items .side-item", has_text="Third")).to_have_count(1)
+    assert [n for n in names() if n in ("First", "Second", "Third")] == ["Third", "First", "Second"]
+    # the tap-friendly list
+    pg.locator(".base-more").first.click()
+    pg.click(".popover .menu-item:has-text('Reorder tables')")
+    row = pg.locator(".reorder-row", has_text="Second")
+    row.locator("button[aria-label='Move up']").click()
+    pg.click(".modal-foot button:has-text('Done')")
+    eventually(lambda: [n for n in names() if n in ("First", "Second", "Third")] == ["Third", "Second", "First"] or None)
+    assert not pg.errors, pg.errors

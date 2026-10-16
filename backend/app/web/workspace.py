@@ -2,7 +2,9 @@
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from app.core import webdav as dav
 from app.core.context import api_bases
@@ -41,10 +43,11 @@ def workspace(user=User):
             h = hidden.get(str(x["base_id"]), {})
             return {**x, "hidden": h[str(x["id"])]} if str(x["id"]) in h else x
         tables = [_table_out(own_sidebar(t)) for t in conn.execute(
-            "SELECT id, base_id, name, kind, account_id, calendar_url, last_synced_at, last_sync_error, remote, hidden, icon, dav_slug "
-            "FROM tables WHERE base_id = ANY(%s::uuid[]) AND trashed_at IS NULL ORDER BY created_at", (ids,)).fetchall()]
+            "SELECT id, base_id, name, kind, account_id, calendar_url, last_synced_at, last_sync_error, remote, hidden, icon, dav_slug, position "
+            "FROM tables WHERE base_id = ANY(%s::uuid[]) AND trashed_at IS NULL ORDER BY position NULLS LAST, created_at", (ids,)).fetchall()]
         combos = [own_sidebar(c) for c in conn.execute(
-            "SELECT id, base_id, name, sources, hidden, icon FROM combos WHERE base_id = ANY(%s::uuid[]) ORDER BY created_at", (ids,)).fetchall()]
+            "SELECT id, base_id, name, sources, hidden, icon, position FROM combos WHERE base_id = ANY(%s::uuid[]) "
+            "ORDER BY position NULLS LAST, created_at", (ids,)).fetchall()]
         accounts = [] if user.get("api_key") else conn.execute(
             "SELECT * FROM caldav_accounts WHERE user_id = %s ORDER BY is_builtin DESC, created_at", (user["id"],)
         ).fetchall()
@@ -52,6 +55,33 @@ def workspace(user=User):
 
 
 # ======================================================================== bases
+
+class ItemRef(BaseModel):
+    kind: Literal["table", "combo"]
+    id: str
+
+
+class ItemOrder(BaseModel):
+    items: list[ItemRef] = Field(..., max_length=2000)
+
+
+@router.put("/api/bases/{base_id}/order")
+def order_items(base_id: str, body: ItemOrder, user=User):
+    """The order of a base's tables and combined databases (one list), as everyone who sees the base gets it. Ones
+    left out keep coming after, in their order."""
+    with connection() as conn:
+        store.get_base(conn, base_id, user["id"], need="admin")
+        tables = [str(r["id"]) for r in conn.execute("SELECT id FROM tables WHERE base_id = %s AND trashed_at IS NULL "
+                                                     "ORDER BY position NULLS LAST, created_at", (base_id,)).fetchall()]
+        combos = [str(r["id"]) for r in conn.execute("SELECT id FROM combos WHERE base_id = %s ORDER BY position NULLS LAST, created_at",
+                                                     (base_id,)).fetchall()]
+        known = {("table", t) for t in tables} | {("combo", c) for c in combos}
+        wanted = list(dict.fromkeys((i.kind, i.id) for i in body.items if (i.kind, i.id) in known))
+        rest = [x for x in [("table", t) for t in tables] + [("combo", c) for c in combos] if x not in wanted]
+        for pos, (kind, iid) in enumerate(wanted + rest):
+            conn.execute(f"UPDATE {'tables' if kind == 'table' else 'combos'} SET position = %s WHERE id = %s", (pos, iid))
+    return {"ok": True}
+
 
 @router.get("/api/bases")
 def list_bases(user=User):
