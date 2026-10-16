@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import type { Attachment, Field, FieldView, Refs, User } from "../types";
 import {
@@ -10,6 +10,7 @@ import { Icon } from "./Icon";
 import { Popover } from "./Overlay";
 import { RecurrenceEditor } from "./RecurrenceEditor";
 import { describe as describeRepeat } from "../recur";
+import { displayOf, relativeDate } from "../display";
 import { attachmentUrl, fileExt, thumbUrl, viewOf, previewStatus } from "../files";
 import { FilePreview } from "./FileViewer";
 
@@ -111,15 +112,44 @@ export function ValueBar({ value, field }: { value: unknown; field: Field }) {
   );
 }
 
-/** "3 records" / "2 values": a field holding several, shown as how many. */
+/** "3 records" / "2 files": a field holding several, shown as how many. */
 export function CountValue({ field, n }: { field: Field; n: number }) {
-  const what = field.type === "link" ? (n === 1 ? "record" : "records") : n === 1 ? "value" : "values";
-  return <span className="count-value">{n} {what}</span>;
+  const [one, many] = field.type === "link" ? ["record", "records"] : field.type === "attachment" ? ["file", "files"]
+    : ["user", "created_by", "last_modified_by"].includes(field.type) ? ["person", "people"] : ["value", "values"];
+  return <span className="count-value">{n} {n === 1 ? one : many}</span>;
+}
+
+/** A value shown one of its other ways (display.ts); null: its ordinary look. */
+function shownAs(field: Field, value: any, how: FieldView, refs: Refs): ReactNode | null {
+  const items: any[] = Array.isArray(value) ? value : [value];
+  const one = (x: any, i: number) => <CellValue key={i} field={field} value={field.type === "single_select" || field.type === "checkbox" ? x : [x]}
+    view={field.type === "attachment" ? "thumbs" : field.type === "checkbox" ? "check" : field.type === "rating" ? "stars" : "chips"} />;
+  const name = (x: any): string => field.type === "link" ? refs.records[x] || "Untitled"
+    : ["user", "created_by", "last_modified_by"].includes(field.type) ? refs.users[x] ?? "unknown"
+    : field.type === "attachment" ? (x as Attachment).name
+    : field.type === "lookup" || field.type === "conditional_lookup" ? (innerField(field) ? displayText(innerField(field)!, x, refs) : String(x))
+    : String(x);
+  switch (how) {
+    case "count": return <CountValue field={field} n={items.length} />;
+    case "text": case "names": return <span className="plain-values">{items.map(name).join(", ")}</span>;
+    case "list": return <ul className="value-list">{items.map((x, i) => <li key={i}>{one(x, i)}</li>)}</ul>;
+    case "hcards": return <span className="value-hcards">{items.map((x, i) => <span key={i} className="value-hcard">{one(x, i)}</span>)}</span>;
+    case "bar": return <ValueBar value={value} field={field} />;
+    case "stat": return <span className="stat-value">{typeof value === "number" ? formatNumber(value, field.options) : String(value)}</span>;
+    case "number": return <span className="num">{Number(value) || 0} / {field.options.max ?? 5}</span>;
+    case "yesno": return <span className={`yesno ${value ? "yes" : "no"}`}>{value ? "Yes" : "No"}</span>;
+    case "relative": return typeof value === "string" ? <span title={formatDate(value, !isDateOnly(value), field.options)}>{relativeDate(value)}</span> : null;
+    case "gallery": return <span className="value-gallery"><AttachmentThumbs items={fileItems(value)} size={104} /></span>;
+    case "large": return <span className="large-text">{field.type === "phone" ? formatPhone(value) : String(value)}</span>;
+    default: return null;
+  }
 }
 
 /** Long text with fields placed in it as a page's body ({{field:<id>}} lines): those lines read as the fields' names. */
 export const embedLabel = (text: string, fields?: Field[]) =>
   text.replace(/^\{\{field:([\w-]+)\}\}$/gm, (_, id) => `[${fields?.find((f) => f.id === id)?.name ?? "field"}]`);
+/** Long text as a cell shows it: without the Markdown marks a page body may have (#, list bullets, **, `). */
+const plainText = (text: string) => text.replace(/^#{1,6}\s+/gm, "").replace(/^\s*[-*+]\s+/gm, "• ").replace(/(\*\*|__|`)/g, "");
 export const FieldsContext = createContext<Field[] | undefined>(undefined);
 
 /** Read-only rendering of a value. `view`: how (see FieldViews); unset = the field's own choice for the table's cells. */
@@ -128,14 +158,12 @@ export function CellValue({ field, value, view }: { field: Field; value: any; vi
   const siblings = useContext(FieldsContext);
   if (isErrorValue(value)) return <span className="cell-error" title={value.__error}>#ERROR</span>;
   if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) return null;
-  const shownAs = view ?? field.options.views?.cell;
-  if (shownAs === "count" && ["link", "lookup", "conditional_lookup"].includes(field.type)) {
-    return <CountValue field={field} n={Array.isArray(value) ? value.length : 1} />;
-  }
-  if (shownAs === "bar" && ["rollup", "conditional_rollup"].includes(field.type)) return <ValueBar value={value} field={field} />;
+  const how = view ?? displayOf(field, "cell");
+  const special = how ? shownAs(field, value, how, refs) : null;
+  if (special) return special;
   switch (field.type) {
     case "long_text":
-      return <span>{embedLabel(String(value), siblings)}</span>;
+      return <span>{plainText(embedLabel(String(value), siblings))}</span>;
     case "checkbox":
       return <span className={`check ${value ? "on" : ""}`}>{value ? "✓" : ""}</span>;
     case "single_select":

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPBearer
 from pydantic import BaseModel, Field
 
-from app.adapters import apiv1, webhooks
+from app.adapters import apiv1, pageapi, webhooks
 from app.core.db import connection, Jsonb
 from app.core.secretbox import seal, unseal
 from app.identity import auth
@@ -190,6 +190,24 @@ def list_records(table: str, base: str | None = None, view: str | None = Query(N
                  field_key: str = Key, user=User):
     return _run(apiv1.query_records, user, table, base=base, view=view, filters=filter, search=search, sort=sort,
                 fields=fields, limit=limit, offset=offset, cell_format=cell_format, field_key=field_key)
+
+
+@v1.get("/tables/{table}/page", tags=["Pages"], summary="Get a table's page layout",
+        description="How the table's records show as pages: the blocks (each field by id and name, how it's shown and whether that's "
+                    "the block's, the field's or the default choice), their conditions, sections and tabs, related lists, numbers, the "
+                    "fields kept under the title, the outline, the template for new records, and a layout for each kind of record. "
+                    "A table without a layout of its own gets the default one (`laid_out: false`).")
+def get_page_layout(table: str, base: str | None = None, user=User):
+    return _run(pageapi.describe_page, user, table, base)
+
+
+@v1.get("/tables/{table}/records/{record_id}/page", tags=["Pages"], summary="Get a record's page",
+        description="A record as its page shows it: which layout it gets and why (`layout_used`), every block, including the "
+                    "ones its conditions hide (`shown: false`), each condition with the record's actual values and whether each "
+                    "part is met, the values shown (raw and as text) and how, the fields placed in a page body's text, related "
+                    "records, files, numbers, and the fields under the title.")
+def get_record_page(table: str, record_id: str, base: str | None = None, user=User):
+    return _run(pageapi.record_page, user, table, record_id, base)
 
 
 @v1.get("/tables/{table}/records/{record_id}", tags=["Records"], summary="Get a record")

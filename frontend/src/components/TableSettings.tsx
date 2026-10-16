@@ -7,6 +7,7 @@ import { FieldIcon, Icon, tableIcon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
 import { StorageEditor } from "./StorageForm";
 import { TemplateActions } from "./Templates";
+import { PageDesigner } from "./PageDesigner";
 
 type Section = "general" | "fields" | "page" | "sync" | "sharing" | "data" | "template" | "delete";
 
@@ -32,6 +33,7 @@ export interface TableSettingsActions {
   linkSettings?: () => void;
   feeds?: () => void;
   setPage?: (page: PageLayout | null) => void;   // records as pages (null: no page)
+  setPrimary?: (fieldId: string) => void;          // which field is each record's title
   remove: (deleteOnServer: boolean | null) => void;
 }
 
@@ -53,7 +55,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
   const sections: { id: Section; label: string }[] = [
     { id: "general", label: "General" },
     ...(ds.kind === "table" && !remote ? [{ id: "fields" as Section, label: "Fields" }] : []),
-    ...(ds.kind === "table" && actions.setPage ? [{ id: "page" as Section, label: "Page" }] : []),
+    ...(actions.setPage ? [{ id: "page" as Section, label: "Page" }] : []),
     ...(synced ? [{ id: "sync" as Section, label: ds.dav?.builtin ? "Phones" : "Sync" }] : files ? [{ id: "sync" as Section, label: "Storage" }]
       : remote ? [{ id: "sync" as Section, label: "Link" }] : ds.kind === "combo" ? [{ id: "sync" as Section, label: "Sources" }] : []),
     ...(actions.feeds && hasDates && !files ? [{ id: "sharing" as Section, label: "Calendar links" }] : []),
@@ -66,7 +68,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
 
   return (
     <Modal title={<span className="row"><Icon name="settings" size={16} /> {ds.kind === "combo" ? "Combined database" : "Table"} settings</span>}
-      width={760} onClose={onClose} footer={<><span className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></>}>
+      width={section === "page" ? 1200 : 760} onClose={onClose} footer={<><span className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></>}>
       <div className="settings-split">
         <nav className="settings-nav">
           {sections.map((s) => <button key={s.id} className={section === s.id ? "active" : ""} onClick={() => setSection(s.id)}>{s.label}</button>)}
@@ -74,21 +76,7 @@ export function TableSettings({ ds, bases, currentBase, hiddenInSidebar, syncing
         <div className="settings-pane">
           {section === "general" && <General ds={ds} kind={kind} bases={bases} currentBase={currentBase} hiddenInSidebar={hiddenInSidebar} actions={actions} word={word} />}
           {section === "fields" && <Fields ds={ds} canManage={canManage} actions={actions} />}
-          {section === "page" && actions.setPage && (
-            <div className="form">
-              <label className="inline-check"><input type="checkbox" checked={!!t?.page?.enabled}
-                onChange={(e) => actions.setPage!({ enabled: e.target.checked, blocks: t?.page?.blocks ?? [] })} /> Open records as pages</label>
-              <p className="hint">A page shows a record like a document: its title large, then its fields in blocks you arrange (a link as a
-                table, a list or cards…), headings and dividers, and a long text field as the page's body, where other fields can be placed in
-                the text. The record panel is still a click away (Page | Record). To lay the page out, open a record as a page and choose
-                <b> Edit page</b>; it's the same for every record of this table.</p>
-              {!!t?.page?.blocks.length && (
-                <div className="settings-actions">
-                  <button className="btn sm" onClick={() => actions.setPage!(t?.page?.enabled ? { enabled: true, blocks: [] } : null)}>Reset the layout</button>
-                </div>
-              )}
-            </div>
-          )}
+          {section === "page" && actions.setPage && <PageDesigner ds={ds} onChange={actions.setPage} />}
           {section === "sync" && synced && t && ds.dav?.builtin && (
             <div className="form">
               <dl className="settings-facts">
@@ -236,6 +224,8 @@ function General({ ds, kind, bases, currentBase, hiddenInSidebar, actions, word 
 }
 
 /** The table's own fields, in the table's order (drag to change it); views can still show them their own way. */
+const PRIMARY_TYPES = new Set(["text", "long_text", "number", "url", "email", "phone", "single_select", "date", "autonumber", "formula"]);  // (backend: schema.PRIMARY_TYPES)
+
 function Fields({ ds, canManage, actions }: { ds: Dataset; canManage: boolean; actions: TableSettingsActions }) {
   const [order, setOrder] = useState(() => ds.fields.map((f) => f.id));
   const [drag, setDrag] = useState<string | null>(null);
@@ -246,8 +236,18 @@ function Fields({ ds, canManage, actions }: { ds: Dataset; canManage: boolean; a
     await api.post(`/tables/${ds.id}/fields/order`, { ids }).catch(() => undefined);
     actions.fieldsReordered();
   };
+  const primary = ds.fields.find((f) => f.is_primary);
+  const canBePrimary = ds.fields.filter((f) => PRIMARY_TYPES.has(f.type));
   return (
     <div className="form">
+      {actions.setPrimary && primary && (
+        <label className="stack">Primary field
+          <select className="input" value={primary.id} onChange={(e) => actions.setPrimary!(e.target.value)}>
+            {canBePrimary.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          <span className="hint">Each record's title: the first column, what links to it show, and a page's title. Text, numbers, dates, single selects, emails, links, phone numbers, autonumbers and formulas can be.</span>
+        </label>
+      )}
       <p className="muted small">The table's field order (new views use it; a view can still have its own). Locked fields come from the {ds.table?.kind === "files" ? "file storage" : "synced calendar or address book"} and keep their names.</p>
       <div className="settings-list">
         {list.map((f) => (

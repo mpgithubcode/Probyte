@@ -63,6 +63,34 @@ def api_lookup_records(table_id: str, body: RecordIds, user=User):
                          "refs": eng.refs(table_id, recs)})
 
 
+class RelatedIn(BaseModel):
+    field: str            # this table's link field
+    record: str           # the record (of the table it links to) whose related records these are
+    view: str | None = None
+    limit: int = 100
+
+
+@router.post("/api/tables/{table_id}/records/related")
+def api_related_records(table_id: str, body: RelatedIn, user=User):
+    """The records of a table that link to a record through its link field: a page's related list (in a view's filter and
+    order, when given), with every field computed and what's needed to show them."""
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"])
+        eng = Engine(conn)
+        fields = eng.describe(table_id)
+        if not any(str(f["id"]) == body.field and f["type"] == "link" for f in fields):
+            store.not_found("Link field not found")
+        records = [r for r in eng.records(table_id) if body.record in (r["data"].get(body.field) or [])]
+        if body.view:
+            v = conn.execute("SELECT config FROM views WHERE id = %s AND table_id = %s", (body.view, table_id)).fetchone()
+            if v:
+                records = apply_view(eng, fields, records, v["config"])
+        total = len(records)
+        records = records[:max(1, min(body.limit, 500))]
+        return FastJSON({"fields": fields, "records": [store.clean_record(r) for r in records], "refs": eng.refs(table_id, records),
+                         "total": total})
+
+
 @router.get("/api/records/{record_id}")
 def api_get_record(record_id: str, field_key: Literal["id", "name"] = "id", user=User):
     with connection() as conn:

@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, type ReactNode } from "react";
+import { Suspense, lazy, useContext, useEffect, useState, type ReactNode } from "react";
 import { FileView, FullViewer } from "./FileViewer";
 import type { Attachment, CreateTarget, Dataset, Field, Rec, RecordSection } from "../types";
 import { addExdate, anchorOf, describe, findOverride, occurrences, occurrenceData, overrideKey, seriesDateFields, setOverride } from "../recur";
@@ -10,13 +10,27 @@ import { Modal, Popover, usePopover } from "./Overlay";
 import { showToast } from "../toast";
 import { RecordHistory } from "./RecordHistory";
 import { RecordValue } from "./LinkedView";
+import { allBlocks, embeddable, embeddedField, pageOf } from "./PageBlocks";
+
+const PageDoc = lazy(() => import("./PageDoc"));
+const EMBED = /^\{\{field:[\w-]+\}\}$/m;
+
+/** Is this long text a page's body (in the table's page layout), or does it have fields placed in its text? Then the
+ * record panel shows and edits it as the page does: formatted, with those fields live, never as {{field:…}} lines. */
+function isPageBody(ds: Dataset, f: Field, value: unknown) {
+  if (f.type !== "long_text") return false;
+  if (typeof value === "string" && EMBED.test(value)) return true;
+  const page = pageOf(ds);
+  if (!page) return false;
+  const all = [...page.blocks, ...Object.values(page.variants?.layouts ?? {}).flat()];
+  return allBlocks(all).some((b) => b.type === "doc" && b.field === f.id);
+}
 
 export interface RecordNav { index: number; total: number; prev?: () => void; next?: () => void }
 
 export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onButton, can = CAN_ALL, occurrence, history = true,
-  docked, nav, sections, onSections, onDuplicate, link, onCompleteOccurrence, onPage }: {
+  docked, nav, sections, onSections, onDuplicate, link, onCompleteOccurrence }: {
   onCompleteOccurrence?: (occurrence: string) => void;   // a repeating record: mark one of its dates done
-  onPage?: () => void;  // the table has a page: open the record as one instead
   history?: boolean;  // show "who changed what" (not on public links)
   docked?: boolean;   // a panel beside the view (the app) instead of a dialog (public links)
   nav?: RecordNav;    // the record's place in the view: previous / next (↑ ↓, J / K)
@@ -90,6 +104,23 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
                 </button>
               ) : f.mapping && rec.table_id && !f.mapping[rec.table_id] ? (
                 <span className="muted">Not mapped for this source</span>
+              ) : isPageBody(ds, f, rec.data[f.id]) ? (
+                <div className="page-body-block record-doc">
+                  <Suspense fallback={<div className="muted">Loading…</div>}>
+                    <PageDoc key={`${rec.id}:${f.id}`} value={String(rec.data[f.id] ?? "")} editable={can.edit && isEditable(f)}
+                      onChange={(md) => onUpdate({ [f.id]: md.trim() ? md : null })}
+                      fields={embeddable(fields.filter((x) => x.id !== f.id && x.type !== "long_text" && x.type !== "button" && !x.is_primary && x.id !== "__source"), rec.table_id)}
+                      renderField={(id) => {
+                        const ef = embeddedField(fields, id, rec.table_id);
+                        return ef ? (
+                          <div className="page-field">
+                            <span className="page-label"><FieldIcon type={ef.type} /> {ef.name}</span>
+                            <RecordValue field={fitField(ef, kind, rec.data[ef.id])} value={rec.data[ef.id]} rec={rec} canEdit={can.edit} onUpdate={onUpdate} />
+                          </div>
+                        ) : <span className="muted small">A field that's no longer here</span>;
+                      }} />
+                  </Suspense>
+                </div>
               ) : (
                 <RecordValue field={fitField(f, kind, rec.data[f.id])} value={rec.data[f.id]} rec={rec} canEdit={can.edit} onUpdate={onUpdate}
                   anchor={f.type === "recurrence" ? anchorOf(fields, rec) : undefined} />
@@ -103,7 +134,6 @@ export function RecordModal({ ds, rec, fields, onUpdate, onDelete, onClose, onBu
     navigator.clipboard?.writeText(link).then(() => showToast("Link to the record copied"), () => showToast(link));
   };
   const actions = (<>
-    {onPage && <button className="btn sm ghost" onClick={onPage} title="Open the record as a page"><Icon name="expand" size={14} /> Page</button>}
     {nav && nav.total > 1 && (
       <span className="record-nav">
         <button className="icon-btn" onClick={nav.prev} disabled={!nav.prev} title="Previous record (K)" aria-label="Previous record"><Icon name="up" size={16} /></button>

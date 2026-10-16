@@ -27,7 +27,7 @@ export async function loadDataset(kind: "table" | "combo", id: string): Promise<
   const r = await api.get(`/combos/${id}?defer_remote=true`);
   const comboFields = r.fields.filter((f: Field) => f.id !== "__source").map((f: Field) => ({ id: f.id, name: f.name, mapping: f.mapping ?? {} }));
   return { kind, id, name: r.combo.name, baseId: r.combo.base_id, access: r.access, sources: r.sources, comboFields, fields: r.fields, views: r.views,
-    records: r.records, refs: r.refs, loadedAt, pending: r.pending ?? [], icon: r.combo.icon, description: r.combo.description };
+    records: r.records, refs: r.refs, loadedAt, pending: r.pending ?? [], icon: r.combo.icon, description: r.combo.description, page: r.combo.page ?? null };
 }
 
 /** One pending source of a combined database; returns an updater that merges its records in. */

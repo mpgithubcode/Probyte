@@ -39,6 +39,7 @@ class ShareItem(BaseModel):
     kind: Literal["table", "combo"]
     id: str
     views: list[str] | None = None  # None = every view of the table
+    record: str | None = None       # a table: only this record, opened as its page (a link to one page)
 
 
 class SharePerms(BaseModel):
@@ -85,7 +86,15 @@ def _validate_items(conn, user_id, base_id, items: list[ShareItem]) -> list[dict
         views = all_views if it.views is None else [v for v in it.views if v in all_views]
         if not views:
             raise HTTPException(400, "Choose at least one view for every shared table")
-        out.append({"kind": it.kind, "id": it.id, "views": None if it.views is None else views})
+        entry = {"kind": it.kind, "id": it.id, "views": None if it.views is None else views}
+        if it.record:
+            tables = [it.id] if it.kind == "table" else [str(s["table_id"]) for s in (conn.execute(
+                "SELECT sources FROM combos WHERE id = %s", (it.id,)).fetchone() or {"sources": []})["sources"]]
+            if not conn.execute("SELECT 1 FROM records WHERE id::text = %s AND table_id::text = ANY(%s) AND NOT deleted",
+                                (it.record, tables)).fetchone():
+                raise HTTPException(400, "That record isn't in the shared table")
+            entry["record"] = it.record
+        out.append(entry)
     if not out:
         raise HTTPException(400, "Choose at least one table to share")
     return out
@@ -208,7 +217,35 @@ def _items(conn, s):
             kind = table.get("kind", "combo")
             if kind == "remote":  # a linked table shared on again: what its source is
                 kind = (conn.execute("SELECT remote FROM tables WHERE id = %s", (table["id"],)).fetchone()["remote"] or {}).get("source_kind") or "remote"
-            out.append({"kind": it["kind"], "id": str(table["id"]), "name": table["name"], "table_kind": kind, "views": views})
+            out.append({"kind": it["kind"], "id": str(table["id"]), "name": table["name"], "table_kind": kind, "views": views,
+                        "record": it.get("record")})
+    return out
+
+
+def _public_page(page: dict | None) -> dict | None:
+    """A table's page layout for a link to one of its pages: without what would show other tables (related lists) or
+    is only for making records (the template)."""
+    if not page:
+        return None
+    def keep(blocks):
+        out = []
+        for b in blocks or []:
+            if b.get("type") == "related":
+                continue
+            b = dict(b)
+            if "blocks" in b:
+                was = b["blocks"]
+                b["blocks"] = keep(b["blocks"])
+                if was and not b["blocks"]:
+                    continue   # a section that held only what isn't shared
+            if "tabs" in b:
+                b["tabs"] = [{**t, "blocks": keep(t.get("blocks"))} for t in b["tabs"]]
+            out.append(b)
+        return out
+    out = {k: v for k, v in page.items() if k not in ("template", "templateField", "blocks", "variants")}
+    out["blocks"] = keep(page.get("blocks"))
+    if page.get("variants"):
+        out["variants"] = {"field": page["variants"]["field"], "layouts": {k: keep(v) for k, v in page["variants"]["layouts"].items()}}
     return out
 
 
@@ -233,7 +270,10 @@ def _view_payload(conn, s, item, view):
         combo = store.get_combo(conn, item["id"], s["user_id"])
         sources, all_fields = store.resolve_combo(conn, combo, eng)
         records = store.combo_records(conn, combo, eng)
-    filtered = apply_view(eng, all_fields, records, view["config"])
+    if item.get("record"):   # a link to one page: that record (whatever the view's filter says)
+        filtered = [r for r in records if str(r["id"]) == item["record"]]
+    else:
+        filtered = apply_view(eng, all_fields, records, view["config"])
     hidden |= {str(f["id"]) for f in all_fields if f["type"] in HIDDEN_BY_DEFAULT and str(f["id"]) not in shown}
     fields = [dict(f) for f in all_fields if f["id"] == "__source" or f.get("is_primary") or str(f["id"]) not in hidden]
     keep = {str(f["id"]) for f in fields}
@@ -254,6 +294,10 @@ def _view_payload(conn, s, item, view):
             "views": [{"id": str(v["id"]), "name": v["name"], "type": v["type"], "config": {}} for v in item["views"]],
             "fields": fields, "records": out_records, "refs": refs,
             "permissions": effective(s["permissions"]), "link_name": s["name"],
+            "record": item.get("record"),
+            "page": _public_page(conn.execute(f"SELECT page FROM {'tables' if item['kind'] == 'table' else 'combos'} WHERE id = %s",
+                                              (item["id"],)).fetchone()["page"])
+            if item.get("record") else None,
             "sources": [{k: x[k] for k in ("table_id", "name", "kind", "color")} for x in sources] if sources else None}
 
 
@@ -314,7 +358,8 @@ def core_meta(token: str, cookie: str | None) -> dict:
     return {"name": s["name"], "color": s["color"], "permissions": effective(s["permissions"]), "needs_password": not unlocked,
             "whole_base": bool(s.get("whole_base")), "base_name": base["name"] if base else None,
             "items": [{"kind": i["kind"], "id": i["id"], "name": i["name"], "table_kind": i["table_kind"],
-                       "views": [{"id": str(v["id"]), "name": v["name"], "type": v["type"]} for v in i["views"]]} for i in items]}
+                       "views": [{"id": str(v["id"]), "name": v["name"], "type": v["type"]} for v in i["views"]],
+                       "record": i.get("record")} for i in items]}
 
 
 def core_unlock(token: str, password: str, request: Request | None = None) -> tuple[str, str]:
@@ -346,6 +391,8 @@ def core_create(token: str, view_id: str, data: dict, table_id: str | None, cook
         if not s["permissions"].get("add"):
             raise HTTPException(403, "Adding records isn't allowed on this link")
         item, view = _find_view(conn, s, view_id)
+        if item.get("record"):
+            raise HTTPException(403, "This link shares one page: records can't be added through it")
         data = _writable(_view_payload(conn, s, item, view), data)
         if item["kind"] == "table":
             tid = item["id"]
@@ -391,6 +438,8 @@ def core_delete(token: str, view_id: str, record_id: str, cookie: str | None) ->
         if not s["permissions"].get("delete"):
             raise HTTPException(403, "Deleting isn't allowed on this link")
         item, view = _find_view(conn, s, view_id)
+        if item.get("record"):
+            raise HTTPException(403, "This link shares one page: its record can't be deleted through it")
         rec = _visible_record(_view_payload(conn, s, item, view), record_id)
         recordops.delete(conn, rec["table_id"], record_id, s["user_id"])
 

@@ -3,12 +3,16 @@ import type { Field, Rec } from "../types";
 import { addDaysKey, dayKey, dayOfWeek, formatTime, isDateField, isEditable, keyOf, parseKey, recordTitle, shiftValue, weekdayNames, weekStartsOn } from "../util";
 import { expandRecords, overrideKey, setOverride } from "../recur";
 import { TimeGrid } from "./CalendarTimeGrid";
+import { Popover } from "./Overlay";
 import { Icon } from "./Icon";
 import { isTouch, useNarrow } from "./useNarrow";
 import type { ViewProps } from "./viewTypes";
 
 const occKey = (r: Rec) => `${r.id}:${r.occurrence ?? ""}`;
 const MAX_SPAN_DAYS = 62;
+
+/** Events a day of the month shows before "+N more". */
+const DAY_ITEMS = 3;
 
 export function CalendarView({ fields, records, view, ops, setConfig }: ViewProps) {
   const canEdit = (f: Field) => ops.can.edit && isEditable(f);
@@ -19,6 +23,7 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [dragId, setDragId] = useState<string | null>(null);
   const [overDay, setOverDay] = useState<string | null>(null);
+  const [moreDay, setMoreDay] = useState<{ day: string; anchor: HTMLElement } | null>(null);   // a busy day's "+N more", opened
   const today = keyOf(new Date());
   const narrow = useNarrow();
   const [picked, setPicked] = useState<string>(today);
@@ -26,10 +31,11 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
   const [focus, setFocus] = useState<string>(today);   // the day shown (day view) or inside the week shown (week view)
   const tdays = useMemo(() => {
     if (mode === "day") return [focus];
+    if (narrow) return [0, 1, 2].map((i) => addDaysKey(focus, i));   // a phone: 3 days that fit the screen (no sideways scrolling)
     const d = parseKey(focus);
     d.setDate(d.getDate() - dayOfWeek(d));
     return Array.from({ length: 7 }, (_, i) => addDaysKey(keyOf(d), i));
-  }, [mode, focus, weekStartsOn()]);
+  }, [mode, focus, narrow, weekStartsOn()]);
   const tExpanded = useMemo(() => (startField && mode !== "month" ? expandRecords(records, fields, startField, endField, tdays[0], tdays[tdays.length - 1]) : []),
     [records, fields, startField, endField, tdays, mode]);
   // Keep the picked day inside the month being shown (today if it's this month).
@@ -105,7 +111,7 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
 
   const shift = (n: number) => {
     if (mode === "month") return setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1));
-    setFocus((f) => addDaysKey(f, n * (mode === "week" ? 7 : 1)));
+    setFocus((f) => addDaysKey(f, n * (mode === "week" ? tdays.length : 1)));
   };
   const monthKey = keyOf(month).slice(0, 7);
   const goToday = () => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setFocus(today); };
@@ -118,7 +124,7 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
   const title = mode === "month" ? month.toLocaleDateString(undefined, { month: "long", year: "numeric" })
     : mode === "day" ? parseKey(focus).toLocaleDateString(undefined, { weekday: narrow ? "short" : "long", month: "long", day: "numeric", year: "numeric" })
     : (() => {
-      const a = parseKey(tdays[0]), b = parseKey(tdays[6]);
+      const a = parseKey(tdays[0]), b = parseKey(tdays[tdays.length - 1]);
       const sameMonth = a.getMonth() === b.getMonth();
       return `${a.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${b.toLocaleDateString(undefined, sameMonth ? { day: "numeric" } : { month: "short", day: "numeric" })}, ${b.getFullYear()}`;
     })();
@@ -133,7 +139,7 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
       {undated > 0 && mode === "month" && !narrow && <span className="muted">{undated} without a date</span>}
       <div className="segmented sm">
         {(["day", "week", "month"] as const).map((m) => (
-          <button key={m} className={mode === m ? "active" : ""} onClick={() => setMode(m)}>{m[0].toUpperCase() + m.slice(1)}</button>
+          <button key={m} className={mode === m ? "active" : ""} onClick={() => setMode(m)}>{m === "week" && narrow ? "3 days" : m[0].toUpperCase() + m.slice(1)}</button>
         ))}
       </div>
     </div>
@@ -192,7 +198,11 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
                 </button>
               )}
             </div>
-            {(byDay.get(k) ?? []).map(({ rec, isStart }) => {
+            {(() => {
+              // a busy day: its first few, then "+N more" (a click lists them all)
+              const all = byDay.get(k) ?? [];
+              const shown = all.length > DAY_ITEMS + 1 ? all.slice(0, DAY_ITEMS) : all;
+              return <>{shown.map(({ rec, isStart }) => {
               const color = ops.colorFor(rec, view.config.colorField) ?? "#6366f1";
               const time = isStart ? formatTime(rec.data[startField.id]) : "";
               return (
@@ -208,8 +218,30 @@ export function CalendarView({ fields, records, view, ops, setConfig }: ViewProp
                 </div>
               );
             })}
+              {shown.length < all.length && (
+                <button type="button" className={`cal-more ${moreDay?.day === k ? "open" : ""}`} aria-expanded={moreDay?.day === k}
+                  onClick={(e) => setMoreDay(moreDay?.day === k ? null : { day: k, anchor: e.currentTarget })}>
+                  +{all.length - shown.length} more</button>
+              )}</>;
+            })()}
           </div>
         ))}
+        {moreDay && (
+          <Popover anchor={moreDay.anchor} onClose={() => setMoreDay(null)} width={280}>
+            <div className="menu-list tgrid-stack-list">
+              <div className="menu-heading">{parseKey(moreDay.day).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+                {" · "}{(byDay.get(moreDay.day) ?? []).length} events</div>
+              {(byDay.get(moreDay.day) ?? []).map(({ rec, isStart }) => (
+                <button key={occKey(rec)} className="menu-item tgrid-stack-item" style={{ borderLeftColor: ops.colorFor(rec, view.config.colorField) ?? "#6366f1" }}
+                  onClick={() => { setMoreDay(null); ops.open(rec); }}>
+                  <span className="tgrid-stack-time">{isStart ? formatTime(rec.data[startField.id]) || "All day" : "Continues"}</span>
+                  <span className="tgrid-stack-title">{recordTitle(fields, rec)}</span>
+                  {rec.occurrence && <Icon name="repeat" size={10} className="cal-repeat" />}
+                </button>
+              ))}
+            </div>
+          </Popover>
+        )}
       </div>
       {narrow && (
         <div className="cal-agenda">

@@ -355,7 +355,9 @@ class Engine:
             "SELECT GREATEST((SELECT max(row_version) FROM records WHERE table_id = %s),"
             " (SELECT max(row_version) FROM record_tombstones WHERE table_id = %s), 0) AS v", (tid, tid)).fetchone()["v"]
         others = key if self._self_dependent(tid) else tuple(k for k in key if not (isinstance(k, tuple) and k[0] == tid))
-        fp = hashlib.sha1(repr((others, self._fields_sig(tid))).encode()).hexdigest()[:16]
+        # (and its page layout: a page switched on or laid out elsewhere makes copies load the table again)
+        page = self.conn.execute("SELECT md5(COALESCE(page::text, '')) AS p FROM tables WHERE id = %s", (tid,)).fetchone()
+        fp = hashlib.sha1(repr((others, self._fields_sig(tid), page["p"] if page else None)).encode()).hexdigest()[:16]
         return f"{rv}.{fp}"
 
     def changes(self, table_id, since: str) -> dict:

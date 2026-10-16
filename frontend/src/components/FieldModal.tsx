@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { Choice, Field, FieldOptions, FieldType, FieldView, FieldViews, FilterCond, FilterGroup, TableInfo, View } from "../types";
 import { COMPUTED_TYPES, DATE_FORMATS, FIELD_TYPES, PALETTE, ROLLUP_FUNCS, formatDate, formatNumber, isEditable, BUILTIN_KEYS, valueType } from "../util";
 import { FormulaEditor } from "./FormulaEditor";
-import { VIEW_LABEL, viewsFor } from "./LinkedView";
+import { VIEW_LABEL, displaysFor } from "../display";
 import { DateValue, FilterEditor } from "./ViewControls";
 import { FieldIcon, Icon } from "./Icon";
 import { Modal, Popover, usePopover } from "./Overlay";
@@ -656,7 +656,7 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
         )}
 
         {/* ---------------- how a field holding several records / values is shown, in the cells and on records */}
-        {viewsFor({ type, options: o } as Field, "record").length > 0 && (() => {
+        {(displaysFor({ type, options: o } as Field, "record").length > 1 || displaysFor({ type, options: o } as Field, "cell").length > 1) && (() => {
           const v = o.views ?? {};
           const setV = (p: Partial<FieldViews>) => {
             const n = { ...v, ...p };
@@ -664,7 +664,8 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
             set({ views: Object.keys(n).length ? n : undefined });
           };
           const pick = (where: "cell" | "record", label: string) => {
-            const opts = viewsFor({ type, options: o } as Field, where);
+            const opts = displaysFor({ type, options: o } as Field, where);
+            if (opts.length < 2) return null;
             return (
               <label className="stack">{label}
                 <select className="input" value={v[where] && opts.includes(v[where]!) ? v[where] : opts[0]}
@@ -674,8 +675,8 @@ export function FieldModal({ tableId, tableName, field, fields, tables, onClose,
               </label>
             );
           };
-          const recordView = v.record ?? viewsFor({ type, options: o } as Field, "record")[0];
-          const listed = type === "link" && ["list", "table", "cards"].includes(recordView) && foreignFields;
+          const recordView = v.record ?? displaysFor({ type, options: o } as Field, "record")[0];
+          const listed = type === "link" && ["list", "table", "cards", "hcards"].includes(recordView) && foreignFields;
           const chosen = new Set(v.fields ?? []);
           return (
             <Section title="How it's shown">

@@ -332,6 +332,10 @@ function test(byId: Map<string, Field>, r: Rec, node: Filter | FilterGroup, refs
   return matches(field, r.data[field.id], node, refs);
 }
 
+/** Does a record meet these conditions (a page block's "show only when…")? No conditions: yes. */
+export const recordMatches = (rec: Rec, fields: Field[], group: FilterGroup | null | undefined, refs?: Refs) =>
+  !group?.items?.length || test(new Map(fields.map((f) => [f.id, f])), rec, group, refs);
+
 export function applyView(records: Rec[], fields: Field[], config: ViewConfig, search: string, refs?: Refs) {
   const byId = new Map(fields.map((f) => [f.id, f]));
   let out = records;

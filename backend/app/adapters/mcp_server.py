@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from app.adapters import apiv1
+from app.adapters import apiv1, pageapi
 from app.core.context import api_bases, writing
 from app.core.db import connection
 from app.data import audit
@@ -80,6 +80,14 @@ TOOLS = [
            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 25},
            "offset": {"type": "integer", "minimum": 0, "default": 0}}, ["table"], read_only=True),
     _tool("get_record", "Get a record", "One record by id, with all its fields.", {"field_key": FIELD_KEY, "record_id": {"type": "string"}}, ["record_id"], read_only=True),
+    _tool("describe_page", "Describe a table's page",
+          "How a table's records show as pages: blocks (fields, how each is shown), conditions, sections, tabs, related lists, numbers, "
+          "the fields under the title, the template for new records, and a layout for each kind of record.",
+          {"table": TABLE, "base": BASE}, ["table"], read_only=True),
+    _tool("get_page", "Get a record's page",
+          "A record as its page shows it: the layout it gets and why, every block (also hidden ones, shown: false) with its conditions "
+          "evaluated against the record's values, the values shown, related records, files and numbers.",
+          {"table": TABLE, "base": BASE, "record_id": {"type": "string"}}, ["table", "record_id"], read_only=True),
     _tool("search", "Search everything", "Find records containing some text in any field of any table.",
           {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, ["query"], read_only=True),
     _tool("create_records", "Create records", "Add records to a table (up to 200 per call; all-or-nothing).",
@@ -131,6 +139,10 @@ def _call(user: dict, name: str, a: dict):
                    offset=a.get("offset") or 0, cell_format="text", field_key=fk)
     if name == "get_record":
         return run(apiv1.get_record, a["record_id"], "text", fk)
+    if name == "describe_page":
+        return run(pageapi.describe_page, a["table"], a.get("base"))
+    if name == "get_page":
+        return run(pageapi.record_page, a["table"], a["record_id"], a.get("base"))
     if name == "search":
         return {"results": run(apiv1.search_all, a["query"], min(int(a.get("limit") or 20), 100))}
     if name == "create_records":

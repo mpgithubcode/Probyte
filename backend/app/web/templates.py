@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.data import store
+from app.data import pages, store
 from app.data.schema import BUILTIN_FIELDS
 
 from app.calc.compute import COMPUTED_TYPES, Engine, FIELD_TYPES
@@ -66,6 +66,47 @@ def tokenize(obj: Any, names: dict[str, str]) -> Any:
 
 
 _GONE = object()
+EMBED_LINE = re.compile(r"^\{\{field:([^}\n]+)\}\}$", re.M)   # a field placed in a page body's text, on its own line
+
+
+def embeds_to_names(text, names: dict[str, str]):
+    """A page body's text: its placed fields' ids -> names (in a template)."""
+    return EMBED_LINE.sub(lambda m: f"{{{{field:{names.get(m.group(1), m.group(1))}}}}}", text) if isinstance(text, str) else text
+
+
+def embeds_to_ids(text, ids: dict[str, str]):
+    """…and back, in the new table (a field it doesn't have: the line goes)."""
+    if not isinstance(text, str):
+        return text
+    return EMBED_LINE.sub(lambda m: f"{{{{field:{ids[m.group(1).lower()]}}}}}" if m.group(1).lower() in ids else "", text)
+
+
+def page_to_template(page, names: dict[str, str]):
+    """A table's page layout in a template: fields by name; related lists (other tables) left out."""
+    if not page:
+        return None
+    def keep(blocks):
+        out = []
+        for b in blocks or []:
+            if b.get("type") == "related":
+                continue
+            b = dict(b)
+            if "blocks" in b:
+                b["blocks"] = keep(b["blocks"])
+            if "tabs" in b:
+                b["tabs"] = [{**t, "blocks": keep(t.get("blocks"))} for t in b["tabs"]]
+            out.append(b)
+        return out
+    p = {**page, "blocks": keep(page.get("blocks"))}
+    if p.get("variants"):
+        p["variants"] = {**p["variants"], "layouts": {k: keep(v) for k, v in p["variants"]["layouts"].items()}}
+    if p.get("template"):
+        p["template"] = embeds_to_names(p["template"], names)
+    template = p.pop("template", None)
+    out = tokenize(p, names)
+    if template:
+        out["template"] = template
+    return out
 
 
 def detokenize(obj: Any, ids: dict[str, str]) -> Any:
@@ -139,6 +180,8 @@ def table_template(conn, table_id, user_id, *, include_records=False, name=None,
     views = [{"name": v["name"], "type": v["type"], "config": tokenize(v["config"] or {}, names)} for v in store.get_views(conn, table_id=table_id)]
     out = {"probyte_template": VERSION, "kind": "table", "name": name or t["name"], "description": description or t.get("description") or "",
            "icon": t.get("icon") or None, "fields": kept, "views": views}
+    if t.get("page"):   # how its records show as pages
+        out["page"] = page_to_template(t["page"], names)
     if skipped:
         out["skipped"] = skipped
     if include_records:
@@ -146,7 +189,7 @@ def table_template(conn, table_id, user_id, *, include_records=False, name=None,
                   and f["type"] not in ("attachment", "user", "button")}
         rows = []
         for r in store.list_records(conn, table_id, eng)[:MAX_RECORDS]:
-            row = {stored[k]: v for k, v in r["data"].items() if k in stored and v not in (None, "", [], False)}
+            row = {stored[k]: embeds_to_names(v, names) for k, v in r["data"].items() if k in stored and v not in (None, "", [], False)}
             if row:
                 rows.append(row)
         out["records"] = rows
@@ -265,9 +308,20 @@ def create_table(conn, user_id, base_id, body: dict, name=None, include_records=
     for v in views:
         cfg = normalize_config(v["type"], detokenize(v.get("config") or {}, ids) or {})
         store.create_view(conn, table_id=tid, name=(v.get("name") or "View").strip()[:100], type=v["type"], config=cfg)
+    if isinstance(body.get("page"), dict):   # its records as pages
+        tpl = body["page"].get("template")
+        page = detokenize({k: v for k, v in body["page"].items() if k != "template"}, ids) or {}
+        if tpl:
+            page["template"] = embeds_to_ids(tpl, ids)
+        try:
+            page = pages.clean(store.get_fields(conn, tid), page)
+        except HTTPException:
+            page = None   # (a layout this table can't have: left out rather than failing the whole table)
+        if page:
+            conn.execute("UPDATE tables SET page = %s WHERE id = %s", (Jsonb(page), tid))
     if include_records:
         for row in (body.get("records") or [])[:MAX_RECORDS]:
-            data = {ids[k.lower()]: v for k, v in row.items() if isinstance(k, str) and k.lower() in ids}
+            data = {ids[k.lower()]: embeds_to_ids(v, ids) for k, v in row.items() if isinstance(k, str) and k.lower() in ids}
             if data:
                 try:
                     with conn.transaction():

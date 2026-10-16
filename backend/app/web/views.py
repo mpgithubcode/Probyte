@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.calc.compute import Engine
 from app.calc.viewfilter import normalize_config
 from app.core.db import connection, Jsonb
-from app.data import access, store
+from app.data import access, pages, store
 from app.formats.ical import PALETTE
 from app.sharing import linked as remote, recordops
 from app.web.common import _own_view, access_info, _record_out, ComboIn, ComboPatch, ComboRecordIn, ComboSource, FastJSON, RecordIn, User, ViewIn, ViewPatch
@@ -140,7 +140,8 @@ def _combo_payload(conn, combo, defer_remote=False, user_id=None):
         if s["kind"] == "remote" and str(s["table_id"]) not in pending:
             s["link_sources"] = remote.sources(conn, store.get_table(conn, s["table_id"]))
     now = {str(s["table_id"]) for s in sources} - set(pending)
-    return {"combo": {"id": combo["id"], "name": combo["name"], "base_id": combo["base_id"], "icon": combo.get("icon")}, "sources": sources, "fields": fields,
+    return {"combo": {"id": combo["id"], "name": combo["name"], "base_id": combo["base_id"], "icon": combo.get("icon"), "page": combo.get("page")},
+            "sources": sources, "fields": fields,
             "access": access_info(conn, combo["base_id"], user_id) if user_id else None,
             "views": store.get_views(conn, combo_id=combo["id"], user_id=user_id), "records": store.combo_records(conn, combo, eng, only=now),
             "refs": store.combo_refs(conn, combo, eng, only=now), "pending": pending}
@@ -195,6 +196,17 @@ def combo_source(combo_id: str, table_id: str, user=User):
                          "error": ((t["remote"] or {}).get("error") if t["kind"] == "remote" else None)})
 
 
+@router.get("/api/combos/{combo_id}/inbound")
+def combo_inbound_links(combo_id: str, user=User):
+    """Link fields pointing at any of a combined database's tables (what its page's related lists can show; "to": the
+    source table whose records they're for)."""
+    from app.web.tables import inbound_links
+    with connection() as conn:
+        c = store.get_combo(conn, combo_id, user["id"])
+        sources = [str(s["table_id"]) for s in c["sources"]]
+    return [{**i, "to": tid} for tid in sources for i in inbound_links(tid, user)]
+
+
 @router.patch("/api/combos/{combo_id}")
 def update_combo(combo_id: str, body: ComboPatch, user=User):
     with connection() as conn:
@@ -217,6 +229,9 @@ def update_combo(combo_id: str, body: ComboPatch, user=User):
             conn.execute("UPDATE combos SET icon = %s WHERE id = %s", (body.icon.strip()[:16] or None, combo_id))
         if body.description is not None:
             conn.execute("UPDATE combos SET description = %s WHERE id = %s", (body.description.strip()[:2000] or None, combo_id))
+        if body.page is not None:
+            page = pages.clean(store.resolve_combo(conn, c)[1], body.page)
+            conn.execute("UPDATE combos SET page = %s WHERE id = %s", (Jsonb(page) if page is not None else None, combo_id))
         name = body.name or c["name"]
         sources = _sources_json(conn, body.sources, user) if body.sources is not None else c["sources"]
         if body.remap:
@@ -246,7 +261,11 @@ def create_combo_record(combo_id: str, body: ComboRecordIn, user=User):
         c = store.get_combo(conn, combo_id, user["id"])
         if body.table_id not in {s["table_id"] for s in c["sources"]}:
             raise HTTPException(400, "Table is not a source of this combined database")
-        data = store.unified_to_source(conn, c, body.table_id, body.data)
+        data = dict(body.data or {})
+        tpl = pages.template_for(c.get("page"), store.resolve_combo(conn, c)[1])   # its page: a new record's body starts as its template
+        if tpl and not data.get(tpl[0]):
+            data[tpl[0]] = tpl[1]
+        data = store.unified_to_source(conn, c, body.table_id, data)
         rid, table = recordops.create(conn, body.table_id, data, user["id"], link_table_id=body.link_table_id)
         out = _combo_record_out(conn, c, body.table_id, rid)
     return out

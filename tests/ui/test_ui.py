@@ -48,22 +48,39 @@ def open_page(browser, seeded, phone):
     pg.click("button:has-text('Sign in')")
     pg.wait_for_selector(".page, .welcome")
     pg.goto(f"{BASE}/#/table/{t['id']}")
-    pg.wait_for_selector(".view-tab")
+    pg.wait_for_selector(".view-tab, .view-picker")
     return pg, errors
+
+
+def open_view(pg, name, create_as=None):
+    """Switch to a view by name (desktop: its tab; phone: the view menu); create_as: add one of that type if there's none."""
+    if pg.locator(".view-picker").count():
+        pg.click(".view-picker")
+        item = pg.locator(f".popover .menu-item:has-text('{name}')")
+        if item.count():
+            item.first.click()
+            return
+        pg.keyboard.press("Escape")
+    elif pg.locator(f".view-tab:has-text('{name}')").count():
+        pg.locator(f".view-tab:has-text('{name}')").first.scroll_into_view_if_needed()
+        pg.locator(f".view-tab:has-text('{name}')").first.click()
+        return
+    assert create_as, f"no view {name}"
+    pg.click(".view-tab.add")
+    pg.click(f".view-type-item:has-text('{create_as}')")
 
 
 @pytest.mark.parametrize("phone", [True, False], ids=["phone", "desktop"])
 def test_every_view_renders(browser, seeded, phone):
     pg, errors = open_page(browser, seeded, phone)
     for view in ("Grid", "Calendar", "Board", "Timeline", "List", "Gallery", "Chart"):
-        if not pg.locator(f".view-tab:has-text('{view}')").count():
-            pg.click(".view-tab.add")
-            pg.click(f".view-type-item:has-text('{ {'Grid': 'Table'}.get(view, view) }')")
-        else:
-            pg.locator(f".view-tab:has-text('{view}')").scroll_into_view_if_needed()
-            pg.click(f".view-tab:has-text('{view}')")
+        open_view(pg, view, {"Grid": "Table"}.get(view, view))
         pg.wait_for_timeout(300)
         assert pg.evaluate(NO_SIDEWAYS), f"{view} scrolls sideways"
+        if phone:   # on a phone nothing scrolls sideways inside the page either (no wide table, board or timeline)
+            wide = pg.evaluate("""() => [...document.querySelectorAll('.page-body *')].filter(e => { const s = getComputedStyle(e);
+              return ['auto', 'scroll'].includes(s.overflowX) && e.scrollWidth > e.clientWidth + 2; }).map(e => e.className.toString())""")
+            assert not wide, f"{view}: {wide}"
     assert pg.locator(".view-options .new-record-btn").count() == 1
     assert not errors, errors
 
@@ -80,8 +97,9 @@ def test_phone_header_buttons_flush_and_equal(browser, seeded):
 @pytest.mark.parametrize("phone", [True, False], ids=["phone", "desktop"])
 def test_list_columns_line_up(browser, seeded, phone):
     pg, _ = open_page(browser, seeded, phone)
-    pg.locator(".view-tab:has-text('List')").scroll_into_view_if_needed()
-    pg.click(".view-tab:has-text('List')")
+    open_view(pg, "List", "List")
+    if phone:
+        pg.click(".view-options-more")                                     # (the view's choices are behind Options)
     pg.click(".tool-btn:has-text('Properties')")
     for name, zone in (("Type", "Left"), ("Status", "Center")):
         pg.locator(".list-opt-row").filter(has_text=name).first.locator(f"button:has-text('{zone}')").click()
@@ -94,18 +112,19 @@ def test_list_columns_line_up(browser, seeded, phone):
     assert lefts and all(n == 1 for n in lefts), lefts
 
 
-def test_phone_week_scrolls_sideways(browser, seeded):
+def test_phone_week_is_three_days_that_fit(browser, seeded):
     pg, _ = open_page(browser, seeded, True)
-    pg.click(".view-tab:has-text('Calendar')")
-    pg.click(".cal-head .segmented button:has-text('Week')")
+    open_view(pg, "Calendar", "Calendar")
+    pg.click(".cal-head .segmented button:has-text('3 days')")
     pg.wait_for_selector(".tgrid")
+    assert pg.locator(".tgrid-head .tgrid-day").count() == 3
     sw, cw = pg.locator(".tgrid").evaluate("e => [e.scrollWidth, e.clientWidth]")
-    assert sw > cw * 1.5
+    assert sw <= cw + 1
 
 
 def test_touch_never_drags_and_a_tap_opens(browser, seeded):
     pg, _ = open_page(browser, seeded, True)
-    pg.click(".view-tab:has-text('Board')")
+    open_view(pg, "Board", "Board")
     card = pg.locator(".kanban-col .card").filter(has_text="Read 3 books")
     card.scroll_into_view_if_needed()
     b = card.bounding_box()

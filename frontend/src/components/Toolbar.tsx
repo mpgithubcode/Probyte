@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNarrow } from "./useNarrow";
 import type { Field, View, ViewConfig, ViewType } from "../types";
 import { countConditions, hiddenIds, isDateField, setFieldShown, viewFilter, viewGroups, viewSorts } from "../util";
 import { BoardOptions, FilterEditor, GroupEditorList, ListOptions, SortEditor } from "./ViewControls";
@@ -26,6 +27,8 @@ export function ViewTabs({ views, active, count, onSelect, onCreate, onReorder, 
   onFromTemplate?: (t: { template_id?: string; body?: Record<string, unknown> }) => Promise<void>;
 }) {
   const add = usePopover();
+  const pick = usePopover();
+  const narrow = useNarrow();
   const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
   const [tplErr, setTplErr] = useState("");
   const tplFile = useRef<HTMLInputElement>(null);
@@ -61,25 +64,7 @@ export function ViewTabs({ views, active, count, onSelect, onCreate, onReorder, 
     setDrag(null); setOrder(null);
   };
 
-  return (
-    <div className="view-tabs">
-      {shown.map((v) => {
-        const icon = VIEW_TYPES.find((t) => t.type === v.type)?.icon ?? "grid";
-        const on = active?.id === v.id;
-        return (
-          <div key={v.id} className={`view-tab ${on ? "active" : ""} ${drag === v.id ? "dragging" : ""}`} role="tab" aria-selected={on}
-            draggable onDragStart={(e) => { setDrag(v.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", v.id); }}
-            onDragOver={(e) => { if (drag) { e.preventDefault(); over(v.id); } }} onDrop={(e) => { e.preventDefault(); drop(); }} onDragEnd={drop}
-            onClick={() => !on && onSelect(v)} onDoubleClick={() => onSettings(v)} title={on ? "Double-click or ⋯ for view settings; drag to reorder" : "Drag to reorder"}>
-            <Icon name={icon} size={14} /> <span className="view-tab-name">{v.name}</span>
-            {countConditions(viewFilter(v.config)) > 0 && <span className="view-tab-filtered" title="This view is filtered" aria-label="filtered" />}
-            {on && count !== undefined && <span className="view-tab-count" aria-label={`${count} records`}>{count.toLocaleString()}</span>}
-            {on && <button className="view-tab-more" aria-label="View settings" title="View settings"
-              onClick={(e) => { e.stopPropagation(); onSettings(v); }}><Icon name="more" size={14} /></button>}
-          </div>
-        );
-      })}
-      <button className="view-tab add" onClick={add.open} title="Add view"><Icon name="plus" size={14} /></button>
+  const addMenu = (<>
       {add.anchor && (
         <Popover anchor={add.anchor} onClose={add.close} width={260}>
           <div className="menu-list">
@@ -105,6 +90,56 @@ export function ViewTabs({ views, active, count, onSelect, onCreate, onReorder, 
           </div>
         </Popover>
       )}
+  </>);
+  // a phone: the open view's name, a menu of the others (no row of tabs to scroll sideways)
+  if (narrow) {
+    return (
+      <div className="view-tabs narrow">
+        <button className="view-picker" onClick={pick.open} aria-haspopup="menu" title="Switch view">
+          <Icon name={VIEW_TYPES.find((t) => t.type === active?.type)?.icon ?? "grid"} size={15} />
+          <span className="view-tab-name">{active?.name ?? "View"}</span>
+          {count !== undefined && <span className="view-tab-count">{count.toLocaleString()}</span>}
+          <Icon name="down" size={14} />
+        </button>
+        {active && <button className="icon-btn" aria-label="View settings" title="View settings" onClick={() => onSettings(active)}><Icon name="more" size={16} /></button>}
+        <span className="spacer" />
+        <button className="icon-btn view-tab add" onClick={add.open} title="Add view" aria-label="Add view"><Icon name="plus" size={16} /></button>
+        {pick.anchor && (
+          <Popover anchor={pick.anchor} onClose={pick.close} width={260}>
+            <div className="menu-list" role="menu">
+              {views.map((v) => (
+                <button key={v.id} role="menuitem" className={`menu-item ${v.id === active?.id ? "active" : ""}`} onClick={() => { pick.close(); if (v.id !== active?.id) onSelect(v); }}>
+                  <Icon name={VIEW_TYPES.find((t) => t.type === v.type)?.icon ?? "grid"} size={15} /> {v.name}
+                  {countConditions(viewFilter(v.config)) > 0 && <span className="view-tab-filtered" aria-label="filtered" />}
+                </button>
+              ))}
+            </div>
+          </Popover>
+        )}
+        {addMenu}
+      </div>
+    );
+  }
+  return (
+    <div className="view-tabs">
+      {shown.map((v) => {
+        const icon = VIEW_TYPES.find((t) => t.type === v.type)?.icon ?? "grid";
+        const on = active?.id === v.id;
+        return (
+          <div key={v.id} className={`view-tab ${on ? "active" : ""} ${drag === v.id ? "dragging" : ""}`} role="tab" aria-selected={on}
+            draggable onDragStart={(e) => { setDrag(v.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", v.id); }}
+            onDragOver={(e) => { if (drag) { e.preventDefault(); over(v.id); } }} onDrop={(e) => { e.preventDefault(); drop(); }} onDragEnd={drop}
+            onClick={() => !on && onSelect(v)} onDoubleClick={() => onSettings(v)} title={on ? "Double-click or ⋯ for view settings; drag to reorder" : "Drag to reorder"}>
+            <Icon name={icon} size={14} /> <span className="view-tab-name">{v.name}</span>
+            {countConditions(viewFilter(v.config)) > 0 && <span className="view-tab-filtered" title="This view is filtered" aria-label="filtered" />}
+            {on && count !== undefined && <span className="view-tab-count" aria-label={`${count} records`}>{count.toLocaleString()}</span>}
+            {on && <button className="view-tab-more" aria-label="View settings" title="View settings"
+              onClick={(e) => { e.stopPropagation(); onSettings(v); }}><Icon name="more" size={14} /></button>}
+          </div>
+        );
+      })}
+      <button className="view-tab add" onClick={add.open} title="Add view"><Icon name="plus" size={14} /></button>
+      {addMenu}
     </div>
   );
 }
@@ -220,16 +255,20 @@ export function ViewOptions({ view, fields, config, setConfig, search, setSearch
   const hidden = (config.hidden ?? []).filter((id) => fields.some((f) => f.id === id));  // hidden on purpose (not Record ID)
   const dateFields = fields.filter(isDateField);
   const selectFields = fields.filter((f) => f.type === "single_select");
-
+  const [more, setMore] = useState(false);   // phones: the choices after the search box, shown or folded away
+  const active = nFilters + sorts.length + groups.length + hidden.length;
 
   return (
-    <div className="view-options">
+    <div className={`view-options ${more ? "open" : ""}`}>
       {onAdd && <button className="btn sm primary new-record-btn" onClick={onAdd} title={addLabel ? "Upload files" : "New record"}>
         <Icon name={addLabel ? "upload" : "plus"} size={14} /> <span>{addLabel ?? "New"}</span></button>}
       <div className="search">
         <Icon name="search" size={14} />
         <input placeholder="Search" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
+      <button className={`tool-btn view-options-more ${active ? "on" : ""}`} aria-expanded={more} onClick={() => setMore(!more)} title="Filter, sort, fields…">
+        <Icon name="filter" size={14} /> Options{active ? ` (${active})` : ""}
+      </button>
 
       <button className={`tool-btn ${nFilters ? "on" : ""}`} onClick={filterPop.open}>
         <Icon name="filter" size={14} /> Filter{nFilters ? ` (${nFilters})` : ""}

@@ -3,12 +3,17 @@ import type { Field, Rec } from "../types";
 import { isDateOnly, keyOf, parseKey, recordTitle } from "../util";
 import type { Ops } from "./viewTypes";
 import { Icon } from "./Icon";
+import { Popover } from "./Overlay";
 
 const HOUR = 48;          // px per hour
+const LANE_MIN = 64;
+const ALLDAY_MAX = 2;     // a day with more one-day all-day events than this shows them as one "5 events" block      // px: overlapping events narrower than this side by side are shown as one "3 events" block
 const SNAP = 15;          // minutes
 const MIN = 60000;
 
 interface Block { rec: Rec; key: string; start: Date; end: Date; col: number; lane: number; lanes: number; hasEnd: boolean }
+/** Events overlapping in one column (each overlaps the next): drawn side by side, or as one block when they don't fit. */
+interface Cluster { col: number; items: Block[]; start: Date; end: Date; lanes: number }
 interface Drag { key: string; mode: "move" | "resize"; x0: number; y0: number; dMin: number; dDay: number; moved: boolean }
 
 const iso = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -31,6 +36,19 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [colW, setColW] = useState(0);   // one day's column, in px
+  const [stack, setStack] = useState<{ anchor: HTMLElement; cluster: Cluster } | null>(null);   // a "3 events" block, opened
+  const [dayStack, setDayStack] = useState<{ anchor: HTMLElement; col: number } | null>(null);  // a day's all-day events, opened
+  useLayoutEffect(() => {
+    const el = cols.current;
+    if (!el) return;
+    const fit = () => setColW(el.clientWidth / days.length);
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [days.length]);
+  const maxLanes = colW ? Math.max(1, Math.floor(colW / LANE_MIN)) : 3;
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(t); }, []);
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -71,15 +89,26 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
     timed.push({ rec: r, key: occKey(r), start, end, hasEnd: typeof ev === "string" });
   }
 
+  // ---- all-day: a day with many one-day events shows them as one block
+  const oneDay = (col: number) => allDay.filter((a) => a.from === col && a.to === col);
+  const stackedDays = days.map((_, col) => col).filter((col) => oneDay(col).length > ALLDAY_MAX);
+
   // ---- per column: pieces of blocks, laid out side by side when they overlap
   const blocks: Block[] = [];
+  const clusters: Cluster[] = [];
   days.forEach((k, col) => {
     const d0 = parseKey(k), d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
     const pieces = timed.filter((b) => +b.end > +d0 && +b.start < +d1)
       .map((b) => ({ ...b, start: new Date(Math.max(+b.start, +d0)), end: new Date(Math.min(+b.end, +d1)), col, lane: 0, lanes: 1 }))
       .sort((a, b) => +a.start - +b.start || +b.end - +a.end);
     let cluster: Block[] = [], clusterEnd = 0;
-    const flush = () => { const n = Math.max(1, ...cluster.map((c) => c.lane + 1)); cluster.forEach((c) => { c.lanes = n; }); cluster = []; };
+    const flush = () => {
+      if (!cluster.length) return;
+      const n = Math.max(1, ...cluster.map((c) => c.lane + 1));
+      cluster.forEach((c) => { c.lanes = n; });
+      clusters.push({ col, items: cluster, lanes: n, start: new Date(Math.min(...cluster.map((c) => +c.start))), end: new Date(Math.max(...cluster.map((c) => +c.end))) });
+      cluster = [];
+    };
     for (const p of pieces) {
       if (cluster.length && +p.start >= clusterEnd) flush();
       const laneEnds: number[] = [];
@@ -176,7 +205,15 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
         <div className="tgrid-allday">
           <div className="tgrid-gutter muted small">all-day</div>
           <div className="tgrid-allday-cells">
-            {allDay.map(({ rec, from, to }) => (
+            {stackedDays.map((col) => (
+              <button key={`allday-stack:${col}`} type="button" className={`tgrid-allday-stack ${dayStack?.col === col ? "open" : ""}`}
+                style={{ gridColumn: `${col + 1} / ${col + 2}` }} aria-expanded={dayStack?.col === col}
+                onClick={(e) => setDayStack(dayStack?.col === col ? null : { anchor: e.currentTarget, col })}>
+                <span className="tgrid-stack-dots">{oneDay(col).slice(0, 4).map(({ rec }) => <i key={occKey(rec)} style={{ background: color(rec) }} />)}</span>
+                <b>{oneDay(col).length} events</b>
+              </button>
+            ))}
+            {allDay.filter((a) => !(a.from === a.to && stackedDays.includes(a.from))).map(({ rec, from, to }) => (
               <button key={occKey(rec)} className="tgrid-allday-item" onClick={() => ops.open(rec)} title={recordTitle(fields, rec)}
                 style={{ gridColumn: `${from + 1} / ${to + 2}`, background: `${color(rec)}22`, borderLeftColor: color(rec) }}>
                 <span className="tgrid-allday-label">{recordTitle(fields, rec)}</span>
@@ -200,7 +237,24 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
                 {col === todayIdx && <div className="tgrid-now" style={{ top: (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR }} />}
               </div>
             ))}
-            {blocks.map((b) => {
+            {clusters.filter((c) => c.lanes > maxLanes).map((c) => {
+              // more at once than fit side by side: one block that says how many, opening their list
+              const top = ((c.start.getHours() * 60 + c.start.getMinutes()) / 60) * HOUR;
+              const h = Math.max(((+c.end - +c.start) / 3600000) * HOUR, 22);
+              const open = stack?.cluster === c;
+              return (
+                <button key={`stack:${c.col}:${+c.start}`} type="button" className={`tgrid-stack ${open ? "open" : ""}`}
+                  aria-label={`${c.items.length} events, ${fmt(c.start)} to ${fmt(c.end)}`} aria-expanded={open}
+                  style={{ top, height: h - 2, left: `calc(${c.col} * 100% / var(--days) + 2px)`, width: "calc(100% / var(--days) - 4px)" }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); setStack(open ? null : { anchor: e.currentTarget, cluster: c }); }}>
+                  <span className="tgrid-stack-dots">{c.items.slice(0, 4).map((b) => <i key={b.key} style={{ background: color(b.rec) }} />)}</span>
+                  <b>{c.items.length} events</b>
+                  {h > 34 && <span className="tgrid-time">{fmt(c.start)} – {fmt(c.end)}</span>}
+                </button>
+              );
+            })}
+            {blocks.filter((b) => !clusters.some((c) => c.lanes > maxLanes && c.items.includes(b))).map((b) => {
               const d = drag?.key === b.key ? drag : null;
               const top = ((b.start.getHours() * 60 + b.start.getMinutes()) / 60) * HOUR + (d?.mode === "move" ? d.dMin / 60 * HOUR : 0);
               let h = Math.max(((+b.end - +b.start) / 3600000) * HOUR, 18);
@@ -223,6 +277,35 @@ export function TimeGrid({ days, records, fields, startField, endField, ops, col
           </div>
         </div>
       </div>
+      {dayStack && (
+        <Popover anchor={dayStack.anchor} onClose={() => setDayStack(null)} width={280}>
+          <div className="menu-list tgrid-stack-list">
+            <div className="menu-heading">{parseKey(days[dayStack.col]).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })} · all day</div>
+            {oneDay(dayStack.col).map(({ rec }) => (
+              <button key={occKey(rec)} className="menu-item tgrid-stack-item" style={{ borderLeftColor: color(rec) }}
+                onClick={() => { setDayStack(null); ops.open(rec); }}>
+                <span className="tgrid-stack-title">{recordTitle(fields, rec)}</span>
+                {rec.occurrence && <Icon name="repeat" size={10} className="cal-repeat" />}
+              </button>
+            ))}
+          </div>
+        </Popover>
+      )}
+      {stack && (
+        <Popover anchor={stack.anchor} onClose={() => setStack(null)} width={280}>
+          <div className="menu-list tgrid-stack-list">
+            <div className="menu-heading">{stack.cluster.items.length} events · {fmt(stack.cluster.start)} – {fmt(stack.cluster.end)}</div>
+            {[...stack.cluster.items].sort((a, b) => +a.start - +b.start).map((b) => (
+              <button key={b.key} className="menu-item tgrid-stack-item" style={{ borderLeftColor: color(b.rec) }}
+                onClick={() => { setStack(null); ops.open(b.rec); }}>
+                <span className="tgrid-stack-time">{fmt(b.start)}{b.hasEnd ? ` – ${fmt(b.end)}` : ""}</span>
+                <span className="tgrid-stack-title">{recordTitle(fields, b.rec)}</span>
+                {b.rec.occurrence && <Icon name="repeat" size={10} className="cal-repeat" />}
+              </button>
+            ))}
+          </div>
+        </Popover>
+      )}
     </div>
   );
 }

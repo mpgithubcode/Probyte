@@ -175,15 +175,38 @@ export interface ChartConfig {
 
 export interface View { id: string; name: string; type: ViewType; config: ViewConfig }
 
-/** How a field holding several records or values is shown (backend/app/data/pages.py): chips (the default), a count, a
- * list, a table or cards of the linked records (their `fields`), a value or a bar (rollups: `max` is a full bar). */
-export type FieldView = "chips" | "count" | "list" | "table" | "cards" | "value" | "bar";
+/** A way to show a field's value (which fit which field type: display.ts; backend/app/data/pages.py): its chips, a count,
+ * plain text, a list, a table / cards / cards in a row of linked records (their `fields`), its value, a bar (`max` is a
+ * full bar), a big number, stars or a number, a tick or Yes / No, a relative date, file thumbnails / a gallery / names,
+ * large text. */
+export type FieldView = "chips" | "count" | "text" | "list" | "table" | "cards" | "hcards" | "value" | "bar" | "stat" | "stars"
+  | "number" | "check" | "yesno" | "relative" | "thumbs" | "gallery" | "names" | "large";
+/** A field's own choice, in the table (cells, cards, lists) and on its records (the record panel and pages). */
 export interface FieldViews { cell?: FieldView; record?: FieldView; fields?: string[]; max?: number }
 
-/** A table's page: records open laid out like a document, in blocks (backend/app/data/pages.py). */
-export type PageBlockType = "properties" | "field" | "heading" | "divider" | "doc";
-export interface PageBlock { id: string; type: PageBlockType; field?: string; view?: FieldView; width?: "full" | "half"; text?: string }
-export interface PageLayout { enabled: boolean; blocks: PageBlock[] }
+/** A table's page: records open laid out like a document, in blocks (backend/app/data/pages.py). A block spans 1 to 4
+ * of the page's columns (unset: all 4), can have a fixed height (px; its content scrolls), and can show only for records
+ * that match its condition (`when`). Sections and tabs hold blocks of their own. */
+export type PageBlockType = "properties" | "field" | "heading" | "divider" | "doc" | "section" | "tabs" | "related" | "files" | "stats";
+export interface PageTab { id: string; text: string; blocks: PageBlock[] }
+export interface PageBlock {
+  id: string; type: PageBlockType; span?: number; height?: number; when?: FilterGroup;
+  field?: string; view?: FieldView;                 // field, doc (a long text as the page's body), files
+  text?: string;                                    // heading, section's title, related list's title
+  closed?: boolean; blocks?: PageBlock[];           // section (starts folded)
+  tabs?: PageTab[];                                 // tabs
+  table?: string; filterView?: string; to?: string;   // related (to: a combined database's source table it's for): records of `table` linking here through its `field`, in a view's
+  display?: "list" | "table" | "cards"; fields?: string[]; limit?: number;   // filter and order; shown as a list, table or cards
+  items?: { field: string; view: "stat" | "bar" }[];   // stats
+}
+export interface PageLayout {
+  enabled: boolean; blocks: PageBlock[];
+  header?: string[];          // fields under the title, kept in view with it while scrolling
+  outline?: boolean;          // a list of the page's headings, sections and tabs to jump to
+  template?: string;          // a new record's page body starts as this (Markdown)
+  templateField?: string;
+  variants?: { field: string; layouts: Record<string, PageBlock[]> };   // a layout per kind of record (a single select's options)
+}
 
 export type TableKind = "generic" | "tasks" | "events" | "mixed" | "contacts" | "remote" | "files";
 
@@ -292,4 +315,5 @@ export interface Dataset {
   pending?: string[];     // combined databases: linked-table sources still loading
   icon?: string | null;   // combined databases: an emoji (tables have it in `table`)
   description?: string | null;  // combined databases (tables have it in `table`)
+  page?: PageLayout | null;     // combined databases: records as pages (tables have it in `table`)
 }

@@ -14,6 +14,9 @@ const SCALES: Record<Scale, { px: number; days: number; step: number; label: str
   month: { px: 5, days: 420, step: 91, label: "Month" },
 };
 
+/** Days on the screen at once on a phone, for each scale. */
+const FIT_DAYS: Record<Scale, number> = { day: 7, week: 28, month: 120 };
+
 const ROW_H = 36;
 const HEADER_H = 52;
 const DAY_MS = 86400000;
@@ -29,18 +32,29 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
   const endField = dateFields.find((f) => f.id === view.config.endField);
   const repeatField = fields.find((f) => f.type === "recurrence");
   const scale: Scale = view.config.scale ?? "week";
-  const S = SCALES[scale];
   const today = keyOf(new Date());
   const [rangeStart, setRangeStart] = useState(() => addDaysKey(today, -Math.round(SCALES[scale].days * 0.2)));
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const win = useVirtualRows(records.length, ROW_H, HEADER_H);
   const narrow = useNarrow();
-  const TITLE_W = narrow ? 130 : 240;
+  // on a phone the dates fit the screen (no sideways scrolling: ‹ › page through them); titles are beside the bars
+  const [boxW, setBoxW] = useState(0);
+  useLayoutEffect(() => {
+    const el = win.el;
+    if (!el || !narrow) return;
+    const ro = new ResizeObserver(() => setBoxW(el.clientWidth));
+    ro.observe(el);
+    setBoxW(el.clientWidth);
+    return () => ro.disconnect();
+  }, [win.el, narrow]);
+  const fit = narrow && boxW > 0;
+  const S = fit ? { ...SCALES[scale], days: FIT_DAYS[scale], step: Math.ceil(FIT_DAYS[scale] / 2), px: (boxW - 2) / FIT_DAYS[scale] } : SCALES[scale];
+  const TITLE_W = fit ? 0 : narrow ? 130 : 240;
   const width = S.days * S.px;
 
   // Re-centre on today when the scale changes.
-  useEffect(() => { setRangeStart(addDaysKey(today, -Math.round(S.days * 0.2))); }, [scale]);
+  useEffect(() => { setRangeStart(addDaysKey(today, -Math.round(S.days * 0.2))); }, [scale, fit]);
   useLayoutEffect(() => {
     if (win.el) win.el.scrollLeft = Math.max(0, diffDays(today, rangeStart) * S.px - 160);
   }, [rangeStart, S.px, today, win.el]);
@@ -142,7 +156,7 @@ export function TimelineView({ fields, records, view, ops, setConfig }: ViewProp
   const todayIdx = diffDays(today, rangeStart);
 
   return (
-    <div className="timeline" style={{ ["--tl-title" as string]: `${TITLE_W}px` }}>
+    <div className={`timeline ${fit ? "tl-fit" : ""}`} style={{ ["--tl-title" as string]: `${TITLE_W}px` }}>
       <div className="cal-head">
         <button className="icon-btn" onClick={() => shift(-S.step)} aria-label="Earlier"><Icon name="left" /></button>
         <button className="icon-btn" onClick={() => shift(S.step)} aria-label="Later"><Icon name="right" /></button>

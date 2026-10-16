@@ -147,6 +147,7 @@ class ComboPatch(BaseModel):
     icon: str | None = None
     description: str | None = None
     remap: bool = False  # rebuild the field mapping automatically from the sources
+    page: dict | None = None  # its records as pages (as a table's: data/pages.py); {} removes it
 
 
 # ======================================================================== helpers

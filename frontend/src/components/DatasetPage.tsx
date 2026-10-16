@@ -11,6 +11,8 @@ import { EmojiPicker } from "./EmojiPicker";
 import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { RecordModal, SourcePicker, createTargets } from "./RecordModal";
 import { PageView } from "./PageView";
+import { pageOf } from "./PageBlocks";
+import { useNarrow } from "./useNarrow";
 import { TableSettings } from "./TableSettings";
 import { ContactsImport } from "./ContactsImport";
 import { ViewSettings } from "./ViewSettings";
@@ -22,6 +24,7 @@ import { cached, loadComboSource, loadDataset, onTableChange, refreshDataset, re
 
 // Each view and the larger dialogs load on first use, keeping the initial download small.
 const GridView = lazy(() => import("./GridView").then((m) => ({ default: m.GridView })));
+const PhoneCards = lazy(() => import("./PhoneCards").then((m) => ({ default: m.PhoneCards })));
 const KanbanView = lazy(() => import("./KanbanView").then((m) => ({ default: m.KanbanView })));
 const TimelineView = lazy(() => import("./TimelineView").then((m) => ({ default: m.TimelineView })));
 const CalendarView = lazy(() => import("./CalendarView").then((m) => ({ default: m.CalendarView })));
@@ -73,7 +76,10 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
   const [ds, setDs] = useState<Dataset | null>(() => cached(kind, id) ?? null);
   const [search, setSearch] = useState("");
   const [openRec, setOpenRec] = useState<string | null>(null);
-  const [asPage, setAsPage] = useState<boolean | null>(null);   // the record as a page or in the panel (null: as the table says)
+  const narrow = useNarrow();
+  // a table view on a phone: cards (the default) or the full table, as this device last chose
+  const [phoneGrid, setPhoneGridState] = useState<"cards" | "table">(() => { try { return localStorage.getItem("probyte.phoneGrid") === "table" ? "table" : "cards"; } catch { return "cards"; } });
+  const setPhoneGrid = (v: "cards" | "table") => { setPhoneGridState(v); try { localStorage.setItem("probyte.phoneGrid", v); } catch { /* private mode */ } };
   const [openOcc, setOpenOcc] = useState<string | null>(null);  // a later repeat that was clicked
   const [fieldEdit, setFieldEdit] = useState<Field | null | undefined>(undefined);
   const [pendingCreate, setPendingCreate] = useState<{ data: Record<string, any>; open: boolean; choices: CreateTarget[] } | null>(null);
@@ -138,7 +144,7 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
   useEffect(() => {
     const hit = cached(kind, id);
-    setDs(hit ?? null); setSearch(""); setOpenRec(null); setViewing(null); setUploadInto(""); setAsPage(null);
+    setDs(hit ?? null); setSearch(""); setOpenRec(null); setViewing(null); setUploadInto("");
     if (hit) refresh(); else reload();
   }, [kind, id]);
 
@@ -656,7 +662,13 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
 
       <main className="page-body">
         <Suspense fallback={<div className="loading">Loading…</div>}>
-        {view.type === "grid" && <GridView {...props} />}
+        {view.type === "grid" && narrow && (
+          <div className="segmented phone-switch" role="group" aria-label="Show the table as">
+            <button className={phoneGrid === "cards" ? "active" : ""} onClick={() => setPhoneGrid("cards")}>Cards</button>
+            <button className={phoneGrid === "table" ? "active" : ""} onClick={() => setPhoneGrid("table")}>Table</button>
+          </div>
+        )}
+        {view.type === "grid" && (narrow && phoneGrid === "cards" ? <PhoneCards {...props} /> : <GridView {...props} />)}
         {view.type === "kanban" && <KanbanView {...props} />}
         {view.type === "timeline" && <TimelineView {...props} />}
         {view.type === "calendar" && <CalendarView {...props} />}
@@ -714,9 +726,17 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
             },
             editField: (f) => setFieldEdit(f),
             fieldsReordered: () => reload(),
-            setPage: ds.kind === "table" && rank >= 3 ? (page) => {
-              setDs((d) => d && d.table ? { ...d, table: { ...d.table, page } } : d);
-              api.patch(`/tables/${ds.id}`, { page: page ?? {} }).catch((e) => onError((e as Error).message));
+            setPage: rank >= 3 ? (page) => {
+              const put = (p: PageLayout | null | undefined) => setDs((d) => !d ? d : d.kind === "table" ? (d.table ? { ...d, table: { ...d.table, page: p } } : d) : { ...d, page: p });
+              put(page);
+              (ds.kind === "table" ? api.patch<TableInfo>(`/tables/${ds.id}`, { page: page ?? {} }).then((t) => t.page)
+                : api.patch<{ combo: { page: PageLayout | null } }>(`/combos/${ds.id}`, { page: page ?? {} }).then((r) => r.combo.page))
+                .then(put)   // (over a refresh that started before it)
+                .catch((e) => onError((e as Error).message));
+            } : undefined,
+            setPrimary: ds.kind === "table" && !link && rank >= 3 ? async (fieldId) => {
+              try { await api.post(`/tables/${ds.id}/primary`, { field_id: fieldId }); invalidateTitles(); reload(); onWorkspaceChanged(); }
+              catch (e) { onError((e as Error).message); }
             } : undefined,
             syncNow: link ? refreshLink : syncNow,
             // these open their own window instead
@@ -755,20 +775,15 @@ export function DatasetPage({ kind, id, viewId, tables, me, bases, hiddenInSideb
         const go = (r?: Rec) => r && (() => { setOpenRec(r.id); setOpenOcc(null); });
         const recNav = i >= 0 ? { index: i, total: allRecords.length, prev: go(allRecords[i - 1]), next: go(allRecords[i + 1]) } : undefined;
         const recLink = `${location.origin}${location.pathname}#/${kind}/${ds.id}${view ? `/${view.id}` : ""}?record=${rec.id}`;
-        const pages = ds.kind === "table" && !openOcc;   // (a repeat's single date: in the panel, which can change just that date)
-        if (pages && (asPage ?? !!ds.table?.page?.enabled)) {
-          const saveLayout = (page: PageLayout) => {
-            setDs((d) => d && d.table ? { ...d, table: { ...d.table, page } } : d);
-            api.patch(`/tables/${ds.id}`, { page }).catch((e) => onError(e.message));
-          };
+        // the table opens records as pages (Table settings → Page); a repeat's single date: in the panel, which can change just that date
+        if (pageOf(ds)?.enabled && !openOcc) {
           return (
-            <PageView ds={ds} rec={rec} fields={vfields} can={can} canDesign={rank >= 3} nav={recNav} link={recLink}
-              onClose={() => setOpenRec(null)} onRecordView={() => setAsPage(false)} onLayout={saveLayout}
+            <PageView ds={ds} rec={rec} fields={vfields} can={can} nav={recNav} link={recLink} onClose={() => setOpenRec(null)}
               onUpdate={(patch) => ops.update(rec, patch)} onDelete={() => ops.remove(rec)} onButton={(f) => ops.runButton(rec, f)} />
           );
         }
         return (
-          <RecordModal onPage={pages ? () => setAsPage(true) : undefined} ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc} docked
+          <RecordModal ds={ds} rec={rec} fields={vfields} onClose={() => setOpenRec(null)} occurrence={openOcc} docked
             nav={recNav}
             sections={view.config.recordSections} onSections={(sections) => setConfig({ recordSections: sections.length ? sections : undefined })}
             onDuplicate={ops.duplicate && can.add ? () => ops.duplicate!([rec]) : undefined}

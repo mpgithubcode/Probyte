@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { buttonAction } from "../buttonAction";
-import type { Dataset, Field, Rec, Refs, Source, View, ViewConfig } from "../types";
+import type { Dataset, Field, PageLayout, Rec, Refs, Source, View, ViewConfig } from "../types";
 import { applyView, choiceColor, hiddenIds, orderFields, withDisplayNames } from "../util";
 import { CalendarView } from "./CalendarView";
 import { RefsContext, setAttachmentBase } from "./Cells";
@@ -12,6 +12,7 @@ import { Icon } from "./Icon";
 import { KanbanView } from "./KanbanView";
 import { ListView } from "./ListView";
 import { NewRecordForm, RecordModal, SourcePicker } from "./RecordModal";
+import { PageView } from "./PageView";
 import { PAGED_VIEWS, Pager, usePaged } from "./Pager";
 import { TimelineView } from "./TimelineView";
 import { VIEW_TYPES, ViewOptions } from "./Toolbar";
@@ -26,6 +27,8 @@ interface Meta {
 interface ViewPayload {
   item: { kind: "table" | "combo"; id: string; name: string; table_kind: string };
   view: View; views: View[]; fields: Field[]; records: Rec[]; refs: Refs; sources: Source[] | null;
+  record?: string | null;        // a link to one page: this record, shown as its table's page
+  page?: PageLayout | null;
 }
 
 const REFRESH_MS = 30000;
@@ -81,8 +84,9 @@ export function ShareApp({ token }: { token: string }) {
   const ds: Dataset | null = useMemo(() => payload && {
     kind: payload.item.kind, id: payload.item.id, name: payload.item.name,
     table: payload.item.kind === "table" ? { id: payload.item.id, base_id: "", name: payload.item.name, kind: payload.item.table_kind as "generic",
-      account_id: null, calendar_url: null, last_synced_at: null, last_sync_error: null } : undefined,
+      account_id: null, calendar_url: null, last_synced_at: null, last_sync_error: null, page: payload.page ?? null } : undefined,
     sources: payload.sources ?? undefined, fields: payload.fields, views: payload.views, records: payload.records, refs: payload.refs,
+    page: payload.item.kind === "combo" ? payload.page ?? null : undefined,
   }, [payload]);
 
   const viewType = payload?.view.type;
@@ -165,6 +169,21 @@ export function ShareApp({ token }: { token: string }) {
   const props = ds && view ? { ds, view, fields: ds.fields, visible, records, ops, setConfig: (p: Partial<ViewConfig>) => setLocalConfig((c) => ({ ...c, ...p })) } : null;
   const rec = openRec && ds ? ds.records.find((r) => r.id === openRec) : undefined;
   const current = meta.items.find((i) => i.views.some((v) => v.id === viewId));
+
+  // a link to one page: just that record, as its page
+  const onePage = payload?.record && ds ? ds.records.find((r) => r.id === payload.record) : undefined;
+  if (payload?.record && ds) {
+    return (
+      <RefsContext.Provider value={{ refs: ds.refs, addRefs: () => undefined }}>
+        <div className="share-app share-page" style={{ ["--share-color" as string]: meta.color }}>
+          {onePage ? <PageView ds={ds} rec={onePage} fields={ds.fields} can={{ ...can, add: false, delete: false }} publicMode
+            onUpdate={(patch) => ops.update(onePage, patch)} onDelete={() => undefined} onButton={(f) => ops.runButton(onePage, f)} />
+            : <div className="boot share-missing"><Icon name="lock" size={28} /><p>This page is no longer available.</p></div>}
+          {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
+        </div>
+      </RefsContext.Provider>
+    );
+  }
 
   return (
     <RefsContext.Provider value={{ refs: ds?.refs ?? { records: {}, users: {} }, addRefs: () => undefined }}>

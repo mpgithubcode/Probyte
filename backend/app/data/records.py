@@ -3,7 +3,7 @@ its history entry and its change-feed event."""
 from app.calc.compute import COMPUTED_TYPES, Engine
 from app.core import events
 from app.core.db import Jsonb
-from app.data import audit, stamps
+from app.data import audit, pages, stamps
 from app.data.behaviors import _is_task, advance_recurring, advance_repeating_record, apply_done, apply_event_defaults, apply_task_auto, sync_done
 from app.data.rules import apply_defaults, check_rules
 from app.data.schema import bad, DAV_KINDS, ensure_choices, get_fields, get_table, is_remote_table, is_served, not_found, SELECT_TYPES
@@ -137,7 +137,11 @@ def create_record(conn, table_id, data: dict, user_id=None, *, table=None, field
     if table["kind"] == "remote":
         bad("Records of a linked table are written through its link")
     fields = fields if fields is not None else get_fields(conn, table_id)
-    data = normalize_data(conn, table, fields, apply_defaults(fields, data or {}, user_id), user_id)
+    data = dict(data or {})
+    tpl = pages.template_for(table.get("page"), fields)   # the table's page: a new record's body starts as its template
+    if tpl and not data.get(tpl[0]):
+        data[tpl[0]] = tpl[1]
+    data = normalize_data(conn, table, fields, apply_defaults(fields, data, user_id), user_id)
     check_rules(conn, table_id, fields, data, {str(f["id"]) for f in fields})
     if table["kind"] in ("tasks", "mixed"):
         keys = {f["system_key"]: str(f["id"]) for f in fields if f["system_key"]}

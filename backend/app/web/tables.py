@@ -9,7 +9,7 @@ from app.calc.compute import Engine
 from app.core.db import connection, Jsonb
 from app.core.secretbox import unseal
 from app.data import access, pages, stamps, store, values
-from app.data.schema import BUILTIN_FIELDS
+from app.data.schema import BUILTIN_FIELDS, PRIMARY_TYPES
 from app.dav import sync
 from app.sharing import linked as remote
 from app.web.common import _own_account, access_info, _own_field, _table_out, COMPONENTS, FastJSON, FieldIn, FieldPatch, FormulaCheck, RelinkIn, TableIn, TablePatch, User
@@ -287,12 +287,61 @@ def update_table(table_id: str, body: TablePatch, user=User):
         if body.description is not None:
             conn.execute("UPDATE tables SET description = %s WHERE id = %s", (body.description.strip()[:2000] or None, table_id))
         if body.page is not None:
-            conn.execute("UPDATE tables SET page = %s WHERE id = %s", (Jsonb(pages.clean(store.get_fields(conn, table_id), body.page)), table_id))
+            page = pages.clean(store.get_fields(conn, table_id), body.page)
+            conn.execute("UPDATE tables SET page = %s WHERE id = %s", (Jsonb(page) if page is not None else None, table_id))
+            conn.execute("SELECT notify_tables(%s)", (str(table_id),))  # open copies load it again (page is in the token)
         return _table_out(store.get_table(conn, table_id))
 
 
 class FieldOrder(BaseModel):
     ids: list[str]
+
+
+@router.get("/api/tables/{table_id}/inbound")
+def inbound_links(table_id: str, user=User):
+    """Link fields (of other tables, or this one) that point at this table, in tables the user can open: what a page's
+    related list can show, with those tables' shared views (for their filter and order)."""
+    with connection() as conn:
+        store.get_table(conn, table_id, user["id"])
+        out = []
+        for f in conn.execute("SELECT f.id, f.name, f.table_id, t.name AS table_name FROM fields f JOIN tables t ON t.id = f.table_id "
+                              "WHERE f.type = 'link' AND f.options->>'foreignTableId' = %s AND t.trashed_at IS NULL ORDER BY t.name, f.position",
+                              (str(table_id),)).fetchall():
+            try:
+                store.get_table(conn, f["table_id"], user["id"])
+            except HTTPException:
+                continue
+            views = conn.execute("SELECT id, name FROM views WHERE table_id = %s AND user_id IS NULL ORDER BY position", (f["table_id"],)).fetchall()
+            out.append({"table_id": str(f["table_id"]), "table_name": f["table_name"], "field_id": str(f["id"]), "field_name": f["name"],
+                        "views": [{"id": str(v["id"]), "name": v["name"]} for v in views]})
+    return out
+
+
+class PrimaryIn(BaseModel):
+    field_id: str
+
+
+@router.post("/api/tables/{table_id}/primary")
+def set_primary(table_id: str, body: PrimaryIn, user=User):
+    """Which field is the table's primary field: each record's title (in links, the record panel, a page's title) and the
+    first column."""
+    with connection() as conn:
+        t = store.get_table(conn, table_id, user["id"], need="admin")
+        if t["kind"] == "remote":
+            raise HTTPException(400, "A linked table's fields come from its source link")
+        f = conn.execute("SELECT * FROM fields WHERE id::text = %s AND table_id = %s", (body.field_id, table_id)).fetchone() \
+            or store.not_found("Field not found")
+        if f["type"] not in PRIMARY_TYPES:
+            raise HTTPException(400, "This kind of field can't be the primary field: choose text, a number, a date, a single select, "
+                                     "an email, a link address, a phone number, an autonumber or a formula")
+        conn.execute("UPDATE fields SET is_primary = (id = %s) WHERE table_id = %s AND is_primary <> (id = %s)", (f["id"], table_id, f["id"]))
+        # it comes first (the table's own order; views keep theirs)
+        fields = store.get_fields(conn, table_id)
+        ordered = [x for x in fields if x["id"] == f["id"]] + [x for x in fields if x["id"] != f["id"] and x["type"] != "record_id"] \
+            + [x for x in fields if x["type"] == "record_id"]
+        for n, x in enumerate(ordered):
+            conn.execute("UPDATE fields SET position = %s WHERE id = %s", (n, x["id"]))
+    return {"ok": True}
 
 
 @router.post("/api/tables/{table_id}/fields/order")
