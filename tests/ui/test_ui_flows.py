@@ -753,8 +753,8 @@ def test_list_properties_start_position_and_names(browser):
     assert order[:3] == ["dot", "box", "title"], order
     prio = row.locator(".list-prop").filter(has_text="High")
     assert prio.locator(".list-prop-name").count() == 0                               # name hidden for this one
-    pg.wait_for_timeout(600)
-    cfg = next(v for v in u.j("GET", f"/tables/{t['id']}")["views"] if v["name"] == "Todo list")["config"]
+    cfg = eventually(lambda: next((v["config"] for v in u.j("GET", f"/tables/{t['id']}")["views"]
+                                   if v["name"] == "Todo list" and any(p.get("label") is False for p in v["config"].get("listProps") or [])), None))
     done = next(p for p in cfg["listProps"] if p["field"] == F["done"])
     assert done["align"] == "start" and next(p for p in cfg["listProps"] if p["field"] == F["priority"])["label"] is False
     assert not pg.errors, pg.errors
@@ -1179,8 +1179,8 @@ def test_view_tabs_reorder_and_view_settings(browser, table_user):
     modal.locator(".settings-nav button:has-text('General')").click()
     modal.locator(".type-tile:has-text('Board')").click()
     expect(pg.locator(".kanban-col").first).to_be_visible()
-    v = next(x for x in u.j("GET", f"/tables/{t['id']}")["views"] if x["name"] == "All stock")
-    assert v["type"] == "kanban" and v["config"].get("groupBy") == F["Status"] and F["Notes"] in v["config"]["hidden"]
+    v = eventually(lambda: next((x for x in u.j("GET", f"/tables/{t['id']}")["views"] if x["name"] == "All stock" and x["type"] == "kanban"), None))
+    assert v["config"].get("groupBy") == F["Status"] and F["Notes"] in v["config"]["hidden"]
     # duplicate, move, delete
     modal.locator("button:has-text('Duplicate view')").click()
     expect(pg.locator(".view-tab.active")).to_contain_text("All stock copy")

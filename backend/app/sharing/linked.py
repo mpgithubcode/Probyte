@@ -145,19 +145,100 @@ def fetch_view(conn, link, view_id) -> dict:
     return data
 
 
-def _write(link, method, suffix, body=None):
+def _write(link, method, suffix, body=None, view_id=None):
+    """A write through the link: through view_id (one of its views the record shows in), else the link's own view."""
     from app.sharing import links as shares
     tok, cookie = link["token"], _cookie_value(link)
+    vid = str(view_id or link["view_id"])
     if link.get("local"):
         parts = suffix.strip("/").split("/")  # records[/<id>]
         if method == "POST":
-            return shares.core_create(tok, link["view_id"], body["data"], body.get("table_id"), cookie)
+            return shares.core_create(tok, vid, body["data"], body.get("table_id"), cookie)
         if method == "PATCH":
-            return shares.core_update(tok, link["view_id"], parts[1], body["data"], cookie)
-        shares.core_delete(tok, link["view_id"], parts[1], cookie)
+            return shares.core_update(tok, vid, parts[1], body["data"], cookie)
+        shares.core_delete(tok, vid, parts[1], cookie)
         return {"ok": True}
-    data, _ = _http(method, link, f"{_base(link)}/views/{quote(str(link['view_id']), safe='')}/{suffix}", body)
+    data, _ = _http(method, link, f"{_base(link)}/views/{quote(vid, safe='')}/{suffix}", body)
     return data
+
+
+VIEWS_FIELD = "__views"   # a linked table's own field: which of the source's views each record is in
+
+
+def fetch_all(conn, link) -> list[dict]:
+    """The link's own view, then every other view of the same table that the link shares (each brings the fields it
+    shows and the records its filter lets through). A view gone from the link since is skipped."""
+    first = fetch_view(conn, link, link["view_id"])
+    others = [str(v["id"]) for v in first.get("views") or [] if str(v["id"]) != str(link["view_id"])]
+    if not others or first.get("record") or link.get("all_views") is False:
+        return [first]
+
+    def one(vid):
+        try:
+            return fetch_view(conn, link, vid)
+        except HTTPException as e:
+            if e.status_code == 404:
+                return None
+            raise
+    if link.get("local"):
+        rest = [one(v) for v in others]
+    else:   # another server: the views at once
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(others))) as ex:
+            rest = list(ex.map(one, others))
+    return [first, *[p for p in rest if p]]
+
+
+def _view_names(payloads) -> dict:
+    """Each source view's name as its records are marked with it (a repeated name gets a number)."""
+    out, used = {}, {}
+    for p in payloads:
+        n = (p.get("view") or {}).get("name") or "View"
+        used[n] = used.get(n, 0) + 1
+        out[str(p["view"]["id"])] = n if used[n] == 1 else f"{n} ({used[n]})"
+    return out
+
+
+def merge(payloads) -> dict:
+    """One payload from several views of the same source table: every field any of them shows, every record any of
+    them lets through (a record in several views once), and, when there are several, which views each record is in
+    (the VIEWS_FIELD), so each mirrored view shows just its own."""
+    if len(payloads) == 1:
+        return {**payloads[0], "_via": {str(r["id"]): [str(payloads[0]["view"]["id"])] for r in payloads[0].get("records") or []},
+                "_view_fields": {str(payloads[0]["view"]["id"]): {str(f["id"]) for f in payloads[0].get("fields") or []}}}
+    names = _view_names(payloads)
+    fields, seen = [], set()
+    for p in payloads:
+        for f in p.get("fields") or []:
+            if str(f["id"]) not in seen:
+                seen.add(str(f["id"]))
+                fields.append(f)
+    palette = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6", "#ec4899", "#64748b"]
+    fields.append({"id": VIEWS_FIELD, "name": "Source views", "type": "multi_select", "readonly": True,
+                   "options": {"choices": [{"name": n, "color": palette[i % len(palette)]} for i, n in enumerate(names.values())]}})
+    records, via = {}, {}
+    refs = {"records": {}, "users": {}}
+    for p in payloads:
+        vid = str(p["view"]["id"])
+        for r in p.get("records") or []:
+            rid = str(r["id"])
+            cur = records.get(rid)
+            if cur is None:
+                cur = records[rid] = {**r, "data": dict(r.get("data") or {})}
+                cur["data"][VIEWS_FIELD] = []
+            else:
+                cur["data"].update(r.get("data") or {})
+            cur["data"][VIEWS_FIELD].append(names[vid])
+            via.setdefault(rid, []).append(vid)
+        pr = p.get("refs") or {}
+        for k in ("records", "users"):
+            refs[k].update(pr.get(k) or {})
+        for k in ("display", "chips"):
+            for fid, d in (pr.get(k) or {}).items():
+                cur = refs.setdefault(k, {}).setdefault(fid, {**d, "values": {}})
+                cur["values"].update(d.get("values") or {})
+    return {**payloads[0], "fields": fields, "records": list(records.values()), "refs": refs, "_via": via,
+            "_view_fields": {str(p["view"]["id"]): {str(f["id"]) for f in p.get("fields") or []} for p in payloads}}
 
 
 # ======================================================================== mirroring into a local table
@@ -256,8 +337,9 @@ def _convert(tid, payload) -> dict:
         created = _parse_dt(r.get("created_at"))
         records.append({"id": rid, "source_id": str(r["id"]), "table_id": tid, "data": data, "sync_status": "synced", "created_at": created,
                         "updated_at": created, "seq": None, "created_by": None, "updated_by": None})
+    via = {lid(tid, k): v for k, v in (payload.get("_via") or {}).items()}
     return {"records": records, "reverse": reverse, "refs": payload.get("refs") or {"records": {}, "users": {}},
-            "sources": payload.get("sources")}
+            "sources": payload.get("sources"), "via": via, "view_fields": payload.get("_view_fields") or {}}
 
 
 # ======================================================================== cache & reading
@@ -282,18 +364,19 @@ def load(conn, table, force=False) -> dict:
     error, perms, name = None, link.get("permissions") or {}, link.get("name")
     source_kind = link.get("source_kind")
     try:
-        payload = fetch_view(conn, link, link["view_id"])
+        payloads = fetch_all(conn, link)
+        payload = merge(payloads)
         sig = sync_fields(conn, table, payload)
         perms = payload.get("permissions", perms)
         name = payload.get("link_name", name)
         source_kind = (payload.get("item") or {}).get("table_kind") or link.get("source_kind")
         entry = _convert(tid, payload)
         if link.get("follow_views", True):
-            _follow_view(conn, table, link, payload)
+            _follow_views(conn, table, link, payloads, payload)
     except HTTPException as e:
         error = "The link needs its password again (it may have changed)" if e.detail == "password_required" else str(e.detail)
         sig = link.get("fields_hash")
-        empty = {"records": [], "reverse": {}, "refs": {"records": {}, "users": {}}, "sources": None}
+        empty = {"records": [], "reverse": {}, "refs": {"records": {}, "users": {}}, "sources": None, "via": {}, "view_fields": {}}
         # Access revoked (link off, deleted, expired, password changed): show nothing. If the source is just
         # unreachable for a moment, keep showing the last copy.
         entry = empty if e.status_code in (401, 403, 404) or not hit else hit[1]
@@ -307,35 +390,65 @@ def load(conn, table, force=False) -> dict:
     return entry
 
 
-def _follow_view(conn, table, link, payload):
-    """The linked table's view stays in step with the source's view (sort, grouping, hidden fields, layout; its filters
-    are applied at the source anyway), unless the table's owner turned that off ("stay updated")."""
-    src = payload.get("view") or {}
-    vid = link.get("mirror_view")
-    view = conn.execute("SELECT * FROM views WHERE id = %s AND table_id = %s", (vid, table["id"])).fetchone() if vid else None
-    if view is None:  # a table linked before views followed: its first view mirrors the source
-        view = conn.execute("SELECT * FROM views WHERE table_id = %s AND user_id IS NULL ORDER BY position, name LIMIT 1",
-                            (table["id"],)).fetchone()
-        if view is None:
-            return
-        link["mirror_view"] = str(view["id"])
-        conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"mirror_view": str(view["id"])}), table["id"]))
-    cfg = map_view_config(table["id"], src.get("config") or {})
-    vtype = src.get("type") or view["type"]
-    # Only a change at the source is followed: the version last applied is remembered, so what the linked table's
-    # owner changes here (a sort, a hidden field) stays until the source's view changes again (then it's replaced).
-    seen = hashlib.sha256(json.dumps([vtype, cfg], sort_keys=True, default=str).encode()).hexdigest()
-    if link.get("mirror_src") == seen:
-        return
-    if cfg != view["config"] or vtype != view["type"]:
-        conn.execute("UPDATE views SET config = %s, type = %s, updated_at = now() WHERE id = %s", (Jsonb(cfg), vtype, view["id"]))
-    link["mirror_src"] = seen
-    conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"mirror_src": seen}), table["id"]))
+def _follow_views(conn, table, link, payloads, merged):
+    """Each of the source table's views that the link shares has a view here that stays in step with it: its type,
+    name, sort, grouping, layout and the fields it shows; and, when there are several, just its own records (a filter
+    on Source views). Views added at the source appear, ones removed go; views made here are left alone. Only a change
+    at the source is applied: what the owner changes here stays until the source's view changes again."""
+    tid = str(table["id"])
+    mirrors = dict(link.get("mirrors") or {})       # source view id -> {"view": local view id, "seen": what was applied}
+    if not mirrors and link.get("mirror_view"):     # a table linked before every view came along: its view is the link's
+        mirrors[str(link["view_id"])] = {"view": link["mirror_view"], "seen": link.get("mirror_src")}
+    several = len(payloads) > 1
+    names = _view_names(payloads)
+    every = [lid(tid, f["id"]) for f in merged.get("fields") or []]
+    changed = False
+    for p in payloads:
+        sv = p.get("view") or {}
+        svid = str(sv["id"])
+        cfg = map_view_config(tid, sv.get("config") or {})
+        shows = {lid(tid, f["id"]) for f in p.get("fields") or []} | {lid(tid, REC_ID)} & set(cfg.get("shown") or [])
+        cfg["hidden"] = sorted(set(cfg.get("hidden") or []) | {x for x in every if x not in shows})
+        if several:
+            cfg["filter"] = {"conjunction": "and", "items": [{"field": lid(tid, VIEWS_FIELD), "op": "is", "value": names[svid]}]}
+        vtype = sv.get("type") or "grid"
+        vname = sv.get("name") or "View"
+        seen = hashlib.sha256(json.dumps([vtype, vname, cfg], sort_keys=True, default=str).encode()).hexdigest()
+        m = mirrors.get(svid) or {}
+        local = conn.execute("SELECT * FROM views WHERE id = %s AND table_id = %s", (m.get("view"), tid)).fetchone() if m.get("view") else None
+        if local is None:
+            v = conn.execute("INSERT INTO views (table_id, name, type, config, position) VALUES (%s,%s,%s,%s,"
+                             "(SELECT COALESCE(MAX(position), -1) + 1 FROM views WHERE table_id = %s)) RETURNING id",
+                             (tid, vname, vtype, Jsonb(cfg), tid)).fetchone()
+            mirrors[svid] = {"view": str(v["id"]), "seen": seen}
+            changed = True
+        elif m.get("seen") != seen:
+            conn.execute("UPDATE views SET config = %s, type = %s, name = %s, updated_at = now() WHERE id = %s",
+                         (Jsonb(cfg), vtype, vname if m.get("seen") is not None or local["name"] == vname else local["name"], local["id"]))
+            mirrors[svid] = {"view": str(local["id"]), "seen": seen}
+            changed = True
+    current = {str(p["view"]["id"]) for p in payloads}
+    for svid, m in list(mirrors.items()):
+        if svid not in current:   # gone from the source (or from the link): its view here goes too, unless it's the last one
+            left = conn.execute("SELECT count(*) AS n FROM views WHERE table_id = %s AND user_id IS NULL", (tid,)).fetchone()["n"]
+            if left > 1:
+                conn.execute("DELETE FROM views WHERE id = %s AND table_id = %s", (m.get("view"), tid))
+            mirrors.pop(svid)
+            changed = True
+    if changed or link.get("mirrors") != mirrors:
+        primary = mirrors.get(str(link["view_id"]), {}).get("view")
+        link.update(mirrors=mirrors, mirror_view=primary)
+        link.pop("mirror_src", None)
+        conn.execute("UPDATE tables SET remote = (remote - 'mirror_src') || %s WHERE id = %s",
+                     (Jsonb({"mirrors": mirrors, "mirror_view": primary}), tid))
 
 
 def set_follow_views(conn, table, on: bool):
     """Turned back on: the source's view is applied again at the next load (its own changes replaced)."""
-    conn.execute("UPDATE tables SET remote = (remote - 'mirror_src') || %s WHERE id = %s", (Jsonb({"follow_views": bool(on)}), table["id"]))
+    link = dict(table.get("remote") or {})
+    mirrors = {k: {**v, "seen": None} for k, v in (link.get("mirrors") or {}).items()}   # applied again at the next load
+    conn.execute("UPDATE tables SET remote = (remote - 'mirror_src') || %s WHERE id = %s",
+                 (Jsonb({"follow_views": bool(on), "mirrors": mirrors}), table["id"]))
     invalidate(table["id"])
 
 
@@ -385,9 +498,15 @@ def create_table(conn, store, user_id, base_id, name, url, password, item_id, vi
     conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), t["id"]))
     cfg = map_view_config(t["id"], payload.get("view", {}).get("config") or {})
     mirror = store.create_view(conn, table_id=t["id"], name=view["name"], type=view["type"], config=cfg)
-    link.update(mirror_view=str(mirror["id"]), follow_views=bool(follow_views))
+    link.update(mirror_view=str(mirror["id"]), follow_views=True, mirrors={str(view["id"]): {"view": str(mirror["id"]), "seen": None}})
     conn.execute("UPDATE tables SET remote = %s WHERE id = %s", (Jsonb(link), t["id"]))
-    if view["type"] != "grid":
+    # every other view of the table that the link shares comes along (and the data they show)
+    invalidate(t["id"])
+    load(conn, conn.execute("SELECT * FROM tables WHERE id = %s", (t["id"],)).fetchone(), force=True)
+    invalidate(t["id"])   # (that copy was for its views: the first look at the table fetches its data afresh)
+    if not follow_views:
+        conn.execute("UPDATE tables SET remote = remote || %s WHERE id = %s", (Jsonb({"follow_views": False}), t["id"]))
+    if not conn.execute("SELECT 1 FROM views WHERE table_id = %s AND type = 'grid'", (t["id"],)).fetchone():
         store.create_view(conn, table_id=t["id"], name="Table", type="grid", config={"hidden": cfg.get("hidden", [])})
     return conn.execute("SELECT * FROM tables WHERE id = %s", (t["id"],)).fetchone()
 
@@ -438,26 +557,45 @@ def sources(conn, table) -> list | None:
     return [{"table_id": str(x["table_id"]), "name": x["name"], "color": x.get("color"), "kind": x.get("kind")} for x in src] if src else None
 
 
+def _route(conn, table, record_id, remote_data: dict) -> str | None:
+    """Which of the source's views a write goes through: one that shows the record (for a new one, any) and as many of
+    the fields written as possible, the link's own view first among equals (the source accepts a write only through a
+    view that shows the record, and only the fields that view shows)."""
+    entry = load(conn, table)
+    own = str(table["remote"]["view_id"])
+    shows = entry.get("view_fields") or {}
+    if not shows:
+        return None
+    cands = entry.get("via", {}).get(str(record_id)) if record_id else list(shows)
+    if not cands:
+        return None
+    want = set(remote_data)
+    return max(cands, key=lambda v: (len(want & shows.get(v, set())), v == own))
+
+
 def create(conn, table, data: dict, source_table_id=None) -> dict:
     _perm(table, "add")
     link = table["remote"]
     srcs = sources(conn, table)
     if srcs and len(srcs) > 1 and source_table_id not in {s["table_id"] for s in srcs}:
         raise HTTPException(400, "Choose which of the linked tables the record goes into")
-    r = _write(link, "POST", "records", {"data": _to_remote(conn, table, data), "table_id": source_table_id})
+    remote = _to_remote(conn, table, data)
+    r = _write(link, "POST", "records", {"data": remote, "table_id": source_table_id}, _route(conn, table, None, remote))
     invalidate(table["id"])
     return {"id": lid(table["id"], r["id"])}
 
 
 def update(conn, table, record_id, data: dict):
     _perm(table, "edit")
-    _write(table["remote"], "PATCH", f"records/{_remote_record_id(conn, table, record_id)}", {"data": _to_remote(conn, table, data)})
+    remote = _to_remote(conn, table, data)
+    _write(table["remote"], "PATCH", f"records/{_remote_record_id(conn, table, record_id)}", {"data": remote},
+           _route(conn, table, record_id, remote))
     invalidate(table["id"])
 
 
 def delete(conn, table, record_id):
     _perm(table, "delete")
-    _write(table["remote"], "DELETE", f"records/{_remote_record_id(conn, table, record_id)}")
+    _write(table["remote"], "DELETE", f"records/{_remote_record_id(conn, table, record_id)}", None, _route(conn, table, record_id, {}))
     invalidate(table["id"])
 
 

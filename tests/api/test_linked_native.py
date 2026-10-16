@@ -229,3 +229,47 @@ def test_one_table_from_a_whole_base_link_and_the_public_page(user, other_user):
     # a trashed table drops out of the link
     user.j("DELETE", f"/tables/{a['id']}")
     assert "Alpha" not in [i["name"] for i in requests.get(f"{API}/public/{s['token']}").json()["items"]]
+
+
+def _key(u):
+    return {"Authorization": "Bearer " + u.j("POST", "/keys", json={"name": "k", "scope": "read"})["key"]}
+
+
+def test_every_view_of_a_linked_table_comes_along_with_its_records(user, other_user):
+    """A link that shares several views of a table: the linked table gets each of them (type, name, layout, the fields
+    it shows) and each shows just its own records; views added, renamed or removed at the source follow; an edit to a
+    record only one view shows goes through that view."""
+    t = user.table(name="Bids")
+    F = user.fields(t["id"])
+    for n, st in (("Mill St", "Todo"), ("Oak Ave", "Doing"), ("Elm Rd", "Done")):
+        user.j("POST", f"/tables/{t['id']}/records", json={"data": {F["Name"]: n, F["Status"]: st}})
+    first = user.j("GET", f"/tables/{t['id']}")["views"][0]
+    user.j("PATCH", f"/views/{first['id']}", json={"name": "Open", "config": {
+        "filter": {"conjunction": "and", "items": [{"field": F["Status"], "op": "is_not", "value": "Done"}]}}})
+    board = user.j("POST", f"/tables/{t['id']}/views", json={"name": "Board", "type": "kanban", "config": {"groupBy": F["Status"]}})
+    done = user.j("POST", f"/tables/{t['id']}/views", json={"name": "Done", "type": "grid", "config": {
+        "hidden": [F["Notes"]], "filter": {"conjunction": "and", "items": [{"field": F["Status"], "op": "is", "value": "Done"}]}}})
+    s = user.j("POST", "/shares", json={"name": "Bids", "base_id": user.base_id, "permissions": {"edit": True},
+                                       "items": [{"kind": "table", "id": t["id"], "views": None}]})
+    lt = link(other_user, s, first)
+    data = other_user.j("GET", f"/tables/{lt['id']}")
+    views = {v["name"]: v for v in data["views"]}
+    assert {"Open", "Board", "Done"} <= set(views) and views["Board"]["type"] == "kanban"
+    L = {f["name"]: f["id"] for f in data["fields"]}
+    assert views["Board"]["config"]["groupBy"] == L["Status"] and L["Notes"] in views["Done"]["config"]["hidden"]
+    assert len(data["records"]) == 3                                   # every record any view shows
+    H = _key(other_user)
+    by_view = lambda name: sorted(r["fields"]["Name"] for r in requests.get(  # noqa: E731
+        f"{ROOT}/api/v1/tables/{lt['id']}/records", headers=H, params={"view": name}).json()["records"])
+    assert by_view("Open") == ["Mill St", "Oak Ave"] and by_view("Done") == ["Elm Rd"] and len(by_view("Board")) == 3
+    # an edit to a record only "Done" shows: through that view
+    elm = next(r for r in data["records"] if r["data"][L["Name"]] == "Elm Rd")
+    other_user.j("PATCH", f"/tables/{lt['id']}/records/{elm['id']}", json={"data": {L["Name"]: "Elm Road"}})
+    assert "Elm Road" in [r["data"][F["Name"]] for r in user.records(t["id"])]
+    # at the source: a view added, one renamed, one removed
+    user.j("POST", f"/tables/{t['id']}/views", json={"name": "Calendar", "type": "calendar", "config": {}})
+    user.j("PATCH", f"/views/{board['id']}", json={"name": "Pipeline"})
+    user.delete(API + f"/views/{done['id']}")
+    other_user.post(API + f"/tables/{lt['id']}/refresh")
+    names = sorted(v["name"] for v in other_user.j("GET", f"/tables/{lt['id']}")["views"])
+    assert "Calendar" in names and "Pipeline" in names and "Board" not in names and "Done" not in names
